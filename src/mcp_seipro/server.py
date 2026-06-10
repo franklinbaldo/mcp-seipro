@@ -3188,6 +3188,57 @@ async def sei_listar_atividades(
         return _error(str(e))
 
 
+@mcp.tool()
+async def sei_gerar_pdf_processo(
+    processo: str,
+    ctx: Context = None,
+) -> str:
+    """Gera e baixa o PDF consolidado de um processo SEI.
+
+    Consolida todos os documentos do processo num único PDF, exatamente
+    como o botão "Gerar PDF" da interface web do SEI.
+
+    Implementação via scraper web (procedimento_gerar_pdf).
+
+    Parâmetros:
+    - processo: protocolo formatado (ex: 0029.000123/2024-00)
+
+    Retorna base64 do PDF, tamanho e caminho do arquivo salvo em disco.
+
+    Nota: o processo precisa estar aberto na caixa da unidade atual.
+    Para processos de outras unidades, use sei_trocar_unidade primeiro.
+    """
+    import re as _re
+    import tempfile
+
+    try:
+        web = _get_web_client(ctx)
+        if web._inbox_url is None:
+            await web.login()
+
+        pdf_bytes = await web.gerar_pdf_processo(processo)
+
+        tamanho_mb = len(pdf_bytes) / 1024 / 1024
+        if tamanho_mb > 50:
+            return _error(
+                f"PDF muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI."
+            )
+
+        protocolo_safe = processo.replace("/", "-")
+        pdf_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.pdf")
+        with open(pdf_path, "wb") as f:
+            f.write(pdf_bytes)
+
+        return _json({
+            "arquivo": pdf_path,
+            "tamanho_mb": round(tamanho_mb, 2),
+            "tamanho_bytes": len(pdf_bytes),
+            "base64": base64.b64encode(pdf_bytes).decode(),
+        })
+    except Exception as e:
+        return _error(str(e))
+
+
 # -- Acompanhamento: meus, da unidade, alterar --
 
 

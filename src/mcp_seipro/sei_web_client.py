@@ -527,6 +527,133 @@ class SEIWebClient:
             "documentos": docs,
         }
 
+    async def gerar_pdf_processo(self, protocolo_formatado: str) -> bytes:
+        """Gera e baixa o PDF consolidado de um processo SEI.
+
+        Flow:
+        1. procedimento_trabalhar → frameset com ifrArvore
+        2. arvore_montar.php → busca link procedimento_gerar_pdf
+        3. GET controlador.php?acao=procedimento_gerar_pdf → form de opções
+        4. POST frmProcedimentoPdf com hdnFlagGerar=1 → HTML com ifrDownload.src
+        5. GET controlador.php?acao=exibir_arquivo (da ifrDownload.src) → bytes do PDF
+
+        Retorna os bytes brutos do PDF.
+        """
+        if self._inbox_url is None:
+            raise RuntimeError("login() não foi chamado")
+
+        def _find_link(proto: str) -> Optional[str]:
+            if proto in self._trabalhar_links:
+                return self._trabalhar_links[proto]
+            proto_norm = proto.replace(" ", "")
+            for k, v in self._trabalhar_links.items():
+                if k.replace(" ", "") == proto_norm:
+                    return v
+            return None
+
+        if _find_link(protocolo_formatado) is None:
+            await self.fetch_inbox(detalhada=False)
+            if _find_link(protocolo_formatado) is None:
+                raise RuntimeError(
+                    f"Protocolo {protocolo_formatado!r} não encontrado na inbox. "
+                    "O processo precisa estar aberto na unidade atual."
+                )
+
+        trab_href = _find_link(protocolo_formatado)
+        trab_url = urljoin(str(self._inbox_url), trab_href)
+
+        # Step 1: procedimento_trabalhar → frameset
+        r1 = await self._http.get(trab_url, headers={"Referer": str(self._inbox_url)})
+        if r1.status_code != 200:
+            raise RuntimeError(f"trabalhar status={r1.status_code}")
+
+        if 'name="txtUsuario"' in r1.text or 'id="txtUsuario"' in r1.text:
+            self._form_action = None
+            self._form_hidden = {}
+            await self.login()
+            return await self.gerar_pdf_processo(protocolo_formatado)
+
+        soup_fs = BeautifulSoup(r1.text, "html.parser")
+        ifr = soup_fs.find("iframe", id="ifrArvore")
+        if not ifr:
+            raise RuntimeError("ifrArvore não encontrado no frameset")
+        arvore_url = urljoin(str(r1.url), ifr.get("src", "").replace("&amp;", "&"))
+
+        # Step 2: arvore_montar → busca link procedimento_gerar_pdf
+        r2 = await self._http.get(arvore_url, headers={"Referer": trab_url})
+        if r2.status_code != 200:
+            raise RuntimeError(f"arvore status={r2.status_code}")
+
+        m_pdf = re.search(
+            r"(controlador\.php\?acao=procedimento_gerar_pdf[^\"'\s]*infra_hash=[a-f0-9]+)",
+            r2.text,
+        )
+        if not m_pdf:
+            raise RuntimeError("Link procedimento_gerar_pdf não encontrado na árvore")
+
+        sei_base = f"{self.sei_root}/sei/"
+        pdf_form_url = urljoin(sei_base, m_pdf.group(1).replace("&amp;", "&"))
+
+        # Step 3: GET form de opções
+        r3 = await self._http.get(pdf_form_url, headers={"Referer": str(r2.url)})
+        if r3.status_code != 200:
+            raise RuntimeError(f"form pdf status={r3.status_code}")
+
+        soup3 = BeautifulSoup(r3.content.decode("iso-8859-1", "replace"), "html.parser")
+        form = soup3.find("form", id="frmProcedimentoPdf")
+        if not form:
+            raise RuntimeError("Formulário frmProcedimentoPdf não encontrado")
+        form_action = form.get("action", "").replace("&amp;", "&")
+        post_url = urljoin(str(r3.url), form_action)
+
+        post_data: dict[str, str] = {}
+        for inp in form.find_all("input"):
+            name = inp.get("name", "")
+            if name:
+                post_data[name] = inp.get("value", "") or ""
+        post_data["rdoTipo"] = "T"
+        post_data["hdnFlagGerar"] = "1"
+
+        # Step 4: POST para gerar o PDF — pode demorar em processos grandes
+        r4 = await self._http.post(
+            post_url,
+            data=post_data,
+            headers={"Referer": str(r3.url)},
+            timeout=httpx.Timeout(180.0, connect=10.0),
+        )
+        if r4.status_code != 200:
+            raise RuntimeError(f"POST gerar pdf status={r4.status_code}")
+
+        # A resposta é HTML com JS: document.getElementById('ifrDownload').src = 'URL'
+        # onde URL é controlador.php?acao=exibir_arquivo&nome_arquivo=HASH&...
+        body4 = r4.content.decode("iso-8859-1", "replace")
+        m_dl = re.search(
+            r"getElementById\(['\"]ifrDownload['\"]\)\.src\s*=\s*'([^']+)'",
+            body4,
+        )
+        if not m_dl:
+            raise RuntimeError(
+                "URL de download (ifrDownload.src) não encontrada. "
+                "O servidor pode ter retornado erro ou o processo não tem documentos disponíveis."
+            )
+
+        download_path = m_dl.group(1).replace("&amp;", "&")
+        download_url = urljoin(sei_base, download_path)
+
+        # Step 5: GET para baixar o PDF gerado
+        r5 = await self._http.get(download_url, headers={"Referer": str(r4.url)})
+        if r5.status_code != 200:
+            raise RuntimeError(f"download pdf status={r5.status_code}")
+
+        content_type = r5.headers.get("content-type", "")
+        if "pdf" not in content_type.lower() and not r5.content.startswith(b"%PDF"):
+            raise RuntimeError(
+                f"Resposta inesperada (Content-Type: {content_type}). "
+                "Esperado PDF mas recebeu outro conteúdo."
+            )
+
+        return r5.content
+
     async def listar_atividades(self, protocolo_formatado: str) -> dict:
         """Lista andamentos/atividades de um processo via web scraper.
 
