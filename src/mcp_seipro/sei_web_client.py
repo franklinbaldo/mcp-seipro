@@ -62,6 +62,13 @@ class SEIWebClient:
         # é descoberto dinamicamente do <select> na página de login.
         self._sigla_orgao = kwargs.get("sei_sigla_orgao", os.environ.get("SEI_SIGLA_ORGAO", "ANTAQ"))
         self._sigla_sistema = kwargs.get("sei_sigla_sistema", os.environ.get("SEI_SIGLA_SISTEMA", "SEI"))
+        # SEI_SIGLA_ORGAO_SISTEMA: parâmetro da URL do SIP login (ex: "RO" para Rondônia).
+        # Quando não definido, usa SEI_SIGLA_ORGAO (mantém compatibilidade p/ instâncias
+        # onde sigla_orgao_sistema == sigla do órgão no selOrgao, ex: ANTAQ).
+        _sigla_orgao_sistema = kwargs.get(
+            "sei_sigla_orgao_sistema",
+            os.environ.get("SEI_SIGLA_ORGAO_SISTEMA", self._sigla_orgao),
+        )
 
         verify_ssl = kwargs.get("sei_verify_ssl", os.environ.get("SEI_VERIFY_SSL", "true"))
         if isinstance(verify_ssl, str):
@@ -71,7 +78,7 @@ class SEIWebClient:
 
         self.login_url = (
             f"{self.sei_root}/sip/login.php"
-            f"?sigla_orgao_sistema={self._sigla_orgao}&sigla_sistema={self._sigla_sistema}"
+            f"?sigla_orgao_sistema={_sigla_orgao_sistema}&sigla_sistema={self._sigla_sistema}"
         )
 
         self._http = httpx.AsyncClient(
@@ -80,9 +87,9 @@ class SEIWebClient:
             timeout=httpx.Timeout(60.0, connect=10.0, read=45.0),
             headers={
                 "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                     "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/124.0.0.0 Safari/537.36"
+                    "Chrome/136.0.0.0 Safari/537.36"
                 ),
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
@@ -109,7 +116,15 @@ class SEIWebClient:
             raise RuntimeError(f"GET login.php retornou {resp.status_code}")
 
         html = resp.text
-        if "g-recaptcha" in html or "h-captcha" in html or "hcaptcha" in html:
+        # Verifica CAPTCHA: busca o elemento HTML real, não o seletor CSS
+        # (o CSS inline sempre contém "#txtInfraCaptcha {...}" — falso positivo)
+        if (
+            "g-recaptcha" in html
+            or "h-captcha" in html
+            or "hcaptcha" in html
+            or 'name="txtInfraCaptcha"' in html
+            or 'id="txtInfraCaptcha"' in html
+        ):
             raise RuntimeError("CAPTCHA presente no login — abortando.")
         if 'name="txtCodigo2FA"' in html or 'id="txtCodigo2FA"' in html:
             raise RuntimeError("2FA solicitado no login — não suportado.")
@@ -128,15 +143,32 @@ class SEIWebClient:
             "txtUsuario": self._usuario,
             "pwdSenha": self._senha,
             "selOrgao": sel_orgao,
-            # Crítico: o backend só processa o login se receber o par
-            # name=value do botão submit. Sem isso, o PHP renderiza apenas
-            # a página de login novamente sem mensagem de erro.
-            "sbmLogin": "Acessar",
         }
         for h in login_form.find_all("input", type="hidden"):
             name = h.get("name")
             if name and h.get("value") is not None:
                 form[name] = h["value"]
+
+        # O PHP exige o par name=value do botão submit; sem ele ignora o POST.
+        # Detecta o botão real do formulário (varia por instância:
+        # sbmLogin=Acessar no ANTAQ, sbmAcessar=ACESSAR no RO, etc.)
+        submit_btn = login_form.find("button", type="submit") or login_form.find("input", type="submit")
+        if submit_btn:
+            btn_name = submit_btn.get("name")
+            if btn_name:
+                btn_value = submit_btn.get("value") or submit_btn.get_text(strip=True) or "Acessar"
+                form[btn_name] = btn_value
+        else:
+            # fallback para instâncias mais antigas
+            form["sbmLogin"] = "Acessar"
+
+        # Corrige hdnAcao: o JS seta o valor correto antes de submeter via
+        # acaoLogin(N) no onsubmit. Ex: onsubmit="return acaoLogin(2);"
+        # O HTML tem value="1" (padrão), mas ação=2 é o login com usuário/senha.
+        onsubmit = login_form.get("onsubmit", "")
+        m_acao = re.search(r"acaoLogin\((\d+)\)", onsubmit)
+        if m_acao and "hdnAcao" in form:
+            form["hdnAcao"] = m_acao.group(1)
         sel_ctx = login_form.find("select", attrs={"name": "selContexto"})
         if sel_ctx is not None:
             ctx_val = ""
