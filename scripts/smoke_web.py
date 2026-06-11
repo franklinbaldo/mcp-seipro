@@ -20,10 +20,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from todos.sei_web_client import SEIWebClient  # noqa: E402
+from todos.sei_web_client import SEIWebClient, parse_inbox
 
 
-async def smoke(protocolo: str | None) -> None:  # noqa: C901, PLR0912
+async def smoke(protocolo: str | None) -> None:
     print("=" * 60)
     print("  SEI Web Client — Smoke Test")
     print("=" * 60)
@@ -42,7 +42,7 @@ async def smoke(protocolo: str | None) -> None:  # noqa: C901, PLR0912
 
         # ── 3. Parse da inbox ──────────────────────────────────────
         print("\n[3] Parsear inbox...")
-        layout, rows = client._parse_inbox(html)  # noqa: SLF001
+        layout, rows = parse_inbox(html)
         print(f"    ✓ Layout={layout!r}, {len(rows)} processos")
         if rows:
             primeiro = rows[0]

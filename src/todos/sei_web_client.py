@@ -159,6 +159,7 @@ class SEIWebClient:
             },
         )
         self._inbox_url: httpx.URL | None = None
+        self._unidade_atual: dict[str, str] | None = None
         # cache do form principal de procedimento_controlar (action + hidden fields)
         self._form_action: str | None = None
         self._form_hidden: dict[str, str] = {}
@@ -295,6 +296,7 @@ class SEIWebClient:
         self._extract_main_form(post_resp.text)
         self._extract_pesquisa_rapida(post_resp.text)
         self._populate_trabalhar_links(post_resp.text)
+        self._extract_unidade_atual(post_resp.text)
         logger.info("SEI web login bem-sucedido — inbox capturada")
 
     def _descobrir_sel_orgao(self, login_form, soup) -> str:  # noqa: ANN001
@@ -377,6 +379,144 @@ class SEIWebClient:
             if txt and href:
                 self._trabalhar_links.setdefault(txt, href)
 
+    def _extract_unidade_atual(self, html: str) -> None:
+        """Extrai a unidade ativa do seletor exibido no cabecalho do SEI."""
+        soup = BeautifulSoup(html, "html.parser")
+        unit_link = soup.find(
+            "a",
+            id=re.compile(r"unidade", re.IGNORECASE),
+            title=True,
+        )
+        if not isinstance(unit_link, Tag):
+            return
+
+        sigla = unit_link.get_text(" ", strip=True)
+        nome = _tag_str(unit_link, "title").strip()
+        if not sigla and not nome:
+            return
+
+        unidade: dict[str, str] = {"sigla": sigla, "nome": nome}
+        if self._inbox_url is not None:
+            query = dict(parse_qsl(str(self._inbox_url.query)))
+            id_unidade = query.get("infra_unidade_atual", "")
+            if id_unidade:
+                unidade["id_unidade"] = id_unidade
+        self._unidade_atual = unidade
+
+    async def unidade_atual(self) -> dict[str, str]:
+        """Retorna id, sigla e nome da unidade ativa na sessao web."""
+        await self.ensure_authenticated()
+        if self._unidade_atual is None:
+            _, html = await self.fetch_inbox(detalhada=False)
+            self._extract_unidade_atual(html)
+        if self._unidade_atual is None:
+            msg = "Nao foi possivel identificar a unidade ativa na pagina do SEI."
+            raise RuntimeError(msg)
+        return dict(self._unidade_atual)
+
+    async def _fetch_unit_switch_form(self) -> tuple[str, Tag]:
+        """Abre a tela de troca de unidade e retorna URL e formulario."""
+        await self.ensure_authenticated()
+        _, html = await self.fetch_inbox(detalhada=False)
+        soup = BeautifulSoup(html, "html.parser")
+        unit_link = soup.find("a", id="lnkInfraUnidade")
+        if not isinstance(unit_link, Tag):
+            msg = "Link de troca de unidade nao encontrado."
+            raise TypeError(msg)
+
+        onclick = _tag_str(unit_link, "onclick")
+        match = re.search(r"window\.location\.href='([^']+)'", onclick)
+        if not match:
+            msg = "URL de troca de unidade nao encontrada."
+            raise RuntimeError(msg)
+
+        switch_url = urljoin(str(self._inbox_url), match.group(1))
+        response = await self._http.get(switch_url, headers={"Referer": str(self._inbox_url)})
+        if response.status_code != 200:  # noqa: PLR2004
+            msg = f"Tela de troca de unidade retornou {response.status_code}."
+            raise RuntimeError(msg)
+
+        switch_soup = BeautifulSoup(response.text, "html.parser")
+        form = switch_soup.find("form", id="frmInfraSelecaoUnidade")
+        if not isinstance(form, Tag):
+            msg = "Formulario de troca de unidade nao encontrado."
+            raise TypeError(msg)
+        return str(response.url), form
+
+    async def listar_unidades(self) -> list[dict[str, str]]:
+        """Lista unidades acessiveis ao usuario pela tela web de troca."""
+        _, form = await self._fetch_unit_switch_form()
+        units: list[dict[str, str]] = []
+        for radio in form.find_all("input", attrs={"name": "chkInfraItem"}):
+            if not isinstance(radio, Tag):
+                continue
+            id_unidade = _tag_str(radio, "value")
+            row = radio.find_parent("tr")
+            if not id_unidade or not isinstance(row, Tag):
+                continue
+            cells = [" ".join(td.get_text(" ", strip=True).split()) for td in row.find_all("td")]
+            values = [cell for cell in cells if cell]
+            if len(values) < 2:  # noqa: PLR2004
+                continue
+            units.append(
+                {
+                    "id_unidade": id_unidade,
+                    "sigla": values[0],
+                    "nome": values[1],
+                }
+            )
+        return units
+
+    async def trocar_unidade(self, referencia: str) -> dict[str, str]:
+        """Troca a unidade ativa por ID ou sigla usando a interface web."""
+        units = await self.listar_unidades()
+        ref = referencia.strip().casefold()
+        matches = [
+            unit
+            for unit in units
+            if unit["id_unidade"].casefold() == ref or unit["sigla"].casefold() == ref
+        ]
+        if not matches:
+            msg = f"Unidade {referencia!r} nao encontrada entre as unidades acessiveis."
+            raise RuntimeError(msg)
+
+        target = matches[0]
+        form_url, form = await self._fetch_unit_switch_form()
+        action = _tag_str(form, "action")
+        post_url = urljoin(form_url, action)
+        data: dict[str, str] = {}
+        for field in form.find_all("input"):
+            if not isinstance(field, Tag):
+                continue
+            name = _tag_str(field, "name")
+            field_type = _tag_str(field, "type").lower()
+            if name and field_type == "hidden":
+                data[name] = _tag_str(field, "value")
+        data["selInfraUnidades"] = target["id_unidade"]
+
+        response = await self._http.post(post_url, data=data, headers={"Referer": form_url})
+        if response.status_code != 200:  # noqa: PLR2004
+            msg = f"Troca de unidade retornou {response.status_code}."
+            raise RuntimeError(msg)
+
+        self._inbox_url = response.url
+        self._form_action = None
+        self._form_hidden = {}
+        self._trabalhar_links.clear()
+        self._pesquisa_rapida_action = None
+        self._arvore_cache.clear()
+        self._unidade_atual = None
+        self._extract_main_form(response.text)
+        self._extract_pesquisa_rapida(response.text)
+        self._populate_trabalhar_links(response.text)
+        self._extract_unidade_atual(response.text)
+
+        current = await self.unidade_atual()
+        if current.get("id_unidade") != target["id_unidade"]:
+            msg = f"SEI nao confirmou a troca para {target['sigla']}."
+            raise RuntimeError(msg)
+        return current
+
     # ------------------------------------------------------------------
     # Listar processos (Controle de Processos / inbox)
     # ------------------------------------------------------------------
@@ -413,6 +553,7 @@ class SEIWebClient:
                 raise RuntimeError(f"fetch_inbox status={resp.status_code}")  # noqa: EM102, TRY003
             self._extract_main_form(resp.text)
             self._populate_trabalhar_links(resp.text)
+            self._extract_unidade_atual(resp.text)
             return len(resp.content), resp.text
 
         # Precisa do form action — fetch inicial se ainda não temos
@@ -462,6 +603,7 @@ class SEIWebClient:
         self._extract_main_form(body)
         self._extract_pesquisa_rapida(body)
         self._populate_trabalhar_links(body)
+        self._extract_unidade_atual(body)
         return len(resp.content), body
 
     # ------------------------------------------------------------------

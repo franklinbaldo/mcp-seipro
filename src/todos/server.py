@@ -8,10 +8,9 @@ import os
 import unicodedata
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
-from mcp.server.fastmcp import Context, FastMCP
-from mcp.server.transport_security import TransportSecuritySettings
+from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
 from todos import access_control
@@ -43,8 +42,16 @@ _http_port = int(os.environ.get("PORT", 8000))  # noqa: PLW1508
 @asynccontextmanager
 async def lifespan(_server: FastMCP):  # noqa: ANN201, D103
     if _http_mode:
-        # Modo HTTP: clients criados por request com credenciais do token OAuth
-        yield {"sei": None, "sei_web": None}
+        clients: dict[str, SEIClient] = {}
+        web_clients: dict[str, SEIWebClient] = {}
+        try:
+            yield {"sei_by_session": clients, "sei_web_by_session": web_clients}
+        finally:
+            await asyncio.gather(
+                *(client.close() for client in clients.values()),
+                *(client.close() for client in web_clients.values()),
+                return_exceptions=True,
+            )
     else:
         # Modo stdio: clients com credenciais das env vars
         client = SEIClient()
@@ -60,15 +67,16 @@ def _get_client(ctx: Context | None) -> SEIClient:
     """Obtém o SEIClient REST, criando sob demanda em modo HTTP."""
     if ctx is None:
         raise ValueError("Contexto MCP nao disponivel.")  # noqa: EM101, TRY003
-    client = ctx.request_context.lifespan_context.get("sei")
-    if client is not None:
-        return client
 
-    # Modo HTTP: extrai credenciais do token OAuth
     if _http_mode:
-        from mcp.server.auth.middleware.auth_context import get_access_token  # noqa: PLC0415
+        from fastmcp.server.dependencies import get_access_token  # noqa: PLC0415
 
         from todos.auth import get_sei_credentials_from_token  # noqa: PLC0415
+
+        clients = ctx.lifespan_context["sei_by_session"]
+        client = clients.get(ctx.session_id)
+        if client is not None:
+            return client
 
         access_token = get_access_token()
         if not access_token:
@@ -79,9 +87,12 @@ def _get_client(ctx: Context | None) -> SEIClient:
             raise ValueError("Token invalido ou expirado. Reconecte o MCP.")  # noqa: EM101, TRY003
 
         client = SEIClient(**creds)
-        ctx.request_context.lifespan_context["sei"] = client
+        clients[ctx.session_id] = client
         return client
 
+    client = ctx.lifespan_context.get("sei")
+    if client is not None:
+        return client
     raise ValueError("SEIClient nao configurado. Verifique as variaveis de ambiente.")  # noqa: EM101, TRY003
 
 
@@ -93,14 +104,16 @@ def _get_web_client(ctx: Context | None) -> SEIWebClient:
     """
     if ctx is None:
         raise ValueError("Contexto MCP nao disponivel.")  # noqa: EM101, TRY003
-    client = ctx.request_context.lifespan_context.get("sei_web")
-    if client is not None:
-        return client
 
     if _http_mode:
-        from mcp.server.auth.middleware.auth_context import get_access_token  # noqa: PLC0415
+        from fastmcp.server.dependencies import get_access_token  # noqa: PLC0415
 
         from todos.auth import get_sei_credentials_from_token  # noqa: PLC0415
+
+        clients = ctx.lifespan_context["sei_web_by_session"]
+        client = clients.get(ctx.session_id)
+        if client is not None:
+            return client
 
         access_token = get_access_token()
         if not access_token:
@@ -109,9 +122,12 @@ def _get_web_client(ctx: Context | None) -> SEIWebClient:
         if not creds:
             raise ValueError("Token invalido ou expirado. Reconecte o MCP.")  # noqa: EM101, TRY003
         client = SEIWebClient(**creds)
-        ctx.request_context.lifespan_context["sei_web"] = client
+        clients[ctx.session_id] = client
         return client
 
+    client = ctx.lifespan_context.get("sei_web")
+    if client is not None:
+        return client
     raise ValueError("SEIWebClient nao configurado.")  # noqa: EM101, TRY003
 
 
@@ -130,39 +146,8 @@ def _get_backend(ctx: Context | None) -> SEIBackend:
     return SEIBackend(rest, web)
 
 
-_http_kwargs: dict[str, Any] = {}
-if _http_mode:
-    from mcp.server.auth.settings import (
-        AuthSettings,
-        ClientRegistrationOptions,
-        RevocationOptions,
-    )
-    from pydantic import AnyHttpUrl
-
-    from todos.auth import SEIProOAuthProvider
-
-    _base_url = os.environ.get("BASE_URL", f"http://localhost:{_http_port}")
-    _provider = SEIProOAuthProvider()
-
-    _http_kwargs = {
-        "host": "0.0.0.0",
-        "port": _http_port,
-        "stateless_http": True,
-        "transport_security": TransportSecuritySettings(
-            enable_dns_rebinding_protection=False,
-        ),
-        "auth": AuthSettings(
-            issuer_url=AnyHttpUrl(_base_url),
-            resource_server_url=AnyHttpUrl(f"{_base_url}/mcp"),
-            client_registration_options=ClientRegistrationOptions(enabled=True),
-            revocation_options=RevocationOptions(enabled=True),
-        ),
-        "auth_server_provider": _provider,
-    }
-
 mcp = FastMCP(
     "sei",
-    **_http_kwargs,
     instructions=(
         "MCP Server para o SEI (Sistema Eletrônico de Informações). "
         "Permite gerenciar processos, documentos, tramitação e assinatura. "
@@ -170,7 +155,8 @@ mcp = FastMCP(
         "NUNCA peça login ou senha ao usuário para assinar. Basta chamar "
         "sei_assinar_documento com o id do documento e o cargo. Se não souber "
         "o cargo, chame sem cargo para obter a lista e pergunte ao usuário. "
-        "Fluxo típico: sei_trocar_unidade → sei_listar_processos → "
+        "Fluxo típico: sei_unidade_atual → sei_trocar_unidade (se necessario) → "
+        "sei_listar_processos → "
         "sei_consultar_processo (obter IdProcedimento) → sei_arvore_processo → "
         "sei_ler_documento. Para criar docs: sei_pesquisar_tipos_documento → "
         "sei_criar_documento → sei_listar_secoes → sei_editar_secao. "
@@ -235,7 +221,10 @@ def _cliente_suporta_elicit(ctx: Context | None) -> bool:
     if ctx is None:
         return False
     try:
-        caps = ctx.request_context.session.client_params.capabilities  # type: ignore[attr-defined]
+        client_params = ctx.session.client_params
+        if client_params is None:
+            return False
+        caps = client_params.capabilities
     except Exception:  # noqa: BLE001
         return False
     return getattr(caps, "elicitation", None) is not None
@@ -278,7 +267,7 @@ async def _solicitar_consentimento_via_elicit(
         return "nao_suportado"
     try:
         result = await asyncio.wait_for(
-            ctx.elicit(message=message, schema=_ConsentimentoRestrito),
+            ctx.elicit(message=message, response_type=_ConsentimentoRestrito),
             timeout=_ELICIT_TIMEOUT_S,
         )
     except TimeoutError:
@@ -468,6 +457,21 @@ def _error(msg: str) -> str:
 
 
 @mcp.tool()
+async def sei_unidade_atual(ctx: Context) -> str:
+    """Retorna a unidade/setor ativo na sessao atual do SEI.
+
+    Informa id_unidade, sigla e nome. Use antes de listar ou alterar processos
+    para confirmar em qual caixa as operacoes serao executadas.
+    """
+    try:
+        client = _get_web_client(ctx)
+        result = await client.unidade_atual()
+        return _json(result)
+    except Exception as e:  # noqa: BLE001
+        return _error(str(e))
+
+
+@mcp.tool()
 async def sei_listar_unidades(ctx: Context) -> str:
     """Lista as unidades às quais o usuário autenticado tem acesso no SEI.
 
@@ -475,8 +479,8 @@ async def sei_listar_unidades(ctx: Context) -> str:
     de unidade com sei_trocar_unidade.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_unidades_usuario()
+        client = _get_web_client(ctx)
+        result = await client.listar_unidades()
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -486,12 +490,13 @@ async def sei_listar_unidades(ctx: Context) -> str:
 async def sei_trocar_unidade(id_unidade: str, ctx: Context) -> str:
     """Troca a unidade ativa do usuário no SEI.
 
+    Aceita o ID interno ou a sigla da unidade, por exemplo `PGE-PPI`.
     Após trocar, operações como sei_listar_processos mostrarão
     a caixa da nova unidade. Use sei_listar_unidades para ver
-    as unidades disponíveis e seus IDs.
+    as unidades disponíveis.
     """
     try:
-        client = _get_client(ctx)
+        client = _get_web_client(ctx)
         result = await client.trocar_unidade(id_unidade)
         return _json(result)
     except Exception as e:  # noqa: BLE001
@@ -4496,61 +4501,8 @@ async def sei_alterar_anotacao_bloco_assinatura(
 
 def main():  # noqa: ANN201, D103
     if _http_mode:
-        from pathlib import Path  # noqa: PLC0415
+        from todos.remote import run_remote  # noqa: PLC0415
 
-        import uvicorn  # noqa: PLC0415
-        from starlette.responses import Response  # noqa: PLC0415
-        from starlette.routing import Route  # noqa: PLC0415
-
-        from todos.auth import login_page, login_submit  # noqa: PLC0415
-
-        # Favicon / ícone do SEI Pro — busca em vários locais possíveis
-        _icon_bytes = b""
-        for _candidate in [
-            Path(__file__).resolve().parent.parent.parent / "icon.png",  # dev: repo root
-            Path("/app/icon.png"),  # Docker
-        ]:
-            if _candidate.exists():
-                _icon_bytes = _candidate.read_bytes()
-                break
-
-        from starlette.responses import HTMLResponse  # noqa: PLC0415
-
-        async def favicon(request):  # noqa: ANN001, ANN202, ARG001
-            return Response(
-                _icon_bytes,
-                media_type="image/png",
-                headers={"Cache-Control": "public, max-age=86400"},
-            )
-
-        _base = os.environ.get("BASE_URL", f"http://localhost:{_http_port}")
-        _root_html = f"""<!DOCTYPE html>
-<html><head>
-<link rel="icon" type="image/png" href="{_base}/favicon.ico">
-<link rel="icon" type="image/png" sizes="128x128" href="{_base}/icon.png">
-<link rel="apple-touch-icon" href="{_base}/icon.png">
-<title>SEI Pro MCP Server</title>
-</head><body><h1>SEI Pro MCP Server</h1></body></html>"""
-
-        async def root_page(request):  # noqa: ANN001, ANN202, ARG001
-            return HTMLResponse(_root_html)
-
-        app = mcp.streamable_http_app()
-        # Adiciona rotas extras
-        app.routes.insert(0, Route("/", root_page, methods=["GET"]))
-        app.routes.insert(1, Route("/favicon.ico", favicon, methods=["GET"]))
-        app.routes.insert(2, Route("/icon.png", favicon, methods=["GET"]))
-        app.routes.insert(3, Route("/login", login_page, methods=["GET"]))
-        app.routes.insert(4, Route("/login", login_submit, methods=["POST"]))
-
-        config = uvicorn.Config(
-            app,
-            host="0.0.0.0",
-            port=_http_port,
-            log_level="info",
-        )
-        import anyio  # noqa: PLC0415
-
-        anyio.run(uvicorn.Server(config).serve)
+        run_remote(mcp, port=_http_port)
     else:
-        mcp.run(transport="stdio")
+        mcp.run(transport="stdio", show_banner=False)
