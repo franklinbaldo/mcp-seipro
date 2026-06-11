@@ -276,9 +276,9 @@ def install_package(repo_root: Path | None, uv_path: str | None):
             check=True,
         )
     else:
-        info("Instalando todos do PyPI ...")
+        info("Instalando todos do GitHub ...")
         subprocess.run(
-            [*pip_cmd, "todos"],
+            [*pip_cmd, "git+https://github.com/franklinbaldo/todos.git"],
             check=True,
         )
 

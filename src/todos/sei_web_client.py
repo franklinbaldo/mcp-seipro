@@ -951,7 +951,7 @@ class SEIWebClient:
                 ):
                     pa = img.find_parent("a")
                     if pa:
-                        incluir_href = _tag_str(a, "href").replace("&amp;", "&")
+                        incluir_href = _tag_str(pa, "href").replace("&amp;", "&")
                         break
 
         if not incluir_href:
