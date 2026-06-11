@@ -471,6 +471,31 @@ class SEIWebClient:
         _, form = await self._fetch_unit_switch_form()
         return self._units_from_form(form)
 
+    @staticmethod
+    def _build_unit_post(form: Tag, target_id: str) -> dict[str, str]:
+        """Constroi o payload POST para submeter o formulario de troca de unidade."""
+        data: dict[str, str] = {}
+        for field in form.find_all("input"):
+            if not isinstance(field, Tag):
+                continue
+            name = _tag_str(field, "name")
+            if name and _tag_str(field, "type").lower() == "hidden":
+                data[name] = _tag_str(field, "value")
+        data["selInfraUnidades"] = target_id
+        return data
+
+    def _verificar_troca(self, current: dict[str, str], target: dict[str, str]) -> None:
+        """Lanca RuntimeError se o SEI nao confirmou a troca de unidade."""
+        current_id = current.get("id_unidade")
+        if current_id:
+            if current_id != target["id_unidade"]:
+                msg = f"SEI nao confirmou a troca para {target['sigla']}."
+                raise RuntimeError(msg)
+        elif current.get("sigla", "").casefold() != target["sigla"].casefold():
+            # Fallback: verify by sigla when id_unidade is absent from the redirect URL
+            msg = f"SEI nao confirmou a troca para {target['sigla']}."
+            raise RuntimeError(msg)
+
     async def trocar_unidade(self, referencia: str) -> dict[str, str]:
         """Troca a unidade ativa por ID ou sigla usando a interface web."""
         form_url, form = await self._fetch_unit_switch_form()
@@ -478,26 +503,15 @@ class SEIWebClient:
 
         ref = referencia.strip().casefold()
         matches = [
-            u for u in units
-            if u["id_unidade"].casefold() == ref or u["sigla"].casefold() == ref
+            u for u in units if u["id_unidade"].casefold() == ref or u["sigla"].casefold() == ref
         ]
         if not matches:
             msg = f"Unidade {referencia!r} nao encontrada entre as unidades acessiveis."
             raise RuntimeError(msg)
 
         target = matches[0]
-        action = _tag_str(form, "action")
-        post_url = urljoin(form_url, action)
-        data: dict[str, str] = {}
-        for field in form.find_all("input"):
-            if not isinstance(field, Tag):
-                continue
-            name = _tag_str(field, "name")
-            field_type = _tag_str(field, "type").lower()
-            if name and field_type == "hidden":
-                data[name] = _tag_str(field, "value")
-        data["selInfraUnidades"] = target["id_unidade"]
-
+        post_url = urljoin(form_url, _tag_str(form, "action"))
+        data = self._build_unit_post(form, target["id_unidade"])
         response = await self._http.post(post_url, data=data, headers={"Referer": form_url})
         if response.status_code != 200:  # noqa: PLR2004
             msg = f"Troca de unidade retornou {response.status_code}."
@@ -517,16 +531,7 @@ class SEIWebClient:
         self._extract_unidade_atual(response.text, _soup)
 
         current = await self.unidade_atual()
-        current_id = current.get("id_unidade")
-        target_id = target["id_unidade"]
-        if current_id:
-            if current_id != target_id:
-                msg = f"SEI nao confirmou a troca para {target['sigla']}."
-                raise RuntimeError(msg)
-        elif current.get("sigla", "").casefold() != target["sigla"].casefold():
-            # Fallback: verify by sigla when id_unidade is absent from the redirect URL
-            msg = f"SEI nao confirmou a troca para {target['sigla']}."
-            raise RuntimeError(msg)
+        self._verificar_troca(current, target)
         return current
 
     # ------------------------------------------------------------------
