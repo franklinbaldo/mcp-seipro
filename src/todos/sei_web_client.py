@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 import warnings
 from typing import Any
 from urllib.parse import parse_qsl, urljoin
@@ -28,6 +29,10 @@ import httpx
 from bs4 import BeautifulSoup, Tag
 
 logger = logging.getLogger(__name__)
+
+# TTL do cache da árvore do processo (links assinados valem a sessão inteira;
+# o TTL curto limita apenas a janela de staleness do conteúdo da árvore)
+_ARVORE_CACHE_TTL = 30.0
 
 
 def _tag_str(tag: Tag, attr: str, default: str = "") -> str:
@@ -146,6 +151,10 @@ class SEIWebClient:
         self._trabalhar_links: dict[str, str] = {}
         # URL do form de pesquisa rápida (protocolo_pesquisa_rapida + infra_hash)
         self._pesquisa_rapida_action: str | None = None
+        # cache curto da árvore (protocolo → (ts, (html, url))): evita refetch
+        # quando várias ações usam a mesma árvore em sequência (ex: ler vários
+        # documentos do mesmo processo, ou fallback interno→externo)
+        self._arvore_cache: dict[str, tuple[float, tuple[str, str]]] = {}
 
     async def close(self) -> None:  # noqa: D102
         await self._http.aclose()
@@ -265,6 +274,7 @@ class SEIWebClient:
             raise RuntimeError(f"URL inesperada após login: {final_url}")  # noqa: EM102, TRY003
 
         self._inbox_url = final_url
+        self._arvore_cache.clear()
         # popula cache do form principal e dos links de processos a partir
         # da própria resposta do post-login (já contém o HTML da inbox)
         self._extract_main_form(post_resp.text)
@@ -356,7 +366,7 @@ class SEIWebClient:
     # Listar processos (Controle de Processos / inbox)
     # ------------------------------------------------------------------
 
-    async def fetch_inbox(  # noqa: C901
+    async def fetch_inbox(
         self,
         detalhada: bool = True,  # noqa: FBT001, FBT002
         pagina: int = 0,
@@ -375,14 +385,14 @@ class SEIWebClient:
 
         Retorna `(bytes, html)`.
         """
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado antes de fetch_inbox().")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
+        inbox_url = str(self._inbox_url)
 
         # Caso simples: GET inicial sem detalhada/filtros/paginação
         if not detalhada and pagina == 0 and not apenas_meus and self._form_action is None:
             resp = await self._http.get(
-                self._inbox_url,
-                headers={"Referer": str(self._inbox_url)},
+                inbox_url,
+                headers={"Referer": inbox_url},
             )
             if resp.status_code != 200:  # noqa: PLR2004
                 raise RuntimeError(f"fetch_inbox status={resp.status_code}")  # noqa: EM102, TRY003
@@ -393,8 +403,8 @@ class SEIWebClient:
         # Precisa do form action — fetch inicial se ainda não temos
         if self._form_action is None:
             seed = await self._http.get(
-                self._inbox_url,
-                headers={"Referer": str(self._inbox_url)},
+                inbox_url,
+                headers={"Referer": inbox_url},
             )
             if seed.status_code != 200:  # noqa: PLR2004
                 raise RuntimeError(f"seed inbox status={seed.status_code}")  # noqa: EM102, TRY003
@@ -451,8 +461,7 @@ class SEIWebClient:
 
         Raises RuntimeError se o processo não for encontrado.
         """
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
 
         if self._pesquisa_rapida_action is None:
             await self.fetch_inbox(detalhada=False)
@@ -526,8 +535,7 @@ class SEIWebClient:
         Para enriquecer com especificacao/assuntos/interessados (que só estão
         na REST), combine com `SEIClient.consultar_processo_completo()`.
         """
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado antes de consultar_processo()")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
 
         # garante que o protocolo está no cache de links da inbox
         if protocolo_formatado not in self._trabalhar_links:
@@ -680,7 +688,18 @@ class SEIWebClient:
         return href
 
     async def _arvore_do_processo(self, protocolo: str) -> tuple[str, str]:
-        """Navega trabalhar→frameset→arvore; retorna (html_arvore, url_arvore)."""
+        """Navega trabalhar→frameset→arvore; retorna (html_arvore, url_arvore).
+
+        Resultado cacheado por _ARVORE_CACHE_TTL segundos; ações que alteram
+        o processo invalidam a entrada via _invalidar_arvore().
+        """
+        em_cache = self._arvore_cache.get(protocolo)
+        if em_cache is not None:
+            ts, resultado = em_cache
+            if time.monotonic() - ts <= _ARVORE_CACHE_TTL:
+                return resultado
+            del self._arvore_cache[protocolo]
+
         href = await self._garantir_link_trabalhar(protocolo)
         trab_url = urljoin(str(self._inbox_url), href)
 
@@ -703,7 +722,13 @@ class SEIWebClient:
         r2 = await self._http.get(arvore_url, headers={"Referer": trab_url})
         if r2.status_code != 200:  # noqa: PLR2004
             raise RuntimeError(f"arvore status={r2.status_code}")  # noqa: EM102, TRY003
-        return r2.text, str(r2.url)
+        resultado = (r2.text, str(r2.url))
+        self._arvore_cache[protocolo] = (time.monotonic(), resultado)
+        return resultado
+
+    def _invalidar_arvore(self, protocolo: str) -> None:
+        """Remove a árvore cacheada de um processo (após ação que a altera)."""
+        self._arvore_cache.pop(protocolo, None)
 
     async def executar_acao_processo(  # noqa: C901
         self,
@@ -770,14 +795,15 @@ class SEIWebClient:
             if erro2:
                 raise RuntimeError(erro2)
         else:
-            # Sem form: pode ser ação que executa direto via GET (redirect imediato).
-            # Valida ausência de erros e loga para facilitar debug.
-            if _extrair_erro_sei(body):
+            # Sem form: pode ser ação que executa direto via GET (ex: redirect imediato).
+            # Valida que não há erro oculto e loga para facilitar debug.
+            if _extrair_erro_sei(body):  # já checado acima mas re-verifica body completo
                 raise RuntimeError(f"Ação '{nome_acao}' falhou sem form de confirmação.")  # noqa: EM102, TRY003
             logger.debug(
                 "executar_acao_processo: ação '%s' concluída via GET (sem form)", nome_acao
             )
 
+        self._invalidar_arvore(protocolo)
         return {
             "ok": True,
             "mensagem": f"Ação '{nome_acao}' executada com sucesso.",
@@ -858,6 +884,160 @@ class SEIWebClient:
                 textareas.append(n)
 
         return {"campos": campos, "selects": selects, "textareas": textareas}
+
+    # ------------------------------------------------------------------
+    # Read scrapers — PR #4
+    # ------------------------------------------------------------------
+
+    async def _get_doc_signed_url(
+        self, protocolo: str, id_documento: str, acao: str
+    ) -> tuple[str, str]:
+        """Retorna (signed_url, arvore_url) para uma ação de documento.
+
+        Aceita tanto o id interno (id do nó da árvore) quanto o número SEI
+        (extraído do label do nó, ex: "Despacho GPF 2874369") — web-only não
+        tem Solr para resolver. Para `documento_consultar` usa Nos[].link;
+        para outras ações busca a URL assinada por regex com o id resolvido.
+        """
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+
+        # Resolve a referência para o nó da árvore: por id interno, depois
+        # por número SEI no label
+        nos = parse_arvore_nos(html_arvore)
+        no_alvo: dict | None = None
+        for no in nos[1:]:
+            if no.get("id") == id_documento:
+                no_alvo = no
+                break
+        if no_alvo is None:
+            for no in nos[1:]:
+                if _parse_doc_label(no.get("label", "")).get("numero_sei") == id_documento:
+                    no_alvo = no
+                    break
+        id_interno = str(no_alvo["id"]) if no_alvo else id_documento
+
+        # Para documento_consultar, o link está em Nos[].link
+        if acao == "documento_consultar" and no_alvo and no_alvo.get("link"):
+            raw = str(no_alvo["link"]).replace("&amp;", "&")
+            return urljoin(sei_base, raw), url_arvore
+
+        # Busca genérica: qualquer URL com acao=X e id_documento=Y
+        # (?=&|&amp;|["'\s]) âncora o fim do id para evitar match por prefixo
+        # (ex: id=287 não deve casar com id=2874369)
+        _id_anchor = r"(?=&(?:amp;)?|[\"'\s])"
+        pattern = (
+            rf"(controlador\.php\?acao={re.escape(acao)}"
+            rf"[^\"'\s]*id_documento={re.escape(id_interno)}{_id_anchor}"
+            rf"[^\"'\s]*infra_hash=[a-fA-F0-9]+)"
+        )
+        m = re.search(pattern, html_arvore)
+        if not m:
+            # Tenta ordem invertida (infra_hash antes de id_documento)
+            pattern2 = (
+                rf"(controlador\.php\?acao={re.escape(acao)}"
+                rf"[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+                rf"[^\"'\s]*id_documento={re.escape(id_interno)}{_id_anchor}"
+                rf"[^\"'\s]*)"
+            )
+            m = re.search(pattern2, html_arvore)
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Ação '{acao}' não encontrada para o documento {id_documento} "  # noqa: EM102
+                f"na árvore do processo {protocolo}."
+            )
+        return urljoin(sei_base, m.group(1).replace("&amp;", "&")), url_arvore
+
+    async def consultar_documento_web(self, protocolo: str, id_documento: str) -> dict:
+        """Scrape dos metadados de documento_consultar (tipo, data, assinaturas, etc.)."""
+        await self.ensure_authenticated()
+        url, referer = await self._get_doc_signed_url(
+            protocolo, id_documento, "documento_consultar"
+        )
+        r = await self._http.get(url, headers={"Referer": referer})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"documento_consultar status={r.status_code}")  # noqa: EM102, TRY003
+        html = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(html)
+        if erro:
+            # SEI retorna 200 com página de erro (sessão expirada, sem permissão)
+            raise RuntimeError(f"documento_consultar: {erro}")  # noqa: EM102, TRY003
+        return _parse_documento_consultar(html, id_documento)
+
+    async def listar_assinaturas_web(self, protocolo: str, id_documento: str) -> list[dict]:
+        """Lista assinaturas de um documento via scrape de documento_consultar."""
+        data = await self.consultar_documento_web(protocolo, id_documento)
+        return data.get("assinaturas", [])  # type: ignore[return-value]
+
+    async def listar_ciencias_web(self, protocolo: str, id_documento: str) -> list[dict]:
+        """Lista ciências de um documento via scrape de documento_consultar."""
+        data = await self.consultar_documento_web(protocolo, id_documento)
+        return data.get("ciencias", [])  # type: ignore[return-value]
+
+    async def visualizar_documento_interno_web(self, protocolo: str, id_documento: str) -> str:
+        """Retorna HTML de um documento interno via documento_visualizar."""
+        await self.ensure_authenticated()
+        url, referer = await self._get_doc_signed_url(
+            protocolo, id_documento, "documento_visualizar"
+        )
+        r = await self._http.get(url, headers={"Referer": referer})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"documento_visualizar status={r.status_code}")  # noqa: EM102, TRY003
+        html = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(html)
+        if erro:
+            # SEI retorna 200 com página de erro; sem este check o erro seria
+            # devolvido como se fosse o conteúdo do documento (e quebraria a
+            # auto-detecção interno→externo de sei_ler_documento)
+            raise RuntimeError(f"documento_visualizar: {erro}")  # noqa: EM102, TRY003
+        return html
+
+    async def baixar_documento_externo_web(self, protocolo: str, id_documento: str) -> bytes:
+        """Baixa bytes de um documento externo via documento_download_anexo."""
+        await self.ensure_authenticated()
+        url, referer = await self._get_doc_signed_url(
+            protocolo, id_documento, "documento_download_anexo"
+        )
+        r = await self._http.get(url, headers={"Referer": referer})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"documento_download_anexo status={r.status_code}")  # noqa: EM102, TRY003
+        if "text/html" in r.headers.get("content-type", "").lower():
+            # Anexo não chega como text/html: é página de erro com status 200
+            erro = _extrair_erro_sei(r.content.decode("iso-8859-1", "replace"))
+            raise RuntimeError(  # noqa: TRY003
+                f"documento_download_anexo: {erro or 'resposta HTML inesperada'}"  # noqa: EM102
+            )
+        return r.content
+
+    async def consultar_processo_detalhe(self, protocolo: str) -> dict:
+        """Scrape de procedimento_consultar: unidades, interessados, sobrestamento.
+
+        Navega trabalhar → arvore → link procedimento_consultar → parse tabelas.
+        """
+        await self.ensure_authenticated()
+
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+
+        m = re.search(
+            r"(controlador\.php\?acao=procedimento_consultar[^\"'\s]*infra_hash=[a-f0-9]+)",
+            html_arvore,
+        )
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Link procedimento_consultar não encontrado na árvore de {protocolo}."  # noqa: EM102
+            )
+        consultar_url = urljoin(sei_base, m.group(1).replace("&amp;", "&"))
+
+        r = await self._http.get(consultar_url, headers={"Referer": url_arvore})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"procedimento_consultar status={r.status_code}")  # noqa: EM102, TRY003
+
+        html = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(html)
+        if erro:
+            raise RuntimeError(f"procedimento_consultar: {erro}")  # noqa: EM102, TRY003
+        return _parse_procedimento_consultar(html, protocolo)
 
     async def _gerar_arquivo_processo(self, protocolo_formatado: str, acao: str) -> bytes:  # noqa: C901, PLR0912, PLR0915
         """Helper compartilhado para gerar_pdf_processo e gerar_zip_processo.
@@ -972,8 +1152,7 @@ class SEIWebClient:
         Usa o mesmo endpoint do botão "Gerar PDF" da interface web.
         Retorna os bytes brutos do PDF.
         """
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
         content = await self._gerar_arquivo_processo(protocolo_formatado, "procedimento_gerar_pdf")
         if "pdf" not in self._http.headers.get("accept", "").lower():
             pass  # conteúdo válido independente do accept
@@ -988,8 +1167,7 @@ class SEIWebClient:
         Usa o mesmo endpoint do botão "Gerar ZIP" da interface web.
         Retorna os bytes brutos do arquivo ZIP.
         """
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
         return await self._gerar_arquivo_processo(protocolo_formatado, "procedimento_gerar_zip")
 
     async def listar_atividades(self, protocolo_formatado: str) -> dict:  # noqa: C901
@@ -1005,8 +1183,7 @@ class SEIWebClient:
               "andamentos": [{data_hora, unidade, usuario, descricao}, ...],
             }
         """
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
 
         # garante que o protocolo está no cache
         if protocolo_formatado not in self._trabalhar_links:
@@ -1105,8 +1282,7 @@ class SEIWebClient:
         import os as _os  # noqa: PLC0415
         from datetime import date as _date  # noqa: PLC0415
 
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
 
         if protocolo_formatado not in self._trabalhar_links:
             await self.fetch_inbox(detalhada=False)
@@ -1395,6 +1571,7 @@ class SEIWebClient:
 
         m_id = re.search(r"id_documento=(\d+)", final_url)
         id_doc = m_id.group(1) if m_id else ""
+        self._invalidar_arvore(protocolo_formatado)
         return {
             "sucesso": True,
             "id_documento": id_doc,
@@ -1724,3 +1901,145 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:  # noqa: C901, PLR0912, PL
     if found_any:
         return ("resumida", rows)
     return ("desconhecido", [])
+
+
+# Tabelas de listas conhecidas das páginas de consulta — excluídas da
+# extração genérica de pares label/valor de metadados
+_TABELAS_LISTA = frozenset(
+    {
+        "tblAssinaturas",
+        "tblCiencias",
+        "tblSobrestamento",
+        "tblUnidadesProcesso",
+        "tblAndamento",
+        "tblInteressados",
+        "tblHistorico",
+        "tblDocumentos",
+    }
+)
+
+
+def _extrair_metadados_tabelas(soup: BeautifulSoup, result: dict[str, object]) -> None:
+    """Extrai pares label/valor (th + td) das tabelas de metadados da página.
+
+    Ignora as tabelas de listas conhecidas (assinaturas, ciências, etc.) e
+    linhas de cabeçalho (duas células <th>), que não são pares label/valor.
+    """
+    for tbl in soup.find_all("table"):
+        if not isinstance(tbl, Tag):
+            continue
+        if _tag_str(tbl, "id") in _TABELAS_LISTA:
+            continue
+        for tr in tbl.find_all("tr"):
+            cels = tr.find_all(["th", "td"])
+            if len(cels) != 2:  # noqa: PLR2004
+                continue
+            if cels[0].name == "th" and cels[1].name == "th":
+                continue  # linha de cabeçalho, não par label/valor
+            k = cels[0].get_text(" ", strip=True).rstrip(":").lower()
+            v = cels[1].get_text(" ", strip=True)
+            if k and v and len(k) < 60:  # noqa: PLR2004
+                result[k.replace(" ", "_").replace("/", "_")] = v
+
+
+def _parse_documento_consultar(html: str, id_documento: str) -> dict:
+    """Extrai metadados, assinaturas e ciências de documento_consultar."""
+    soup = BeautifulSoup(html, "html.parser")
+    result: dict[str, object] = {"id_documento": id_documento}
+
+    _extrair_metadados_tabelas(soup, result)
+
+    # -- assinaturas: tblAssinaturas --
+    assinaturas: list[dict] = []
+    tbl_ass = soup.find("table", id="tblAssinaturas")
+    if tbl_ass and isinstance(tbl_ass, Tag):
+        for tr in tbl_ass.find_all("tr")[1:]:
+            tds = tr.find_all("td")
+            if len(tds) >= 3:  # noqa: PLR2004
+                assinaturas.append(
+                    {
+                        "assinante": tds[0].get_text(" ", strip=True),
+                        "cargo": tds[1].get_text(" ", strip=True),
+                        "data_hora": tds[2].get_text(" ", strip=True),
+                    }
+                )
+    result["assinaturas"] = assinaturas
+
+    # -- ciências: tblCiencias --
+    ciencias: list[dict] = []
+    tbl_cien = soup.find("table", id="tblCiencias")
+    if tbl_cien and isinstance(tbl_cien, Tag):
+        for tr in tbl_cien.find_all("tr")[1:]:
+            tds = tr.find_all("td")
+            if len(tds) >= 3:  # noqa: PLR2004
+                ciencias.append(
+                    {
+                        "usuario": tds[0].get_text(" ", strip=True),
+                        "cargo": tds[1].get_text(" ", strip=True),
+                        "data_hora": tds[2].get_text(" ", strip=True),
+                    }
+                )
+    result["ciencias"] = ciencias
+
+    return result
+
+
+def _parse_procedimento_consultar(html: str, protocolo: str) -> dict:  # noqa: C901, PLR0912
+    """Extrai unidades abertas, interessados e sobrestamento de procedimento_consultar."""
+    soup = BeautifulSoup(html, "html.parser")
+    result: dict[str, object] = {"protocolo": protocolo}
+
+    _extrair_metadados_tabelas(soup, result)
+
+    # -- unidades abertas: tblUnidadesProcesso --
+    # (tblAndamento NÃO serve de fallback: é histórico com layout
+    # data/unidade/usuário/descrição, não lista de unidades abertas)
+    unidades: list[dict] = []
+    tbl_un = soup.find("table", id="tblUnidadesProcesso")
+    if tbl_un and isinstance(tbl_un, Tag):
+        for tr in tbl_un.find_all("tr")[1:]:
+            tds = tr.find_all("td")
+            if tds:
+                entry: dict[str, str] = {"unidade": tds[0].get_text(" ", strip=True)}
+                if len(tds) >= 2:  # noqa: PLR2004
+                    entry["situacao"] = tds[1].get_text(" ", strip=True)
+                unidades.append(entry)
+    # Fallback: procura qualquer link de unidade
+    if not unidades:
+        for a in soup.find_all("a", href=re.compile(r"acao=unidade_visualizar")):
+            if isinstance(a, Tag):
+                txt = a.get_text(" ", strip=True)
+                if txt:
+                    unidades.append({"unidade": txt})
+    result["unidades_abertas"] = unidades
+
+    # -- interessados: busca por label ou tabela --
+    interessados: list[str] = []
+    tbl_int = soup.find("table", id="tblInteressados")
+    if tbl_int and isinstance(tbl_int, Tag):
+        for tr in tbl_int.find_all("tr")[1:]:
+            tds = tr.find_all("td")
+            if tds:
+                v = tds[0].get_text(" ", strip=True)
+                if v:
+                    interessados.append(v)
+    if not interessados and "interessados" in result:
+        interessados = [str(result.pop("interessados"))]
+    result["interessados"] = interessados
+
+    # -- sobrestamento: campo "Sobrestado" ou tabela tblSobrestamento --
+    sobrestamentos: list[dict] = []
+    tbl_sob = soup.find("table", id="tblSobrestamento")
+    if tbl_sob and isinstance(tbl_sob, Tag):
+        for tr in tbl_sob.find_all("tr")[1:]:
+            tds = tr.find_all("td")
+            if len(tds) >= 2:  # noqa: PLR2004
+                sobrestamentos.append(
+                    {
+                        "motivo": tds[0].get_text(" ", strip=True),
+                        "data": tds[1].get_text(" ", strip=True),
+                    }
+                )
+    result["sobrestamentos"] = sobrestamentos
+
+    return result

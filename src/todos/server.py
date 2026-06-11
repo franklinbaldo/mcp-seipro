@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import unicodedata
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Any, Literal, cast
@@ -293,6 +294,55 @@ async def _solicitar_consentimento_via_elicit(
     if result.action == "accept" and result.data and result.data.autorizo_acesso:
         return "aceitou"
     return "recusou"
+
+
+def _nivel_acesso_meta_web(meta: dict) -> str | None:
+    """Extrai o nível de acesso ('0'/'1'/'2') de metadados scrapeados da web.
+
+    As chaves vêm normalizadas do parser (ex: 'nível_de_acesso') e o valor é
+    o texto da página (ex: 'Restrito'); ambos variam com acentuação.
+    """
+    for k, v in meta.items():
+        k_ascii = unicodedata.normalize("NFKD", str(k)).encode("ascii", "ignore").decode()
+        if "nivel" in k_ascii and "acesso" in k_ascii:
+            texto = unicodedata.normalize("NFKD", str(v)).encode("ascii", "ignore").decode().lower()
+            if "sigilos" in texto:
+                return access_control.SIGILOSO
+            if "restrit" in texto:
+                return access_control.RESTRITO
+            if "public" in texto:
+                return access_control.PUBLICO
+            return access_control.normalizar_nivel(v)
+    return None
+
+
+async def _aplicar_gate_documento_web(
+    web: SEIWebClient,
+    processo: str,
+    id_documento: str,
+    tipo_documento: str,
+    confirmou: bool,  # noqa: FBT001
+) -> dict | None:
+    """Gate de acesso restrito para os fallbacks web-only.
+
+    Consulta os metadados scrapeados de documento_consultar e, se o documento
+    for restrito/sigiloso sem consentimento, retorna o payload de bloqueio.
+    Retorna None quando o acesso está liberado. Falha na consulta propaga
+    como exceção (fail-closed): sem metadados não há como classificar o nível.
+    """
+    if confirmou or access_control.env_permite_restritos():
+        return None
+    meta = await web.consultar_documento_web(processo, id_documento)
+    nivel = _nivel_acesso_meta_web(meta)
+    if not access_control.precisa_disclaimer(nivel):
+        return None
+    alvo = {
+        "tipo": "documento",
+        "id": str(id_documento),
+        "tipo_documento": tipo_documento,
+        "processo": processo,
+    }
+    return access_control.construir_aviso_bloqueio(nivel, None, alvo)
 
 
 async def _aplicar_gate_documento(  # noqa: PLR0911
@@ -590,8 +640,6 @@ async def sei_arvore_processo(
     """
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:  # noqa: SLF001
-            await web.login()
         result = await web.listar_documentos(protocolo_formatado)
         return _json(result)
     except Exception as e:  # noqa: BLE001
@@ -613,8 +661,6 @@ async def sei_listar_documentos(
     """
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:  # noqa: SLF001
-            await web.login()
         result = await web.listar_documentos(protocolo_formatado)
         return _json(result)
     except Exception as e:  # noqa: BLE001
@@ -770,11 +816,12 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
 
 
 @mcp.tool()
-async def sei_ler_documento(  # noqa: C901, PLR0911, PLR0912
+async def sei_ler_documento(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915
     id_documento: str,
     tipo_documento: Literal["auto", "I", "X"] = "auto",
     formato: Literal["markdown", "texto", "html"] = "markdown",
     confirmar_acesso_restrito: bool = False,  # noqa: FBT001, FBT002
+    processo: str | None = None,
     ctx: Context | None = None,
 ) -> str:
     """Lê o conteúdo de um documento do SEI e retorna texto legível.
@@ -790,6 +837,8 @@ async def sei_ler_documento(  # noqa: C901, PLR0911, PLR0912
     - formato='texto': texto plano sem formatação
     - formato='html': HTML original (só para internos)
 
+    - processo: protocolo do processo (necessário em instâncias sem mod-wssei)
+
     - confirmar_acesso_restrito: NÃO ative por iniciativa do modelo. Esta
       flag só deve ser definida como true quando o usuário humano da
       conversa, em mensagem própria após ler o aviso de riscos, declarar
@@ -801,6 +850,48 @@ async def sei_ler_documento(  # noqa: C901, PLR0911, PLR0912
     PDFs escaneados são processados via OCR automaticamente.
     """
     try:
+        backend = _get_backend(ctx)
+        if not backend.has_rest:
+            # web-only fallback
+            if processo is None:
+                return _error(
+                    "Em instâncias sem mod-wssei, forneça o parâmetro 'processo' "
+                    "(protocolo do processo, ex: '50300.018905/2018-67') para ler documentos."
+                )
+            web = backend.web
+
+            bloqueio = await _aplicar_gate_documento_web(
+                web, processo, id_documento, tipo_documento, confirmou=confirmar_acesso_restrito
+            )
+            if bloqueio is not None:
+                return _json(bloqueio)
+
+            def _pdf_resposta(raw_bytes: bytes) -> str:
+                if raw_bytes[:4] != b"%PDF":
+                    return _error("Documento externo não é PDF. Use sei_baixar_anexo.")
+                if formato == "markdown":
+                    return pdf_to_markdown(raw_bytes)
+                if formato == "html":
+                    return _error("formato='html' só é válido para documentos internos.")
+                return pdf_to_text(raw_bytes)
+
+            if tipo_documento == "auto":
+                # Tenta interno primeiro; se falhar, tenta externo
+                try:
+                    raw = await web.visualizar_documento_interno_web(processo, id_documento)
+                except Exception:  # noqa: BLE001
+                    raw_bytes = await web.baixar_documento_externo_web(processo, id_documento)
+                    return _pdf_resposta(raw_bytes)
+            elif tipo_documento == "X":
+                raw_bytes = await web.baixar_documento_externo_web(processo, id_documento)
+                return _pdf_resposta(raw_bytes)
+            else:
+                raw = await web.visualizar_documento_interno_web(processo, id_documento)
+            if formato == "markdown":
+                return html_to_markdown(raw)
+            if formato == "texto":
+                return html_to_text(raw)
+            return raw
         client = _get_client(ctx)
 
         # Resolver referência → id interno + tipo
@@ -882,15 +973,18 @@ async def sei_ler_documento(  # noqa: C901, PLR0911, PLR0912
 
 
 @mcp.tool()
-async def sei_baixar_anexo(
+async def sei_baixar_anexo(  # noqa: C901, PLR0911
     id_documento: str,
     confirmar_acesso_restrito: bool = False,  # noqa: FBT001, FBT002
+    processo: str | None = None,
     ctx: Context | None = None,
 ) -> str:
     """Baixa um documento externo (anexo) do SEI em base64.
 
     Aceita tanto o id interno (ex: "3149544") quanto o número SEI /
     protocoloFormatado (ex: "2867926") — auto-resolve via pesquisa Solr.
+
+    - processo: protocolo do processo (necessário em instâncias sem mod-wssei)
 
     Use para documentos com tipoDocumento='X' (📎).
     Para PDFs com texto, prefira sei_ler_documento(tipo_documento='X')
@@ -905,6 +999,26 @@ async def sei_baixar_anexo(
     usuário e aguarde decisão explícita — não tente caminhos alternativos.
     """
     try:
+        backend = _get_backend(ctx)
+        if not backend.has_rest:
+            if processo is None:
+                return _error(
+                    "Em instâncias sem mod-wssei, forneça o parâmetro 'processo' "
+                    "para baixar anexos."
+                )
+            bloqueio = await _aplicar_gate_documento_web(
+                backend.web, processo, id_documento, "X", confirmou=confirmar_acesso_restrito
+            )
+            if bloqueio is not None:
+                return _json(bloqueio)
+            content = await backend.web.baixar_documento_externo_web(processo, id_documento)
+            if len(content) > MAX_BINARY_SIZE:
+                return _error(
+                    f"Documento muito grande ({len(content)} bytes, limite {MAX_BINARY_SIZE}). "
+                    "Baixe manualmente pelo SEI."
+                )
+            return _json({"base64": base64.b64encode(content).decode(), "size_bytes": len(content)})
+
         client = _get_client(ctx)
 
         # Auto-resolver número SEI → id interno (igual a sei_ler_documento)
@@ -1221,8 +1335,6 @@ async def sei_listar_processos(
     """
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:  # noqa: SLF001
-            await web.login()
         result = await web.listar_processos(
             detalhada=True,
             pagina=pagina,
@@ -2088,6 +2200,8 @@ async def sei_sobrestar_processo(
                 return _json(result)
             except Exception as e:  # noqa: BLE001
                 msg = str(e)
+                # Enriquece o erro com as unidades onde o processo está aberto,
+                # para orientar o LLM a concluir o processo antes de sobrestar.
                 if "aberto" in msg.lower() or "unidade" in msg.lower():
                     try:
                         resp = await backend.rest._request(  # noqa: SLF001
@@ -2191,6 +2305,7 @@ async def sei_dar_ciencia(
 async def sei_listar_ciencias(
     referencia: str,
     tipo: Literal["documento", "processo"] = "documento",
+    processo: str | None = None,
     ctx: Context | None = None,
 ) -> str:
     """Lista as ciências registradas em um documento ou processo.
@@ -2198,16 +2313,31 @@ async def sei_listar_ciencias(
     Parâmetros:
     - referencia: número SEI do documento OU protocolo/IdProcedimento do processo
     - tipo: "documento" (padrão) ou "processo"
+    - processo: protocolo do processo (necessário em instâncias sem mod-wssei quando tipo="documento")
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-
-        if tipo == "documento":
-            doc_id, _ = await _resolver_documento(client, referencia)
-            result = await client.listar_ciencias_documento(doc_id)
-        else:
-            id_proc = await _resolver_processo(client, referencia)
-            result = await client.listar_ciencias_processo(id_proc)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            if tipo == "documento":
+                doc_id, _ = await _resolver_documento(backend.rest, referencia)
+                result = await backend.rest.listar_ciencias_documento(doc_id)
+            else:
+                id_proc = await _resolver_processo(backend.rest, referencia)
+                result = await backend.rest.listar_ciencias_processo(id_proc)
+            return _json(result)
+        # web fallback
+        if tipo == "processo":
+            return _error(
+                "Listar ciências de processo requer mod-wssei (REST). "
+                "Configure SEI_URL para habilitar esta funcionalidade."
+            )
+        if processo is None:
+            return _error(
+                "Em instâncias sem mod-wssei, forneça 'processo' para listar ciências de documento."
+            )
+        result = await backend.web.listar_ciencias_web(processo, referencia)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -2299,8 +2429,6 @@ async def sei_executar_acao(
         )
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:  # noqa: SLF001
-            await web.login()
         result = await web.executar_acao_processo(processo, acao)
         return _json(result)
     except Exception as e:  # noqa: BLE001
@@ -2312,12 +2440,18 @@ async def sei_listar_unidades_processo(
     processo: str,
     ctx: Context | None = None,
 ) -> str:
-    """Lista as unidades onde o processo está aberto."""
+    """Lista as unidades onde o processo está aberto.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.listar_unidades_processo(id_proc)
-        return _json(result)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.listar_unidades_processo(id_proc)
+            return _json(result)
+        detalhe = await backend.web.consultar_processo_detalhe(processo)
+        return _json(detalhe.get("unidades_abertas", []))
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
@@ -2327,12 +2461,18 @@ async def sei_listar_interessados(
     processo: str,
     ctx: Context | None = None,
 ) -> str:
-    """Lista os interessados de um processo."""
+    """Lista os interessados de um processo.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.listar_interessados(id_proc)
-        return _json(result)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.listar_interessados(id_proc)
+            return _json(result)
+        detalhe = await backend.web.consultar_processo_detalhe(processo)
+        return _json(detalhe.get("interessados", []))
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
@@ -2342,12 +2482,18 @@ async def sei_listar_sobrestamentos(
     processo: str,
     ctx: Context | None = None,
 ) -> str:
-    """Lista o histórico de sobrestamentos de um processo."""
+    """Lista o histórico de sobrestamentos de um processo.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.listar_sobrestamentos(id_proc)
-        return _json(result)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.listar_sobrestamentos(id_proc)
+            return _json(result)
+        detalhe = await backend.web.consultar_processo_detalhe(processo)
+        return _json(detalhe.get("sobrestamentos", []))
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
@@ -2355,12 +2501,27 @@ async def sei_listar_sobrestamentos(
 @mcp.tool()
 async def sei_listar_assinaturas(
     id_documento: str,
+    processo: str | None = None,
     ctx: Context | None = None,
 ) -> str:
-    """Lista as assinaturas de um documento."""
+    """Lista as assinaturas de um documento.
+
+    - id_documento: id interno do documento
+    - processo: protocolo do processo (necessário em instâncias sem mod-wssei)
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_assinaturas(id_documento)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_assinaturas(id_documento)
+            return _json(result)
+        if processo is None:
+            return _error(
+                "Em instâncias sem mod-wssei, forneça o parâmetro 'processo' "
+                "para listar assinaturas."
+            )
+        result = await backend.web.listar_assinaturas_web(processo, id_documento)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3114,6 +3275,7 @@ async def sei_pesquisar_textos_padrao(
 @mcp.tool()
 async def sei_consultar_documento_externo(
     id_documento: str,
+    processo: str | None = None,
     ctx: Context | None = None,
 ) -> str:
     """Consulta metadados de um documento externo pelo ID.
@@ -3121,6 +3283,8 @@ async def sei_consultar_documento_externo(
     Aceita tanto o id interno (ex: "3149544") quanto o número SEI /
     protocoloFormatado (ex: "2867926") — auto-resolve via pesquisa Solr
     quando necessário.
+
+    - processo: protocolo do processo (necessário em instâncias sem mod-wssei)
 
     Retorna informações como tipo, data, nível de acesso, etc.
     Para baixar o conteúdo use sei_baixar_anexo ou sei_ler_documento.
@@ -3131,8 +3295,18 @@ async def sei_consultar_documento_externo(
     privacidade, NÃO erro de permissão. Os metadados foram retornados
     normalmente; não tente trocar de unidade ou rotas alternativas.
     Se falhar com erro inesperado, use sei_versao para verificar a versão.
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
+        backend = _get_backend(ctx)
+        if not backend.has_rest:
+            if processo is None:
+                return _error(
+                    "Em instâncias sem mod-wssei, forneça o parâmetro 'processo' "
+                    "para consultar metadados de documento."
+                )
+            result = await backend.web.consultar_documento_web(processo, id_documento)
+            return _json(result)
         client = _get_client(ctx)
         try:
             result = await client.consultar_documento_externo(id_documento)
@@ -3461,8 +3635,6 @@ async def sei_listar_atividades(
     """
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:  # noqa: SLF001
-            await web.login()
         result = await web.listar_atividades(processo)
         return _json(result)
     except Exception as e:  # noqa: BLE001
@@ -3493,8 +3665,6 @@ async def sei_gerar_pdf_processo(
 
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:  # noqa: SLF001
-            await web.login()
 
         pdf_bytes = await web.gerar_pdf_processo(processo)
 
@@ -3540,8 +3710,6 @@ async def sei_gerar_zip_processo(
 
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:  # noqa: SLF001
-            await web.login()
 
         zip_bytes = await web.gerar_zip_processo(processo)
 
@@ -3624,8 +3792,6 @@ async def sei_incluir_documento_externo(  # noqa: PLR0913
             return _error("Informe arquivo_path (local) ou arquivo_base64 (remoto).")
 
         web = _get_web_client(ctx)
-        if web._inbox_url is None:  # noqa: SLF001
-            await web.login()
 
         result = await web.incluir_documento_externo(
             protocolo_formatado=processo,
