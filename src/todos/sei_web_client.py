@@ -770,9 +770,9 @@ class SEIWebClient:
             if erro2:
                 raise RuntimeError(erro2)
         else:
-            # Sem form: pode ser ação que executa direto via GET (redirect imediato).
-            # Valida ausência de erros e loga para facilitar debug.
-            if _extrair_erro_sei(body):
+            # Sem form: pode ser ação que executa direto via GET (ex: redirect imediato).
+            # Valida que não há erro oculto e loga para facilitar debug.
+            if _extrair_erro_sei(body):  # já checado acima mas re-verifica body completo
                 raise RuntimeError(f"Ação '{nome_acao}' falhou sem form de confirmação.")  # noqa: EM102, TRY003
             logger.debug(
                 "executar_acao_processo: ação '%s' concluída via GET (sem form)", nome_acao
@@ -858,6 +858,123 @@ class SEIWebClient:
                 textareas.append(n)
 
         return {"campos": campos, "selects": selects, "textareas": textareas}
+
+    # ------------------------------------------------------------------
+    # Read scrapers — PR #4
+    # ------------------------------------------------------------------
+
+    async def _get_doc_signed_url(
+        self, protocolo: str, id_documento: str, acao: str
+    ) -> tuple[str, str]:
+        """Retorna (signed_url, arvore_url) para uma ação de documento.
+
+        Busca nos Nos[] do JS de arvore_montar a URL assinada com infra_hash
+        para o documento especificado. O `link` de cada Nó é o href para
+        `documento_consultar`; para outras ações usa busca por regex.
+        """
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+
+        # Para documento_consultar, o link está em Nos[].link
+        if acao == "documento_consultar":
+            nos = parse_arvore_nos(html_arvore)
+            for no in nos[1:]:
+                if no.get("id") == id_documento and no.get("link"):
+                    raw = no["link"].replace("&amp;", "&")
+                    return urljoin(sei_base, raw), url_arvore
+
+        # Busca genérica: qualquer URL com acao=X e id_documento=Y
+        pattern = (
+            rf"(controlador\.php\?acao={re.escape(acao)}"
+            rf"[^\"'\s]*id_documento={re.escape(id_documento)}"
+            rf"[^\"'\s]*infra_hash=[a-f0-9]+)"
+        )
+        m = re.search(pattern, html_arvore)
+        if not m:
+            # Tenta ordem invertida (infra_hash antes de id_documento)
+            pattern2 = (
+                rf"(controlador\.php\?acao={re.escape(acao)}"
+                rf"[^\"'\s]*infra_hash=[a-f0-9]+"
+                rf"[^\"'\s]*id_documento={re.escape(id_documento)}"
+                rf"[^\"'\s]*)"
+            )
+            m = re.search(pattern2, html_arvore)
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Ação '{acao}' não encontrada para o documento {id_documento} "  # noqa: EM102
+                f"na árvore do processo {protocolo}."
+            )
+        return urljoin(sei_base, m.group(1).replace("&amp;", "&")), url_arvore
+
+    async def consultar_documento_web(self, protocolo: str, id_documento: str) -> dict:
+        """Scrape dos metadados de documento_consultar (tipo, data, assinaturas, etc.)."""
+        await self.ensure_authenticated()
+        url, referer = await self._get_doc_signed_url(
+            protocolo, id_documento, "documento_consultar"
+        )
+        r = await self._http.get(url, headers={"Referer": referer})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"documento_consultar status={r.status_code}")  # noqa: EM102, TRY003
+        html = r.content.decode("iso-8859-1", "replace")
+        return _parse_documento_consultar(html, id_documento)
+
+    async def listar_assinaturas_web(self, protocolo: str, id_documento: str) -> list[dict]:
+        """Lista assinaturas de um documento via scrape de documento_consultar."""
+        data = await self.consultar_documento_web(protocolo, id_documento)
+        return data.get("assinaturas", [])  # type: ignore[return-value]
+
+    async def listar_ciencias_web(self, protocolo: str, id_documento: str) -> list[dict]:
+        """Lista ciências de um documento via scrape de documento_consultar."""
+        data = await self.consultar_documento_web(protocolo, id_documento)
+        return data.get("ciencias", [])  # type: ignore[return-value]
+
+    async def visualizar_documento_interno_web(self, protocolo: str, id_documento: str) -> str:
+        """Retorna HTML de um documento interno via documento_visualizar."""
+        await self.ensure_authenticated()
+        url, referer = await self._get_doc_signed_url(
+            protocolo, id_documento, "documento_visualizar"
+        )
+        r = await self._http.get(url, headers={"Referer": referer})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"documento_visualizar status={r.status_code}")  # noqa: EM102, TRY003
+        return r.content.decode("iso-8859-1", "replace")
+
+    async def baixar_documento_externo_web(self, protocolo: str, id_documento: str) -> bytes:
+        """Baixa bytes de um documento externo via documento_download_anexo."""
+        await self.ensure_authenticated()
+        url, referer = await self._get_doc_signed_url(
+            protocolo, id_documento, "documento_download_anexo"
+        )
+        r = await self._http.get(url, headers={"Referer": referer})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"documento_download_anexo status={r.status_code}")  # noqa: EM102, TRY003
+        return r.content
+
+    async def consultar_processo_detalhe(self, protocolo: str) -> dict:
+        """Scrape de procedimento_consultar: unidades, interessados, sobrestamento.
+
+        Navega trabalhar → arvore → link procedimento_consultar → parse tabelas.
+        """
+        await self.ensure_authenticated()
+
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+
+        m = re.search(
+            r"(controlador\.php\?acao=procedimento_consultar[^\"'\s]*infra_hash=[a-f0-9]+)",
+            html_arvore,
+        )
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Link procedimento_consultar não encontrado na árvore de {protocolo}."  # noqa: EM102
+            )
+        consultar_url = urljoin(sei_base, m.group(1).replace("&amp;", "&"))
+
+        r = await self._http.get(consultar_url, headers={"Referer": url_arvore})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"procedimento_consultar status={r.status_code}")  # noqa: EM102, TRY003
+
+        return _parse_procedimento_consultar(r.content.decode("iso-8859-1", "replace"), protocolo)
 
     async def _gerar_arquivo_processo(self, protocolo_formatado: str, acao: str) -> bytes:  # noqa: C901, PLR0912, PLR0915
         """Helper compartilhado para gerar_pdf_processo e gerar_zip_processo.
@@ -1724,3 +1841,128 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:  # noqa: C901, PLR0912, PL
     if found_any:
         return ("resumida", rows)
     return ("desconhecido", [])
+
+
+def _parse_documento_consultar(html: str, id_documento: str) -> dict:  # noqa: C901
+    """Extrai metadados, assinaturas e ciências de documento_consultar."""
+    soup = BeautifulSoup(html, "html.parser")
+    result: dict[str, object] = {"id_documento": id_documento}
+
+    # -- metadados: tabela de campos (th + td pairs) --
+    for tbl in soup.find_all("table"):
+        if not isinstance(tbl, Tag):
+            continue
+        for tr in tbl.find_all("tr"):
+            tds = tr.find_all(["th", "td"])
+            if len(tds) == 2:  # noqa: PLR2004
+                k = tds[0].get_text(" ", strip=True).rstrip(":").lower()
+                v = tds[1].get_text(" ", strip=True)
+                if k and v:
+                    key = k.replace(" ", "_").replace("/", "_")
+                    result[key] = v
+
+    # -- assinaturas: tblAssinaturas --
+    assinaturas: list[dict] = []
+    tbl_ass = soup.find("table", id="tblAssinaturas")
+    if tbl_ass and isinstance(tbl_ass, Tag):
+        for tr in tbl_ass.find_all("tr")[1:]:
+            tds = tr.find_all("td")
+            if len(tds) >= 3:  # noqa: PLR2004
+                assinaturas.append(
+                    {
+                        "assinante": tds[0].get_text(" ", strip=True),
+                        "cargo": tds[1].get_text(" ", strip=True),
+                        "data_hora": tds[2].get_text(" ", strip=True),
+                    }
+                )
+    result["assinaturas"] = assinaturas
+
+    # -- ciências: tblCiencias --
+    ciencias: list[dict] = []
+    tbl_cien = soup.find("table", id="tblCiencias")
+    if tbl_cien and isinstance(tbl_cien, Tag):
+        for tr in tbl_cien.find_all("tr")[1:]:
+            tds = tr.find_all("td")
+            if len(tds) >= 3:  # noqa: PLR2004
+                ciencias.append(
+                    {
+                        "usuario": tds[0].get_text(" ", strip=True),
+                        "cargo": tds[1].get_text(" ", strip=True),
+                        "data_hora": tds[2].get_text(" ", strip=True),
+                    }
+                )
+    result["ciencias"] = ciencias
+
+    return result
+
+
+def _parse_procedimento_consultar(html: str, protocolo: str) -> dict:  # noqa: C901, PLR0912
+    """Extrai unidades abertas, interessados e sobrestamento de procedimento_consultar."""
+    soup = BeautifulSoup(html, "html.parser")
+    result: dict[str, object] = {"protocolo": protocolo}
+
+    # -- metadados gerais: table com th+td pairs --
+    for tbl in soup.find_all("table"):
+        if not isinstance(tbl, Tag):
+            continue
+        for tr in tbl.find_all("tr"):
+            tds = tr.find_all(["th", "td"])
+            if len(tds) == 2:  # noqa: PLR2004
+                k = tds[0].get_text(" ", strip=True).rstrip(":").lower()
+                v = tds[1].get_text(" ", strip=True)
+                if k and v and len(k) < 60:  # noqa: PLR2004
+                    result[k.replace(" ", "_").replace("/", "_")] = v
+
+    # -- unidades abertas: tblUnidadesProcesso --
+    unidades: list[dict] = []
+    for tbl_id in ("tblUnidadesProcesso", "tblAndamento"):
+        tbl_un = soup.find("table", id=tbl_id)
+        if tbl_un and isinstance(tbl_un, Tag):
+            for tr in tbl_un.find_all("tr")[1:]:
+                tds = tr.find_all("td")
+                if tds:
+                    entry: dict[str, str] = {"unidade": tds[0].get_text(" ", strip=True)}
+                    if len(tds) >= 2:  # noqa: PLR2004
+                        entry["situacao"] = tds[1].get_text(" ", strip=True)
+                    unidades.append(entry)
+            if unidades:
+                break
+    # Fallback: procura qualquer link de unidade
+    if not unidades:
+        for a in soup.find_all("a", href=re.compile(r"acao=unidade_visualizar")):
+            if isinstance(a, Tag):
+                txt = a.get_text(" ", strip=True)
+                if txt:
+                    unidades.append({"unidade": txt})
+    result["unidades_abertas"] = unidades
+
+    # -- interessados: busca por label ou tabela --
+    interessados: list[str] = []
+    tbl_int = soup.find("table", id="tblInteressados")
+    if tbl_int and isinstance(tbl_int, Tag):
+        for tr in tbl_int.find_all("tr")[1:]:
+            tds = tr.find_all("td")
+            if tds:
+                v = tds[0].get_text(" ", strip=True)
+                if v:
+                    interessados.append(v)
+    if not interessados and "interessados" in result:
+        interessados = [str(result.pop("interessados"))]
+    result["interessados"] = interessados
+
+    # -- sobrestamento: campo "Sobrestado" ou tabela tblSobrestamento --
+    sobrestamentos: list[dict] = []
+    tbl_sob = soup.find("table", id="tblSobrestamento")
+    if tbl_sob and isinstance(tbl_sob, Tag):
+        for tr in tbl_sob.find_all("tr")[1:]:
+            tds = tr.find_all("td")
+            if len(tds) >= 2:  # noqa: PLR2004
+                sobrestamentos.append(
+                    {
+                        "motivo": tds[0].get_text(" ", strip=True),
+                        "data": tds[1].get_text(" ", strip=True),
+                    }
+                )
+    result["sobrestamentos"] = sobrestamentos
+
+    return result
