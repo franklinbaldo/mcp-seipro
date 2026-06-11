@@ -1,8 +1,8 @@
 # todos
 
-[![PyPI](https://img.shields.io/pypi/v/todos)](https://pypi.org/project/todos/)
-[![Python](https://img.shields.io/pypi/pyversions/todos)](https://pypi.org/project/todos/)
-[![License](https://img.shields.io/pypi/l/todos)](https://pypi.org/project/todos/)
+[![PyPI](https://img.shields.io/pypi/v/mcp-sei)](https://pypi.org/project/mcp-sei/)
+[![Python](https://img.shields.io/pypi/pyversions/mcp-sei)](https://pypi.org/project/mcp-sei/)
+[![License](https://img.shields.io/pypi/l/mcp-sei)](https://pypi.org/project/mcp-sei/)
 
 **TOdos Domina O Sei** — MCP Server para o SEI (Sistema Eletrônico de Informações) com arquitetura **web-first**: scraper HTTP do frontend + REST mod-wssei v2 quando disponível. Funciona em qualquer instância SEI 4.0+ — **inclusive sem mod-wssei instalado**.
 
@@ -17,7 +17,7 @@ Baixe o arquivo [`todos.mcpb`](https://github.com/franklinbaldo/todos/releases/l
 ### Opção 2: PyPI (pip)
 
 ```bash
-pip install todos
+pip install mcp-sei
 ```
 
 ### Opção 3: Instalador interativo
@@ -496,7 +496,7 @@ railway up
 ## Links
 
 - [SEI Pro](https://sei-pro.github.io/sei-pro/) — Extensão de navegador para o SEI
-- [PyPI](https://pypi.org/project/todos/)
+- [PyPI](https://pypi.org/project/mcp-sei/)
 - [Repositório](https://github.com/franklinbaldo/todos)
 - [RFC 0001 — Web-first](docs/rfc/0001-web-first.md)
 - [Railway](https://railway.com?referralCode=jJJ7Xz) — Plataforma de deploy na nuvem
