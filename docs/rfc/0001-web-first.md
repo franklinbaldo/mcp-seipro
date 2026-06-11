@@ -200,7 +200,8 @@ Critério: todas as 7 tools funcionam em SEI-RO; smoke test passa.
   `sei_listar_sobrestamentos`
 - `sei_baixar_anexo` / `sei_ler_documento` via link
   `documento_download_anexo` da árvore
-- Cache de catálogos em disco (`~/.cache/todos/`, TTL 24h) — ver Decisão 2
+- Cache de catálogos em disco (`~/.cache/todos/`, TTL 24h) — ✅ implementado
+  com `DiskStore` do ecossistema FastMCP; ver Decisão 2
 
 Critério: todas as tools retornam dados corretos em SEI-RO; smoke test passa.
 

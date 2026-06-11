@@ -14,6 +14,7 @@ from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
 from todos import access_control
+from todos.catalog_cache import get_catalog_cache
 from todos.html_utils import (
     html_to_markdown,
     html_to_text,
@@ -41,26 +42,29 @@ _http_port = int(os.environ.get("PORT", 8000))  # noqa: PLW1508
 
 @asynccontextmanager
 async def lifespan(_server: FastMCP):  # noqa: ANN201, D103
-    if _http_mode:
-        clients: dict[str, SEIClient] = {}
-        web_clients: dict[str, SEIWebClient] = {}
-        try:
-            yield {"sei_by_session": clients, "sei_web_by_session": web_clients}
-        finally:
-            await asyncio.gather(
-                *(client.close() for client in clients.values()),
-                *(client.close() for client in web_clients.values()),
-                return_exceptions=True,
-            )
-    else:
-        # Modo stdio: clients com credenciais das env vars
-        client = SEIClient()
-        web_client = SEIWebClient()
-        try:
-            yield {"sei": client, "sei_web": web_client}
-        finally:
-            await client.close()
-            await web_client.close()
+    try:
+        if _http_mode:
+            clients: dict[str, SEIClient] = {}
+            web_clients: dict[str, SEIWebClient] = {}
+            try:
+                yield {"sei_by_session": clients, "sei_web_by_session": web_clients}
+            finally:
+                await asyncio.gather(
+                    *(client.close() for client in clients.values()),
+                    *(client.close() for client in web_clients.values()),
+                    return_exceptions=True,
+                )
+        else:
+            # Modo stdio: clients com credenciais das env vars
+            client = SEIClient()
+            web_client = SEIWebClient()
+            try:
+                yield {"sei": client, "sei_web": web_client}
+            finally:
+                await client.close()
+                await web_client.close()
+    finally:
+        await get_catalog_cache().close()
 
 
 def _get_client(ctx: Context | None) -> SEIClient:

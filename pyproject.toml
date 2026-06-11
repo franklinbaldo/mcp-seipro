@@ -20,6 +20,7 @@ dependencies = [
     "pytesseract>=0.3",
     "uvicorn[standard]>=0.30",
     "fastmcp==3.4.2",
+    "py-key-value-aio[disk]==0.4.5",
 ]
 
 [project.scripts]

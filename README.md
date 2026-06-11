@@ -6,7 +6,7 @@
 
 **TOdos Domina O Sei** — MCP Server para o SEI (Sistema Eletrônico de Informações) com arquitetura **web-first**: scraper HTTP do frontend + REST mod-wssei v2 quando disponível. Funciona em qualquer instância SEI 4.0+ — **inclusive sem mod-wssei instalado**.
 
-**116 tools** para gerenciar processos, documentos, tramitação, assinatura, blocos, marcadores, acompanhamento, credenciamento, modelos e mais. Operações de leitura críticas usam scraper web (**23×** mais rápido que REST). Metadados estáticos em cache TTL 1h.
+**121 tools** para gerenciar processos, documentos, tramitação, assinatura, blocos, marcadores, acompanhamento, credenciamento, modelos e mais. Operações de leitura críticas usam scraper web (**23×** mais rápido que REST). Catálogos estáticos usam cache em disco com TTL de 24h.
 
 ## Origem
 
@@ -388,9 +388,12 @@ O todos opera primariamente via **scraping HTTP do frontend web do SEI** — o m
 | `sei_arvore_processo` | Scraper web (`arvore_montar.php`) | ~12 s → ~1.1 s (**10×**) |
 | `sei_listar_documentos` | Scraper web (`arvore_montar.php`) | ~9.7 s → ~1.1 s (**10×**) |
 | `sei_listar_atividades` | Scraper web (`procedimento_consultar_historico.php`) | ~2.5 s → ~1.2 s (**2×**) |
-| `pesquisar_tipos_processo` | Cache in-memory TTL 1h | ~4.2 s → instant |
-| `listar_unidades_usuario` | Cache in-memory TTL 1h | ~3.0 s → instant |
-| `pesquisar_marcadores` | Cache in-memory TTL 1h | ~2.6 s → instant |
+| `pesquisar_tipos_processo` | Cache em disco TTL 24h | ~4.2 s → instant |
+| `pesquisar_tipos_documento` | Cache em disco TTL 24h | chamadas repetidas instantâneas |
+| `listar_unidades_usuario` | Cache em disco TTL 24h | ~3.0 s → instant |
+
+O cache usa o `DiskStore` do ecossistema FastMCP, persistido por padrão em
+`~/.cache/todos/`. Defina `TODOS_CACHE_DIR` para usar outro diretório.
 
 O scraper:
 
