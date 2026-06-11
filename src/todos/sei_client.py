@@ -378,12 +378,13 @@ class SEIClient:
             return base64.b64decode(data["data"])
         return resp.content
 
-    async def criar_documento_interno(
+    async def criar_documento_interno(  # noqa: PLR0913
         self,
         id_procedimento: str,
         id_serie: str,
         descricao: str = "",
         nivel_acesso: str = "0",
+        hipotese_legal: str = "",
         id_unidade: str = "",
     ) -> dict:
         """Cria documento interno (nativo) em um processo SEI.
@@ -398,7 +399,7 @@ class SEIClient:
                 "descricao": descricao,
                 "dataElaboracao": "",
                 "nivelAcesso": nivel_acesso,
-                "idHipoteseLegal": "",
+                "idHipoteseLegal": hipotese_legal,
                 "grauSigilo": "",
                 "idUnidadeGeradoraProtocolo": id_unidade,
                 "assuntos": "",

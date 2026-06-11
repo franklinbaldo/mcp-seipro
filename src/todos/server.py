@@ -1089,12 +1089,18 @@ async def sei_criar_documento(  # noqa: PLR0913
     try:
         backend = _get_backend(ctx)
         if backend.has_rest:
+            if not id_serie:
+                return _error(
+                    "id_serie é obrigatório no modo REST. "
+                    "Use sei_pesquisar_tipos_documento para listar os tipos disponíveis."
+                )
             id_procedimento = await _resolver_processo(backend.rest, processo)
             result = await backend.rest.criar_documento_interno(
                 id_procedimento=id_procedimento,
                 id_serie=id_serie,
                 descricao=descricao,
                 nivel_acesso=nivel_acesso,
+                hipotese_legal=hipotese_legal,
                 id_unidade=id_unidade,
             )
             return _json(result)
@@ -1783,7 +1789,9 @@ async def sei_enviar_processo(  # noqa: C901, PLR0913
         backend = _get_backend(ctx)
 
         # Resolver unidades destino: aceita sigla ou ID
-        destinos = [d.strip() for d in unidades_destino.split(",")]
+        destinos = [d.strip() for d in unidades_destino.split(",") if d.strip()]
+        if not destinos:
+            return _json({"error": "unidades_destino não pode ser vazio."})
         ids_resolvidos: list[str] = []
 
         for destino in destinos:
@@ -1799,26 +1807,25 @@ async def sei_enviar_processo(  # noqa: C901, PLR0913
                         encontrou = True
                         break
                 if not encontrou:
-                    if unidades:
-                        ids_resolvidos.append(str(unidades[0].get("id", "")))
-                    else:
-                        return _json(
-                            {
-                                "error": f"Unidade '{destino}' não encontrada",
-                                "dica": "Use sei_pesquisar_unidades para buscar.",
-                            }
-                        )
+                    return _json(
+                        {
+                            "error": f"Unidade '{destino}' não encontrada.",
+                            "candidatos": [u.get("sigla") for u in unidades],
+                            "dica": "Use sei_pesquisar_unidades para buscar.",
+                        }
+                    )
             else:
                 # Via AJAX autocomplete
                 matches = await backend.web.autocomplete_unidades(destino)
                 exact = next(
                     (m for m in matches if m.get("sigla", "").upper() == destino.upper()),
-                    matches[0] if matches else None,
+                    None,  # never fall back to matches[0] — wrong unit is worse than an error
                 )
                 if not exact:
                     return _json(
                         {
-                            "error": f"Unidade '{destino}' não encontrada via autocomplete web",
+                            "error": f"Unidade '{destino}' não encontrada via autocomplete web.",
+                            "candidatos": [m.get("sigla") for m in matches],
                             "dica": "Informe o ID numérico diretamente.",
                         }
                     )

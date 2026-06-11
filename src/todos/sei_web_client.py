@@ -64,6 +64,21 @@ def _extrair_erro_sei(html: str) -> str | None:
     return None
 
 
+def _extrair_submit_btn(form: Tag) -> tuple[str, str] | None:
+    """Extrai o par (name, value) do botão submit de um form.
+
+    O PHP do SEI exige o par name=value do botão submit no POST; sem ele
+    ignora o form silenciosamente. Válido para input[type=submit] e button.
+    """
+    btn = form.find("input", type="submit") or form.find("button", type="submit")
+    if btn and isinstance(btn, Tag):
+        name = _tag_str(btn, "name")
+        if name:
+            value = _tag_str(btn, "value") or btn.get_text(strip=True) or "Enviar"
+            return name, value
+    return None
+
+
 class SEIWebClient:
     """Cliente HTTP assíncrono para o frontend web do SEI.
 
@@ -1199,8 +1214,11 @@ class SEIWebClient:
         """
         await self.ensure_authenticated()
         sei_base = f"{self.sei_root}/sei/"
-        url = f"{sei_base}controlador_ajax.php?acao_ajax=unidade_auto_completar&termo={termo}"
-        r = await self._http.get(url, headers={"Referer": str(self._inbox_url)})
+        r = await self._http.get(
+            f"{sei_base}controlador_ajax.php",
+            params={"acao_ajax": "unidade_auto_completar", "termo": termo},
+            headers={"Referer": str(self._inbox_url)},
+        )
         if r.status_code != 200:  # noqa: PLR2004
             return []
         try:
@@ -1241,7 +1259,7 @@ class SEIWebClient:
         sei_base = f"{self.sei_root}/sei/"
 
         m = re.search(
-            r"(controlador\.php\?acao=procedimento_tramitar[^\"'\s]*infra_hash=[a-f0-9]+)",
+            r"(controlador\.php\?acao=procedimento_tramitar[^\"'\s]*infra_hash=[a-fA-F0-9]+)",
             html_arvore,
         )
         if not m:
@@ -1277,6 +1295,11 @@ class SEIWebClient:
             if name:
                 post_data.append((name, _tag_str(inp, "value")))
 
+        # Botão submit obrigatório (PHP ignora POST sem ele silenciosamente)
+        sbm = _extrair_submit_btn(form)
+        if sbm:
+            post_data.append(sbm)
+
         # Adiciona uma entrada hdnIdUnidadeEnvio por unidade destino
         post_data.extend(("hdnIdUnidadeEnvio", uid) for uid in unidades_ids)
 
@@ -1297,6 +1320,8 @@ class SEIWebClient:
             content=urlencode(post_data).encode(),
             headers={"Referer": tramitar_url, "Content-Type": "application/x-www-form-urlencoded"},
         )
+        if r2.status_code not in (200, 302):
+            raise RuntimeError(f"POST procedimento_tramitar falhou com status={r2.status_code}")  # noqa: EM102, TRY003
         body2 = r2.content.decode("iso-8859-1", "replace")
         erro2 = _extrair_erro_sei(body2)
         if erro2:
@@ -1325,7 +1350,7 @@ class SEIWebClient:
             raise RuntimeError(f"inbox status={r.status_code}")  # noqa: EM102, TRY003
         html = r.content.decode("iso-8859-1", "replace")
         m = re.search(
-            rf"(controlador\.php\?acao={re.escape(acao)}[^\"'\s]*infra_hash=[a-f0-9]+)",
+            rf"(controlador\.php\?acao={re.escape(acao)}[^\"'\s]*infra_hash=[a-fA-F0-9]+)",
             html,
         )
         if not m:
@@ -1335,7 +1360,7 @@ class SEIWebClient:
         sei_base = f"{self.sei_root}/sei/"
         return urljoin(sei_base, m.group(1).replace("&amp;", "&"))
 
-    async def criar_processo_web(  # noqa: C901, PLR0912, PLR0913
+    async def criar_processo_web(  # noqa: C901, PLR0912, PLR0913, PLR0915
         self,
         tipo_processo: str,
         especificacao: str = "",
@@ -1377,6 +1402,11 @@ class SEIWebClient:
             if name:
                 post_data.append((name, _tag_str(inp, "value")))
 
+        # Botão submit obrigatório (PHP ignora POST sem ele silenciosamente)
+        sbm = _extrair_submit_btn(form)
+        if sbm:
+            post_data.append(sbm)
+
         post_data.append(("selTipoProcedimento", tipo_processo))
         if especificacao:
             post_data.append(("txtDescricao", especificacao))
@@ -1391,6 +1421,8 @@ class SEIWebClient:
             content=urlencode(post_data).encode(),
             headers={"Referer": cadastrar_url, "Content-Type": "application/x-www-form-urlencoded"},
         )
+        if r2.status_code not in (200, 302):
+            raise RuntimeError(f"POST procedimento_cadastrar falhou com status={r2.status_code}")  # noqa: EM102, TRY003
         body2 = r2.content.decode("iso-8859-1", "replace")
         erro2 = _extrair_erro_sei(body2)
         if erro2:
@@ -1412,13 +1444,16 @@ class SEIWebClient:
             if m_url:
                 id_proc = m_url.group(1)
 
+        if not id_proc:
+            raise RuntimeError(  # noqa: TRY003
+                "Processo aparentemente criado mas idProcedimento não pôde ser extraído da resposta."  # noqa: EM101
+            )
+
         return {
             "ok": True,
             "idProcedimento": id_proc,
             "protocoloFormatado": protocolo,
-            "mensagem": "Processo criado com sucesso."
-            if id_proc
-            else "Processo criado (id não extraído).",
+            "mensagem": "Processo criado com sucesso.",
         }
 
     async def criar_documento_interno_web(  # noqa: C901, PLR0912, PLR0915
@@ -1456,7 +1491,9 @@ class SEIWebClient:
                     img.get("src", "") or ""
                 ):
                     pa = img.find_parent("a")
-                    if pa:
+                    # Confirm the parent link points to documento_escolher_tipo,
+                    # not "Incluir em Bloco" or other "incluir" toolbar actions.
+                    if pa and "documento_escolher_tipo" in _tag_str(pa, "href"):
                         incluir_href = _tag_str(pa, "href").replace("&amp;", "&")
                         break
 
@@ -1490,13 +1527,13 @@ class SEIWebClient:
 
         # Encontra o link do editor para este id_serie
         m_editor = re.search(
-            rf"(controlador\.php[^\"'\s]*acao=editor_montar[^\"'\s]*id_serie={re.escape(id_serie)}[^\"'\s]*infra_hash=[a-f0-9]+)",
+            rf"(controlador\.php[^\"'\s]*acao=editor_montar[^\"'\s]*id_serie={re.escape(id_serie)}[^\"'\s]*infra_hash=[a-fA-F0-9]+)",
             body3,
         )
         if not m_editor:
             # Try reverse order: infra_hash before id_serie
             m_editor = re.search(
-                rf"(controlador\.php[^\"'\s]*acao=editor_montar[^\"'\s]*infra_hash=[a-f0-9]+[^\"'\s]*id_serie={re.escape(id_serie)}[^\"'\s]*)",
+                rf"(controlador\.php[^\"'\s]*acao=editor_montar[^\"'\s]*infra_hash=[a-fA-F0-9]+[^\"'\s]*id_serie={re.escape(id_serie)}[^\"'\s]*)",
                 body3,
             )
         if not m_editor:
@@ -1534,6 +1571,11 @@ class SEIWebClient:
             if name:
                 post_data4.append((name, _tag_str(inp, "value")))
 
+        # Botão submit obrigatório (PHP ignora POST sem ele silenciosamente)
+        sbm4 = _extrair_submit_btn(form4)
+        if sbm4:
+            post_data4.append(sbm4)
+
         if descricao:
             post_data4.append(("txtDescricao", descricao))
         post_data4.append(("selNivelAcesso", nivel_acesso))
@@ -1545,6 +1587,8 @@ class SEIWebClient:
             content=urlencode(post_data4).encode(),
             headers={"Referer": editor_url, "Content-Type": "application/x-www-form-urlencoded"},
         )
+        if r5.status_code not in (200, 302):
+            raise RuntimeError(f"POST documento_gerar falhou com status={r5.status_code}")  # noqa: EM102, TRY003
         body5 = r5.content.decode("iso-8859-1", "replace")
         erro5 = _extrair_erro_sei(body5)
         if erro5:
@@ -1560,14 +1604,17 @@ class SEIWebClient:
             if m_doc2:
                 id_doc = m_doc2.group(1)
 
+        if not id_doc:
+            raise RuntimeError(  # noqa: TRY003
+                "Documento aparentemente criado mas idDocumento não pôde ser extraído da resposta."  # noqa: EM101
+            )
+
         return {
             "ok": True,
             "idDocumento": id_doc,
             "protocolo": protocolo,
             "id_serie": id_serie,
-            "mensagem": "Documento criado com sucesso."
-            if id_doc
-            else "Documento criado (id não extraído).",
+            "mensagem": "Documento criado com sucesso.",
         }
 
     MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # limite de segurança (o SEI rejeita antes)
