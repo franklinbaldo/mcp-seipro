@@ -499,8 +499,15 @@ async def sei_trocar_unidade(id_unidade: str, ctx: Context) -> str:
     as unidades disponíveis.
     """
     try:
-        client = _get_web_client(ctx)
-        result = await client.trocar_unidade(id_unidade)
+        web = _get_web_client(ctx)
+        result = await web.trocar_unidade(id_unidade)
+        # Keep REST client in sync on hybrid installs so unit-sensitive REST
+        # tools use the same unit as the web client.
+        try:
+            rest = _get_client(ctx)
+            await rest.trocar_unidade(result.get("id_unidade", id_unidade))
+        except Exception:  # noqa: BLE001
+            pass  # best-effort; web unit already switched
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
