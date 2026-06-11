@@ -160,6 +160,9 @@ class SEIWebClient:
         )
         self._inbox_url: httpx.URL | None = None
         self._unidade_atual: dict[str, str] | None = None
+        self._nome_usuario: str | None = None
+        self._id_usuario: str | None = None
+        self._orgao_usuario: str | None = None
         # cache do form principal de procedimento_controlar (action + hidden fields)
         self._form_action: str | None = None
         self._form_hidden: dict[str, str] = {}
@@ -399,6 +402,17 @@ class SEIWebClient:
         nome = _tag_str(unit_link, "title").strip()
         if not sigla and not nome:
             return
+
+        # Extrai nome, id e órgão do usuário via lnkUsuarioSistema
+        # formato do title: "NOME COMPLETO (ID/SIGLA_ORGAO)"
+        user_link = soup.find("a", id="lnkUsuarioSistema")
+        if isinstance(user_link, Tag):
+            title = _tag_str(user_link, "title").strip()
+            m = re.match(r"^(.+?)\s+\((\d+)/(\w+)\)$", title)
+            if m:
+                self._nome_usuario = m.group(1)
+                self._id_usuario = m.group(2)
+                self._orgao_usuario = m.group(3)
 
         unidade: dict[str, str] = {"sigla": sigla, "nome": nome}
         if self._inbox_url is not None:
