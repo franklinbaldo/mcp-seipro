@@ -5,28 +5,28 @@ import base64
 import json
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Literal
 
-from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 
-from todos.sei_client import SEIClient
-from todos.sei_web_client import SEIWebClient
+from todos import access_control
 from todos.html_utils import (
-    html_to_text,
     html_to_markdown,
-    pdf_to_text,
+    html_to_text,
     pdf_to_markdown,
+    pdf_to_text,
     sanitize_iso8859,
 )
+from todos.sei_client import SEIClient
 from todos.sei_styles import (
     SEI_STYLES,
     STYLE_SHORTCUTS,
     html_referencia_sei,
 )
-from todos import access_control
+from todos.sei_web_client import SEIWebClient
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ _http_port = int(os.environ.get("PORT", 8000))
 
 
 @asynccontextmanager
-async def lifespan(server: FastMCP):
+async def lifespan(_server: FastMCP):
     if _http_mode:
         # Modo HTTP: clients criados por request com credenciais do token OAuth
         yield {"sei": None, "sei_web": None}
@@ -62,6 +62,7 @@ def _get_client(ctx: Context) -> SEIClient:
     # Modo HTTP: extrai credenciais do token OAuth
     if _http_mode:
         from mcp.server.auth.middleware.auth_context import get_access_token
+
         from todos.auth import get_sei_credentials_from_token
 
         access_token = get_access_token()
@@ -91,6 +92,7 @@ def _get_web_client(ctx: Context) -> SEIWebClient:
 
     if _http_mode:
         from mcp.server.auth.middleware.auth_context import get_access_token
+
         from todos.auth import get_sei_credentials_from_token
 
         access_token = get_access_token()
@@ -108,12 +110,13 @@ def _get_web_client(ctx: Context) -> SEIWebClient:
 
 _http_kwargs = {}
 if _http_mode:
-    from pydantic import AnyHttpUrl
     from mcp.server.auth.settings import (
         AuthSettings,
         ClientRegistrationOptions,
         RevocationOptions,
     )
+    from pydantic import AnyHttpUrl
+
     from todos.auth import SEIProOAuthProvider
 
     _base_url = os.environ.get("BASE_URL", f"http://localhost:{_http_port}")
@@ -238,9 +241,7 @@ async def _solicitar_consentimento_via_elicit(
     hl_txt = f"\nHipótese legal: {hipotese}" if hipotese else ""
     alvo_txt = ""
     if alvo.get("tipo") == "documento":
-        alvo_txt = (
-            f"\nDocumento: id {alvo.get('id')} (tipo {alvo.get('tipo_documento', '?')})"
-        )
+        alvo_txt = f"\nDocumento: id {alvo.get('id')} (tipo {alvo.get('tipo_documento', '?')})"
     elif alvo.get("tipo") == "processo":
         alvo_txt = f"\nProcesso: {alvo.get('protocolo')}"
 
@@ -256,7 +257,7 @@ async def _solicitar_consentimento_via_elicit(
             ctx.elicit(message=message, schema=_ConsentimentoRestrito),
             timeout=_ELICIT_TIMEOUT_S,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             f"elicit timeout após {_ELICIT_TIMEOUT_S}s — cliente não respondeu, "
             "caindo no fallback JSON"
@@ -327,9 +328,7 @@ async def _aplicar_gate_documento(
         )
 
     rotulo = access_control.ROTULOS.get(nivel, "Restrito")
-    consent = await _solicitar_consentimento_via_elicit(
-        ctx, nivel, rotulo, hipotese, alvo
-    )
+    consent = await _solicitar_consentimento_via_elicit(ctx, nivel, rotulo, hipotese, alvo)
 
     if consent == "aceitou":
         return (
@@ -440,9 +439,7 @@ async def sei_pesquisar_unidades(
     """
     try:
         client = _get_client(ctx)
-        result = await client.pesquisar_unidades(
-            filtro=filtro, limit=limit, start=pagina
-        )
+        result = await client.pesquisar_unidades(filtro=filtro, limit=limit, start=pagina)
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -464,9 +461,7 @@ async def sei_listar_usuarios(
     """
     try:
         client = _get_client(ctx)
-        result = await client.listar_usuarios(
-            filtro=filtro, apenas_unidade=apenas_unidade
-        )
+        result = await client.listar_usuarios(filtro=filtro, apenas_unidade=apenas_unidade)
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -514,13 +509,9 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
                 logger.warning(f"web login falhou, seguindo só com REST: {e}")
 
         # roda REST completo e web em paralelo; suporta falha individual
-        rest_task = asyncio.create_task(
-            client.consultar_processo_completo(protocolo_formatado)
-        )
+        rest_task = asyncio.create_task(client.consultar_processo_completo(protocolo_formatado))
         web_task = asyncio.create_task(web.consultar_processo(protocolo_formatado))
-        rest_result, web_result = await asyncio.gather(
-            rest_task, web_task, return_exceptions=True
-        )
+        rest_result, web_result = await asyncio.gather(rest_task, web_task, return_exceptions=True)
 
         merged: dict = {}
         warnings: list[str] = []
@@ -541,9 +532,7 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
                     merged[k] = v
 
         if not merged:
-            return _error(
-                "Ambas as fontes (REST e Web) falharam: " + " | ".join(warnings)
-            )
+            return _error("Ambas as fontes (REST e Web) falharam: " + " | ".join(warnings))
 
         if warnings:
             merged["_warnings"] = warnings
@@ -723,9 +712,7 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
                 docs = await client.listar_documentos(id_proc, limit=200)
                 for d in docs:
                     proto = d.get("atributos", {}).get("protocoloFormatado", "")
-                    if proto == referencia or proto.lstrip("0") == referencia.lstrip(
-                        "0"
-                    ):
+                    if proto == referencia or proto.lstrip("0") == referencia.lstrip("0"):
                         doc_id = str(d["id"])
                         tipo = d.get("atributos", {}).get("tipoDocumento", "I")
                         return doc_id, tipo
@@ -864,8 +851,7 @@ async def sei_ler_documento(
             return _json(
                 {
                     "error": msg,
-                    "dica": "Acesso negado. Troque para a unidade geradora "
-                    "com sei_trocar_unidade.",
+                    "dica": "Acesso negado. Troque para a unidade geradora com sei_trocar_unidade.",
                 }
             )
         return _error(msg)
@@ -1243,16 +1229,12 @@ _CAMPOS_AGRUPAMENTO = {
     "tramitacao": {
         "desc": "Em tramitação",
         "extract": lambda a, s: (
-            "Em tramitação"
-            if s.get("processoEmTramitacao") == "S"
-            else "Fora de tramitação"
+            "Em tramitação" if s.get("processoEmTramitacao") == "S" else "Fora de tramitação"
         ),
     },
     "sobrestado": {
         "desc": "Sobrestamento",
-        "extract": lambda a, s: (
-            "Sobrestado" if s.get("processoSobrestado") == "S" else "Ativo"
-        ),
+        "extract": lambda a, s: "Sobrestado" if s.get("processoSobrestado") == "S" else "Ativo",
     },
     "bloqueado": {
         "desc": "Bloqueio",
@@ -1263,9 +1245,7 @@ _CAMPOS_AGRUPAMENTO = {
     "novo": {
         "desc": "Documento novo",
         "extract": lambda a, s: (
-            "Com documentos novos"
-            if s.get("documentoNovo") == "S"
-            else "Sem documentos novos"
+            "Com documentos novos" if s.get("documentoNovo") == "S" else "Sem documentos novos"
         ),
     },
     "anotacao": {
@@ -1290,51 +1270,38 @@ _CAMPOS_AGRUPAMENTO = {
     },
     "lido_usuario": {
         "desc": "Acessado pelo usuário",
-        "extract": lambda a, s: (
-            "Lido" if s.get("processoAcessadoUsuario") == "S" else "Não lido"
-        ),
+        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUsuario") == "S" else "Não lido",
     },
     "lido_unidade": {
         "desc": "Acessado pela unidade",
-        "extract": lambda a, s: (
-            "Lido" if s.get("processoAcessadoUnidade") == "S" else "Não lido"
-        ),
+        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUnidade") == "S" else "Não lido",
     },
     "origem": {
         "desc": "Gerado/Recebido",
         "extract": lambda a, s: (
-            "Gerado na unidade"
-            if s.get("processoGeradoRecebido") == "G"
-            else "Recebido"
+            "Gerado na unidade" if s.get("processoGeradoRecebido") == "G" else "Recebido"
         ),
     },
     "anexado": {
         "desc": "Anexado",
-        "extract": lambda a, s: (
-            "Anexado" if s.get("processoAnexado") == "S" else "Independente"
-        ),
+        "extract": lambda a, s: "Anexado" if s.get("processoAnexado") == "S" else "Independente",
     },
     "unidades": {
         "desc": "Unidades de abertura",
         "extract": lambda a, s: (
-            ", ".join(
-                u.get("sigla", "") for u in a.get("dadosAbertura", {}).get("lista", [])
-            )
+            ", ".join(u.get("sigla", "") for u in a.get("dadosAbertura", {}).get("lista", []))
             or "N/A"
         ),
     },
     "marcador": {
         "desc": "Marcador",
         "extract": lambda a, s: (
-            ", ".join(m.get("nome", "") for m in a.get("marcador", []))
-            or "Sem marcador"
+            ", ".join(m.get("nome", "") for m in a.get("marcador", [])) or "Sem marcador"
         ),
     },
     "ciencia": {
         "desc": "Ciência",
-        "extract": lambda a, s: (
-            "Com ciência" if s.get("ciencia") == "S" else "Sem ciência"
-        ),
+        "extract": lambda a, s: "Com ciência" if s.get("ciencia") == "S" else "Sem ciência",
     },
 }
 
@@ -1386,9 +1353,7 @@ async def sei_resumo_processos(
             campo2 = _CAMPOS_AGRUPAMENTO.get(agrupar_por_2)
             if not campo2:
                 campos = ", ".join(sorted(_CAMPOS_AGRUPAMENTO.keys()))
-                return _error(
-                    f"Campo '{agrupar_por_2}' inválido. Disponíveis: {campos}"
-                )
+                return _error(f"Campo '{agrupar_por_2}' inválido. Disponíveis: {campos}")
 
         client = _get_client(ctx)
 
@@ -1723,9 +1688,7 @@ async def sei_marcar_nao_lido(
     try:
         client = _get_client(ctx)
         if not client._unidade_ativa:
-            return _error(
-                "Unidade ativa não definida. Use sei_trocar_unidade primeiro."
-            )
+            return _error("Unidade ativa não definida. Use sei_trocar_unidade primeiro.")
         result = await client.enviar_processo(
             numero_processo=numero_processo,
             unidades_destino=client._unidade_ativa,
@@ -1821,9 +1784,7 @@ async def sei_atribuir_processo(
                 result = await client.atribuir_processo(numero_processo, id_u)
                 return _json(
                     {
-                        "mensagem": result.get(
-                            "mensagem", "Processo atribuído com sucesso!"
-                        ),
+                        "mensagem": result.get("mensagem", "Processo atribuído com sucesso!"),
                         "usuario": {"id": id_u, "nome": nome, "sigla": sigla},
                     }
                 )
@@ -1870,10 +1831,8 @@ async def sei_cancelar_assinatura(
 
         # Resolver número SEI → id interno
         doc_id = id_documento.strip()
-        try:
+        with suppress(Exception):
             doc_id, _ = await _resolver_documento(client, doc_id)
-        except Exception:
-            pass
 
         # Verificar se está assinado
         secoes_data = await client.listar_secao_documento(doc_id)
@@ -1981,9 +1940,7 @@ async def sei_assinar_documento(
         # Fallback: procurar via /usuario/listar caso loginData não traga o id
         if not id_usuario:
             try:
-                result = await client.listar_usuarios(
-                    filtro=login, apenas_unidade=False
-                )
+                result = await client.listar_usuarios(filtro=login, apenas_unidade=False)
                 for u in result.get("usuarios", []):
                     if u.get("sigla", "").lower() == login.lower():
                         id_usuario = str(u.get("id_usuario") or "")
@@ -2075,16 +2032,10 @@ async def sei_sobrestar_processo(
     except Exception as e:
         msg = str(e)
         # Erro comum: processo aberto em outras unidades
-        if (
-            "aberto" in msg.lower()
-            or "unidade" in msg.lower()
-            or "sobrestar" in msg.lower()
-        ):
+        if "aberto" in msg.lower() or "unidade" in msg.lower() or "sobrestar" in msg.lower():
             # Tentar listar unidades onde o processo está aberto
             try:
-                resp = await client._request(
-                    "GET", f"/processo/listar/unidades/{id_proc}"
-                )
+                resp = await client._request("GET", f"/processo/listar/unidades/{id_proc}")
                 data = resp.json()
                 unidades = data.get("data", [])
                 nomes = [f"{u.get('sigla', '')} ({u.get('id', '')})" for u in unidades]
@@ -2144,11 +2095,10 @@ async def sei_dar_ciencia(
             doc_id, _ = await _resolver_documento(client, referencia)
             result = await client.dar_ciencia_documento(doc_id)
             return _json(result)
-        else:
-            # Resolver protocolo → IdProcedimento
-            id_proc = await _resolver_processo(client, referencia)
-            result = await client.dar_ciencia_processo(id_proc)
-            return _json(result)
+        # Resolver protocolo → IdProcedimento
+        id_proc = await _resolver_processo(client, referencia)
+        result = await client.dar_ciencia_processo(id_proc)
+        return _json(result)
     except Exception as e:
         return _error(str(e))
 
@@ -2946,9 +2896,7 @@ async def sei_pesquisar_outras_unidades(
     """
     try:
         client = _get_client(ctx)
-        result = await client.pesquisar_outras_unidades(
-            filtro=filtro, limit=limit, start=pagina
-        )
+        result = await client.pesquisar_outras_unidades(filtro=filtro, limit=limit, start=pagina)
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -2970,9 +2918,7 @@ async def sei_pesquisar_textos_padrao(
     """
     try:
         client = _get_client(ctx)
-        result = await client.pesquisar_textos_padrao(
-            filtro=filtro, limit=limit, start=pagina
-        )
+        result = await client.pesquisar_textos_padrao(filtro=filtro, limit=limit, start=pagina)
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -3132,9 +3078,7 @@ async def sei_pesquisar_tipos_conferencia(
     """
     try:
         client = _get_client(ctx)
-        result = await client.pesquisar_tipos_conferencia(
-            filtro=filtro, limit=limit, start=pagina
-        )
+        result = await client.pesquisar_tipos_conferencia(filtro=filtro, limit=limit, start=pagina)
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -3235,9 +3179,7 @@ async def sei_pesquisar_assuntos(
     """
     try:
         client = _get_client(ctx)
-        result = await client.pesquisar_assuntos(
-            filtro=filtro, limit=limit, start=pagina
-        )
+        result = await client.pesquisar_assuntos(filtro=filtro, limit=limit, start=pagina)
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -3374,9 +3316,7 @@ async def sei_gerar_pdf_processo(
 
         tamanho_mb = len(pdf_bytes) / 1024 / 1024
         if tamanho_mb > 50:
-            return _error(
-                f"PDF muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI."
-            )
+            return _error(f"PDF muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI.")
 
         protocolo_safe = processo.replace("/", "-")
         pdf_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.pdf")
@@ -3423,9 +3363,7 @@ async def sei_gerar_zip_processo(
 
         tamanho_mb = len(zip_bytes) / 1024 / 1024
         if tamanho_mb > 200:
-            return _error(
-                f"ZIP muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI."
-            )
+            return _error(f"ZIP muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI.")
 
         protocolo_safe = processo.replace("/", "-")
         zip_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.zip")
@@ -3485,9 +3423,7 @@ async def sei_incluir_documento_externo(
         conteudo: bytes | None = None
         if arquivo_base64:
             if not nome_arquivo:
-                return _error(
-                    "nome_arquivo é obrigatório quando arquivo_base64 é usado."
-                )
+                return _error("nome_arquivo é obrigatório quando arquivo_base64 é usado.")
             try:
                 conteudo = base64.b64decode(arquivo_base64, validate=True)
             except Exception:
@@ -3741,9 +3677,7 @@ async def sei_criar_contato(
     """
     try:
         client = _get_client(ctx)
-        result = await client.criar_contato(
-            nome=nome, tipo=tipo, email=email, telefone=telefone
-        )
+        result = await client.criar_contato(nome=nome, tipo=tipo, email=email, telefone=telefone)
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -3961,9 +3895,7 @@ async def sei_anotar_processo_bloco_interno(
     try:
         client = _get_client(ctx)
         id_proc = await _resolver_processo(client, processo)
-        result = await client.anotar_processo_bloco_interno(
-            id_bloco, id_proc, descricao
-        )
+        result = await client.anotar_processo_bloco_interno(id_bloco, id_proc, descricao)
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -3984,9 +3916,7 @@ async def sei_alterar_anotacao_bloco_interno(
     try:
         client = _get_client(ctx)
         id_proc = await _resolver_processo(client, processo)
-        result = await client.alterar_anotacao_bloco_interno(
-            id_bloco, id_proc, descricao
-        )
+        result = await client.alterar_anotacao_bloco_interno(id_bloco, id_proc, descricao)
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -4132,9 +4062,7 @@ async def sei_anotar_documento_bloco_assinatura(
     """
     try:
         client = _get_client(ctx)
-        result = await client.anotar_documento_bloco_assinatura(
-            id_bloco, documento, descricao
-        )
+        result = await client.anotar_documento_bloco_assinatura(id_bloco, documento, descricao)
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -4154,9 +4082,7 @@ async def sei_alterar_anotacao_bloco_assinatura(
     """
     try:
         client = _get_client(ctx)
-        result = await client.alterar_anotacao_bloco_assinatura(
-            id_bloco, documento, descricao
-        )
+        result = await client.alterar_anotacao_bloco_assinatura(id_bloco, documento, descricao)
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -4164,18 +4090,18 @@ async def sei_alterar_anotacao_bloco_assinatura(
 
 def main():
     if _http_mode:
-        import uvicorn
         from pathlib import Path
-        from starlette.routing import Route
+
+        import uvicorn
         from starlette.responses import Response
+        from starlette.routing import Route
 
         from todos.auth import login_page, login_submit
 
         # Favicon / ícone do SEI Pro — busca em vários locais possíveis
         _icon_bytes = b""
         for _candidate in [
-            Path(__file__).resolve().parent.parent.parent
-            / "icon.png",  # dev: repo root
+            Path(__file__).resolve().parent.parent.parent / "icon.png",  # dev: repo root
             Path("/app/icon.png"),  # Docker
         ]:
             if _candidate.exists():

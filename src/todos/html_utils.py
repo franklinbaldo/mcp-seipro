@@ -20,12 +20,8 @@ def html_to_text(raw: str) -> str:
         html = html_module.unescape(raw)
 
         # Remover blocos <style> e <script> antes do parse
-        cleaned = re.sub(
-            r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE
-        )
-        cleaned = re.sub(
-            r"<script[^>]*>.*?</script>", "", cleaned, flags=re.DOTALL | re.IGNORECASE
-        )
+        cleaned = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        cleaned = re.sub(r"<script[^>]*>.*?</script>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
 
         soup = BeautifulSoup(cleaned, "html.parser")
 
@@ -106,20 +102,15 @@ def html_to_markdown(raw: str) -> str:
     """
     try:
         html = html_module.unescape(raw)
-        cleaned = re.sub(
-            r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE
-        )
-        cleaned = re.sub(
-            r"<script[^>]*>.*?</script>", "", cleaned, flags=re.DOTALL | re.IGNORECASE
-        )
+        cleaned = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
+        cleaned = re.sub(r"<script[^>]*>.*?</script>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
         resultado = markdownify(
             cleaned,
             heading_style="ATX",
             strip=["img", "link", "meta", "head", "title"],
         )
         resultado = _clean_markdown_tables(resultado)
-        resultado = re.sub(r"\n{3,}", "\n\n", resultado).strip()
-        return resultado
+        return re.sub(r"\n{3,}", "\n\n", resultado).strip()
     except Exception:
         return html_to_text(raw)
 
@@ -134,8 +125,8 @@ def _ocr_pdf(content: bytes, lang: str = "") -> list[tuple[int, str]]:
     Retorna lista de (num_pagina, texto).
     Limita a MAX_OCR_PAGES páginas para evitar timeout.
     """
-    from pdf2image import convert_from_bytes
     import pytesseract
+    from pdf2image import convert_from_bytes
 
     lang = lang or OCR_LANG
     images = convert_from_bytes(content, dpi=200)
@@ -163,6 +154,7 @@ def _extract_pdf_pages(content: bytes) -> list[tuple[int, str]]:
     Retorna lista de (num_pagina, texto).
     """
     import io
+
     import pdfplumber
 
     pages = []

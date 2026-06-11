@@ -16,8 +16,6 @@ import json
 import os
 import secrets
 import time
-from starlette.requests import Request
-from starlette.responses import HTMLResponse
 
 from mcp.server.auth.provider import (
     AccessToken,
@@ -27,6 +25,8 @@ from mcp.server.auth.provider import (
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+from starlette.requests import Request
+from starlette.responses import HTMLResponse
 
 # ---------------------------------------------------------------------------
 # Crypto helpers (HMAC-SHA256 para assinatura, sem dep externa)
@@ -199,9 +199,7 @@ class SEIProOAuthProvider:
         if not payload:
             from mcp.server.auth.provider import TokenError
 
-            raise TokenError(
-                error="invalid_grant", error_description="Invalid refresh token"
-            )
+            raise TokenError(error="invalid_grant", error_description="Invalid refresh token")
 
         sei_creds = payload["sei"]
         now = time.time()
@@ -328,9 +326,7 @@ async def login_submit(request: Request):
     session_id = str(form.get("session", ""))
     pending = _auth_codes.get(f"pending:{session_id}")
     if not pending:
-        return HTMLResponse(
-            "<h1>Sessao expirada. Tente novamente.</h1>", status_code=400
-        )
+        return HTMLResponse("<h1>Sessao expirada. Tente novamente.</h1>", status_code=400)
 
     # Checkbox marcado envia "false"; desmarcado não envia nada (= "true")
     verify_ssl = "false" if form.get("sei_verify_ssl") == "false" else "true"
@@ -370,9 +366,7 @@ async def login_submit(request: Request):
     )
 
     usuario = sei_creds["sei_usuario"]
-    html = _SUCCESS_HTML.replace("{redirect_uri}", str(redirect_uri)).replace(
-        "{usuario}", usuario
-    )
+    html = _SUCCESS_HTML.replace("{redirect_uri}", str(redirect_uri)).replace("{usuario}", usuario)
     return HTMLResponse(html)
 
 

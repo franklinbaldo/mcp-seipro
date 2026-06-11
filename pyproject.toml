@@ -29,3 +29,24 @@ packages = ["src/todos"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/todos/", "pyproject.toml", "README.md"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RET", "C4", "PIE", "PT", "TID"]
+ignore = ["E501"]  # line length handled by formatter
+
+[tool.ruff.lint.per-file-ignores]
+"setup_claude.py" = ["T201"]  # print() ok in installer
+
+[tool.vulture]
+min_confidence = 80
+paths = ["src/"]
+
+[tool.bandit]
+skips = [
+    "B101",  # assert ok in non-test code here
+    "B104",  # 0.0.0.0 intencional — deploy Railway/container
+]

@@ -21,7 +21,7 @@ import logging
 import os
 import re
 import warnings
-from typing import Any, Optional
+from typing import Any
 from urllib.parse import parse_qsl, urljoin
 
 import httpx
@@ -79,9 +79,7 @@ class SEIWebClient:
             os.environ.get("SEI_SIGLA_ORGAO_SISTEMA", self._sigla_orgao),
         )
 
-        verify_ssl = kwargs.get(
-            "sei_verify_ssl", os.environ.get("SEI_VERIFY_SSL", "true")
-        )
+        verify_ssl = kwargs.get("sei_verify_ssl", os.environ.get("SEI_VERIFY_SSL", "true"))
         if isinstance(verify_ssl, str):
             verify_ssl = verify_ssl.lower() != "false"
         if not verify_ssl:
@@ -106,14 +104,14 @@ class SEIWebClient:
                 "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
             },
         )
-        self._inbox_url: Optional[httpx.URL] = None
+        self._inbox_url: httpx.URL | None = None
         # cache do form principal de procedimento_controlar (action + hidden fields)
-        self._form_action: Optional[str] = None
+        self._form_action: str | None = None
         self._form_hidden: dict[str, str] = {}
         # cache de URLs de processos individuais (protocolo → href pré-assinado)
         self._trabalhar_links: dict[str, str] = {}
         # URL do form de pesquisa rápida (protocolo_pesquisa_rapida + infra_hash)
-        self._pesquisa_rapida_action: Optional[str] = None
+        self._pesquisa_rapida_action: str | None = None
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -176,11 +174,7 @@ class SEIWebClient:
         if submit_btn:
             btn_name = submit_btn.get("name")
             if btn_name:
-                btn_value = (
-                    submit_btn.get("value")
-                    or submit_btn.get_text(strip=True)
-                    or "Acessar"
-                )
+                btn_value = submit_btn.get("value") or submit_btn.get_text(strip=True) or "Acessar"
                 form[btn_name] = btn_value
         else:
             # fallback para instâncias mais antigas
@@ -217,9 +211,7 @@ class SEIWebClient:
         final_url = post_resp.url
         qs = dict(
             parse_qsl(
-                final_url.query.decode()
-                if isinstance(final_url.query, bytes)
-                else final_url.query
+                final_url.query.decode() if isinstance(final_url.query, bytes) else final_url.query
             )
         )
         if qs.get("acao") != "procedimento_controlar" or "infra_hash" not in qs:
@@ -253,11 +245,7 @@ class SEIWebClient:
 
         # 1) option já selecionado
         for opt in sel.find_all("option"):
-            if (
-                opt.get("selected") is not None
-                and opt.get("value")
-                and opt.get("value") != "null"
-            ):
+            if opt.get("selected") is not None and opt.get("value") and opt.get("value") != "null":
                 return opt["value"]
         # 2) option cujo texto contém a sigla do órgão (ex: ANTAQ)
         sigla_upper = self._sigla_orgao.upper()
@@ -342,12 +330,7 @@ class SEIWebClient:
             raise RuntimeError("login() não foi chamado antes de fetch_inbox().")
 
         # Caso simples: GET inicial sem detalhada/filtros/paginação
-        if (
-            not detalhada
-            and pagina == 0
-            and not apenas_meus
-            and self._form_action is None
-        ):
+        if not detalhada and pagina == 0 and not apenas_meus and self._form_action is None:
             resp = await self._http.get(
                 self._inbox_url,
                 headers={"Referer": str(self._inbox_url)},
@@ -368,9 +351,7 @@ class SEIWebClient:
                 raise RuntimeError(f"seed inbox status={seed.status_code}")
             self._extract_main_form(seed.text)
             if self._form_action is None:
-                raise RuntimeError(
-                    "Form principal de procedimento_controlar não encontrado"
-                )
+                raise RuntimeError("Form principal de procedimento_controlar não encontrado")
 
         # POST para alternar visualização / aplicar filtros / navegar páginas
         post_data = dict(self._form_hidden)
@@ -427,9 +408,7 @@ class SEIWebClient:
         if self._pesquisa_rapida_action is None:
             await self.fetch_inbox(detalhada=False)
             if self._pesquisa_rapida_action is None:
-                raise RuntimeError(
-                    "Form de pesquisa rápida não encontrado no HTML da inbox"
-                )
+                raise RuntimeError("Form de pesquisa rápida não encontrado no HTML da inbox")
 
         post_url = urljoin(str(self._inbox_url), self._pesquisa_rapida_action)
         r = await self._http.post(
@@ -445,11 +424,7 @@ class SEIWebClient:
 
         if "procedimento_trabalhar" in final_url:
             # Redirecionou direto para o processo
-            href = (
-                final_url.replace(sei_base, "")
-                if final_url.startswith(sei_base)
-                else final_url
-            )
+            href = final_url.replace(sei_base, "") if final_url.startswith(sei_base) else final_url
             self._trabalhar_links[protocolo] = href
             return
 
@@ -512,9 +487,7 @@ class SEIWebClient:
             # processo fora da caixa — usa pesquisa rápida
             await self.pesquisar_processo(protocolo_formatado)
 
-        trab_url = urljoin(
-            str(self._inbox_url), self._trabalhar_links[protocolo_formatado]
-        )
+        trab_url = urljoin(str(self._inbox_url), self._trabalhar_links[protocolo_formatado])
 
         # Step 1: procedimento_trabalhar.php (frameset, leve)
         r1 = await self._http.get(trab_url, headers={"Referer": str(self._inbox_url)})
@@ -549,22 +522,16 @@ class SEIWebClient:
         arvore_html = r2.text
 
         # Step 3: Se houver PASTA colapsadas, fetch novamente com abrir_pastas=1
-        has_collapsed = len(nos) > 1 and any(
-            n.get("tipo_no") == "PASTA" for n in nos[1:]
-        )
+        has_collapsed = len(nos) > 1 and any(n.get("tipo_no") == "PASTA" for n in nos[1:])
         if has_collapsed:
             arvore_url_str = str(arvore_url)
             if "abrir_pastas=" not in arvore_url_str:
                 sep = "&" if "?" in arvore_url_str else "?"
                 arvore_url_expandida = f"{arvore_url_str}{sep}abrir_pastas=1"
             else:
-                arvore_url_expandida = re.sub(
-                    r"abrir_pastas=0", "abrir_pastas=1", arvore_url_str
-                )
+                arvore_url_expandida = re.sub(r"abrir_pastas=0", "abrir_pastas=1", arvore_url_str)
 
-            r3 = await self._http.get(
-                arvore_url_expandida, headers={"Referer": trab_url}
-            )
+            r3 = await self._http.get(arvore_url_expandida, headers={"Referer": trab_url})
             if r3.status_code == 200:
                 nos = parse_arvore_nos(r3.text)
                 arvore_html = r3.text
@@ -648,9 +615,7 @@ class SEIWebClient:
             "documentos": docs,
         }
 
-    async def _gerar_arquivo_processo(
-        self, protocolo_formatado: str, acao: str
-    ) -> bytes:
+    async def _gerar_arquivo_processo(self, protocolo_formatado: str, acao: str) -> bytes:
         """Helper compartilhado para gerar_pdf_processo e gerar_zip_processo.
 
         Fluxo de 5 etapas (igual para PDF e ZIP):
@@ -661,7 +626,7 @@ class SEIWebClient:
         5. GET exibir_arquivo → bytes do arquivo
         """
 
-        def _find_link(proto: str) -> Optional[str]:
+        def _find_link(proto: str) -> str | None:
             if proto in self._trabalhar_links:
                 return self._trabalhar_links[proto]
             proto_norm = proto.replace(" ", "")
@@ -763,9 +728,7 @@ class SEIWebClient:
         """
         if self._inbox_url is None:
             raise RuntimeError("login() não foi chamado")
-        content = await self._gerar_arquivo_processo(
-            protocolo_formatado, "procedimento_gerar_pdf"
-        )
+        content = await self._gerar_arquivo_processo(protocolo_formatado, "procedimento_gerar_pdf")
         if "pdf" not in self._http.headers.get("accept", "").lower():
             pass  # conteúdo válido independente do accept
         if not content.startswith(b"%PDF") and b"pdf" not in content[:32].lower():
@@ -781,9 +744,7 @@ class SEIWebClient:
         """
         if self._inbox_url is None:
             raise RuntimeError("login() não foi chamado")
-        return await self._gerar_arquivo_processo(
-            protocolo_formatado, "procedimento_gerar_zip"
-        )
+        return await self._gerar_arquivo_processo(protocolo_formatado, "procedimento_gerar_zip")
 
     async def listar_atividades(self, protocolo_formatado: str) -> dict:
         """Lista andamentos/atividades de um processo via web scraper.
@@ -807,9 +768,7 @@ class SEIWebClient:
         if protocolo_formatado not in self._trabalhar_links:
             await self.pesquisar_processo(protocolo_formatado)
 
-        trab_url = urljoin(
-            str(self._inbox_url), self._trabalhar_links[protocolo_formatado]
-        )
+        trab_url = urljoin(str(self._inbox_url), self._trabalhar_links[protocolo_formatado])
 
         # frameset → arvore
         r1 = await self._http.get(trab_url, headers={"Referer": str(self._inbox_url)})
@@ -834,9 +793,7 @@ class SEIWebClient:
             r2.text,
         )
         if not m_hist:
-            raise RuntimeError(
-                "Link procedimento_consultar_historico não encontrado na árvore"
-            )
+            raise RuntimeError("Link procedimento_consultar_historico não encontrado na árvore")
         hist_url = urljoin(str(r2.url), m_hist.group(1).replace("&amp;", "&"))
 
         # fetch histórico
@@ -874,13 +831,13 @@ class SEIWebClient:
     async def incluir_documento_externo(
         self,
         protocolo_formatado: str,
-        arquivo_path: Optional[str] = None,
-        nome_arquivo: Optional[str] = None,
-        id_serie: Optional[str] = None,
+        arquivo_path: str | None = None,
+        nome_arquivo: str | None = None,
+        id_serie: str | None = None,
         data_elaboracao: str = "",
         nivel_acesso: str = "0",
         hipotese_legal: str = "",
-        conteudo: Optional[bytes] = None,
+        conteudo: bytes | None = None,
     ) -> dict:
         """Inclui documento externo (upload de arquivo) em processo SEI via web.
 
@@ -910,9 +867,7 @@ class SEIWebClient:
         if protocolo_formatado not in self._trabalhar_links:
             await self.pesquisar_processo(protocolo_formatado)
 
-        trab_url = urljoin(
-            str(self._inbox_url), self._trabalhar_links[protocolo_formatado]
-        )
+        trab_url = urljoin(str(self._inbox_url), self._trabalhar_links[protocolo_formatado])
 
         # --- Step 1: trabalhar → frameset ---
         r1 = await self._http.get(trab_url, headers={"Referer": str(self._inbox_url)})
@@ -951,10 +906,7 @@ class SEIWebClient:
             m = re.search(pat, r2.text, re.S)
             if m:
                 acoes_html = (
-                    m.group(1)
-                    .replace("\\'", "'")
-                    .replace('\\"', '"')
-                    .replace("\\\\", "\\")
+                    m.group(1).replace("\\'", "'").replace('\\"', '"').replace("\\\\", "\\")
                 )
                 break
 
@@ -966,7 +918,7 @@ class SEIWebClient:
 
         sei_base = f"{self.sei_root}/sei/"
         soup_acoes = BeautifulSoup(acoes_html, "html.parser")
-        incluir_href: Optional[str] = None
+        incluir_href: str | None = None
         for a in soup_acoes.find_all("a", href=re.compile(r"documento_escolher_tipo")):
             incluir_href = a.get("href", "").replace("&amp;", "&")
             break
@@ -1009,9 +961,7 @@ class SEIWebClient:
                 post3_data[n] = inp.get("value", "") or ""
         post3_data["hdnIdSerie"] = "-1"
 
-        r4 = await self._http.post(
-            post3_url, data=post3_data, headers={"Referer": str(r3.url)}
-        )
+        r4 = await self._http.post(post3_url, data=post3_data, headers={"Referer": str(r3.url)})
         if r4.status_code != 200:
             raise RuntimeError(f"POST escolher_tipo status={r4.status_code}")
 
@@ -1028,9 +978,7 @@ class SEIWebClient:
         soup4 = BeautifulSoup(body4, "html.parser")
         form4 = soup4.find("form", id="frmDocumentoCadastro")
         if not form4:
-            raise RuntimeError(
-                "frmDocumentoCadastro não encontrado em documento_receber"
-            )
+            raise RuntimeError("frmDocumentoCadastro não encontrado em documento_receber")
         form4_action = form4.get("action", "").replace("&amp;", "&")
         post4_url = urljoin(str(r4.url), form4_action)
 
@@ -1064,9 +1012,7 @@ class SEIWebClient:
             if not arquivo_path:
                 raise ValueError("Informe arquivo_path ou conteudo")
             if not _os.path.isfile(arquivo_path):
-                raise ValueError(
-                    f"Arquivo não encontrado ou não é regular: {arquivo_path}"
-                )
+                raise ValueError(f"Arquivo não encontrado ou não é regular: {arquivo_path}")
             if _os.path.getsize(arquivo_path) > self.MAX_UPLOAD_BYTES:
                 raise ValueError(
                     f"Arquivo excede o limite de {self.MAX_UPLOAD_BYTES // 1024 // 1024} MB"
@@ -1094,9 +1040,7 @@ class SEIWebClient:
             body4,
         )
         if not m_up:
-            raise RuntimeError(
-                "URL de upload (infraUpload) não encontrada em documento_receber"
-            )
+            raise RuntimeError("URL de upload (infraUpload) não encontrada em documento_receber")
         upload_url = urljoin(str(r4.url), m_up.group(1).replace("&amp;", "&"))
 
         r5 = await self._http.post(
@@ -1155,9 +1099,7 @@ class SEIWebClient:
         form4_data["hdnAnexos"] = ""  # placeholder — substituído abaixo
         form4_data["hdnIdSerie"] = id_serie
         form4_data["selSerie"] = id_serie
-        form4_data["txtDataElaboracao"] = data_elaboracao or _date.today().strftime(
-            "%d/%m/%Y"
-        )
+        form4_data["txtDataElaboracao"] = data_elaboracao or _date.today().strftime("%d/%m/%Y")
         form4_data["hdnStaNivelAcessoLocal"] = nivel_acesso
         form4_data["rdoNivelAcesso"] = nivel_acesso
         if hipotese_legal and nivel_acesso in ("1", "2"):
@@ -1192,9 +1134,7 @@ class SEIWebClient:
                 el = soup6.find(class_=cls)
                 if el:
                     erros.append(el.get_text(strip=True)[:300])
-            scripts6 = re.findall(
-                r"<script[^>]*>(.*?)</script>", body6, re.DOTALL | re.IGNORECASE
-            )
+            scripts6 = re.findall(r"<script[^>]*>(.*?)</script>", body6, re.DOTALL | re.IGNORECASE)
             for sc in scripts6:
                 if "alert(" in sc:
                     m_alert = re.search(r"alert\(['\"]([^'\"]+)['\"]", sc)
@@ -1249,13 +1189,11 @@ class SEIWebClient:
         # pelo _extract_main_form via fetch_inbox). Esses campos têm o total
         # da seleção atual no servidor, não só da página visível.
         if layout == "detalhada":
-            total_servidor = int(
-                self._form_hidden.get("hdnDetalhadoNroItens", "0") or "0"
-            )
+            total_servidor = int(self._form_hidden.get("hdnDetalhadoNroItens", "0") or "0")
         else:
-            total_servidor = int(
-                self._form_hidden.get("hdnRecebidosNroItens", "0") or "0"
-            ) + int(self._form_hidden.get("hdnGeradosNroItens", "0") or "0")
+            total_servidor = int(self._form_hidden.get("hdnRecebidosNroItens", "0") or "0") + int(
+                self._form_hidden.get("hdnGeradosNroItens", "0") or "0"
+            )
         if total_servidor == 0:
             total_servidor = len(rows)
 
@@ -1264,9 +1202,7 @@ class SEIWebClient:
         if tipo:
             tipo_lower = tipo.lower()
             rows_filtrados = [
-                r
-                for r in rows_filtrados
-                if tipo_lower in (r.get("Tipo", "") or "").lower()
+                r for r in rows_filtrados if tipo_lower in (r.get("Tipo", "") or "").lower()
             ]
         if filtro:
             filtro_lower = filtro.lower()
@@ -1285,8 +1221,7 @@ class SEIWebClient:
             "total_itens": total_servidor,
             "total_filtrados": len(rows_filtrados),
             "pagina_atual": pagina,
-            "tem_proxima": len(rows) > 0
-            and (pagina + 1) * max(len(rows), 1) < total_servidor,
+            "tem_proxima": len(rows) > 0 and (pagina + 1) * max(len(rows), 1) < total_servidor,
             "layout": layout,
         }
 
@@ -1337,9 +1272,7 @@ def parse_arvore_nos(html: str) -> list[dict]:
             s = s.strip()
             if s in ("null", ""):
                 return ""
-            if (s.startswith('"') and s.endswith('"')) or (
-                s.startswith("'") and s.endswith("'")
-            ):
+            if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
                 return s[1:-1]
             return s
 
@@ -1467,9 +1400,7 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:
                 col_names.append(h)
             else:
                 col_names.append(
-                    {0: "_check", 1: "icones", 2: "_processo", 3: "atribuicao"}.get(
-                        i, f"col{i}"
-                    )
+                    {0: "_check", 1: "icones", 2: "_processo", 3: "atribuicao"}.get(i, f"col{i}")
                 )
 
         for tr in tbl.find_all("tr", id=re.compile(r"^P\d+$")):
@@ -1531,9 +1462,7 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:
                 if icones:
                     row["icones"] = icones
             if len(tds) >= 4:
-                atrib_text = _RE_PARENS.sub(
-                    "", tds[-1].get_text(" ", strip=True)
-                ).strip()
+                atrib_text = _RE_PARENS.sub("", tds[-1].get_text(" ", strip=True)).strip()
                 if atrib_text:
                     row["atribuicao"] = atrib_text
             rows.append(row)

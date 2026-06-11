@@ -137,7 +137,7 @@ def construir_aviso_bloqueio(
     # Ordem é deliberada: campos de framing (não-erro / instrução ao modelo)
     # vêm ANTES dos riscos para que modelos que param de ler cedo já
     # entendam o tipo de resposta antes de pensar em "consertar".
-    aviso = {
+    return {
         "tipo_resposta": "consentimento_pendente",
         "nao_e_erro_tecnico": _NAO_E_ERRO_TECNICO,
         "instrucao_para_modelo": _INSTRUCAO_MODELO,
@@ -151,7 +151,6 @@ def construir_aviso_bloqueio(
         **base,
         "como_liberar": list(_COMO_LIBERAR),
     }
-    return aviso
 
 
 def construir_disclaimer_acompanhante(
@@ -166,7 +165,7 @@ def construir_disclaimer_acompanhante(
     sei_consultar_documento_externo, etc).
     """
     base = _bloco_base(nivel, hipotese_legal, alvo)
-    aviso = {
+    return {
         "tipo_resposta": "aviso_classificacao_informativo",
         "instrucao_para_modelo": _INSTRUCAO_MODELO_METADATA,
         "mensagem": (
@@ -178,7 +177,6 @@ def construir_disclaimer_acompanhante(
         **base,
         "consentimento_necessario": False,
     }
-    return aviso
 
 
 def avaliar_acesso(
@@ -281,11 +279,7 @@ def extrair_nivel(metadata: dict) -> tuple[str | None, str | None]:
     )
     hipotese: str | None = None
     if isinstance(hl_raw, dict):
-        hipotese = (
-            hl_raw.get("nome")
-            or hl_raw.get("descricao")
-            or str(hl_raw.get("id", "") or "")
-        )
+        hipotese = hl_raw.get("nome") or hl_raw.get("descricao") or str(hl_raw.get("id", "") or "")
         hipotese = hipotese or None
     elif hl_raw:
         hipotese = str(hl_raw)

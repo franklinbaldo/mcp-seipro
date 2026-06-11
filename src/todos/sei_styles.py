@@ -210,15 +210,13 @@ SEI_STYLES = {
         "autonumeracao": "I - II - III -",
     },
     "Item_Inciso_Romano_Recuo": {
-        "descricao": "Inciso romano com recuo menor (margem 6pt). "
-        "Autonumera I - II - III -.",
+        "descricao": "Inciso romano com recuo menor (margem 6pt). Autonumera I - II - III -.",
         "exemplo": '<p class="Item_Inciso_Romano_Recuo">conteúdo do inciso.</p>',
         "alinhamento": "justify",
         "autonumeracao": "I - II - III -",
     },
     "Item_Inciso_Romano_Esquerda_Recuo_Justif": {
-        "descricao": "Inciso romano justificado com recuo à esquerda. "
-        "Autonumera I - II - III -.",
+        "descricao": "Inciso romano justificado com recuo à esquerda. Autonumera I - II - III -.",
         "exemplo": '<p class="Item_Inciso_Romano_Esquerda_Recuo_Justif">conteúdo.</p>',
         "alinhamento": "justify",
         "autonumeracao": "I - II - III -",
