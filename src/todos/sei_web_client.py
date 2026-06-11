@@ -356,7 +356,7 @@ class SEIWebClient:
     # Listar processos (Controle de Processos / inbox)
     # ------------------------------------------------------------------
 
-    async def fetch_inbox(  # noqa: C901
+    async def fetch_inbox(
         self,
         detalhada: bool = True,  # noqa: FBT001, FBT002
         pagina: int = 0,
@@ -375,8 +375,7 @@ class SEIWebClient:
 
         Retorna `(bytes, html)`.
         """
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado antes de fetch_inbox().")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
 
         # Caso simples: GET inicial sem detalhada/filtros/paginação
         if not detalhada and pagina == 0 and not apenas_meus and self._form_action is None:
@@ -526,8 +525,7 @@ class SEIWebClient:
         Para enriquecer com especificacao/assuntos/interessados (que só estão
         na REST), combine com `SEIClient.consultar_processo_completo()`.
         """
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado antes de consultar_processo()")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
 
         # garante que o protocolo está no cache de links da inbox
         if protocolo_formatado not in self._trabalhar_links:
@@ -884,18 +882,21 @@ class SEIWebClient:
                     return urljoin(sei_base, raw), url_arvore
 
         # Busca genérica: qualquer URL com acao=X e id_documento=Y
+        # (?=&|&amp;|["'\s]) âncora o fim do id para evitar match por prefixo
+        # (ex: id=287 não deve casar com id=2874369)
+        _id_anchor = r"(?=&(?:amp;)?|[\"'\s])"
         pattern = (
             rf"(controlador\.php\?acao={re.escape(acao)}"
-            rf"[^\"'\s]*id_documento={re.escape(id_documento)}"
-            rf"[^\"'\s]*infra_hash=[a-f0-9]+)"
+            rf"[^\"'\s]*id_documento={re.escape(id_documento)}{_id_anchor}"
+            rf"[^\"'\s]*infra_hash=[a-fA-F0-9]+)"
         )
         m = re.search(pattern, html_arvore)
         if not m:
             # Tenta ordem invertida (infra_hash antes de id_documento)
             pattern2 = (
                 rf"(controlador\.php\?acao={re.escape(acao)}"
-                rf"[^\"'\s]*infra_hash=[a-f0-9]+"
-                rf"[^\"'\s]*id_documento={re.escape(id_documento)}"
+                rf"[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+                rf"[^\"'\s]*id_documento={re.escape(id_documento)}{_id_anchor}"
                 rf"[^\"'\s]*)"
             )
             m = re.search(pattern2, html_arvore)
@@ -1089,8 +1090,7 @@ class SEIWebClient:
         Usa o mesmo endpoint do botão "Gerar PDF" da interface web.
         Retorna os bytes brutos do PDF.
         """
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
         content = await self._gerar_arquivo_processo(protocolo_formatado, "procedimento_gerar_pdf")
         if "pdf" not in self._http.headers.get("accept", "").lower():
             pass  # conteúdo válido independente do accept
@@ -1105,8 +1105,7 @@ class SEIWebClient:
         Usa o mesmo endpoint do botão "Gerar ZIP" da interface web.
         Retorna os bytes brutos do arquivo ZIP.
         """
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
         return await self._gerar_arquivo_processo(protocolo_formatado, "procedimento_gerar_zip")
 
     async def listar_atividades(self, protocolo_formatado: str) -> dict:  # noqa: C901
@@ -1122,8 +1121,7 @@ class SEIWebClient:
               "andamentos": [{data_hora, unidade, usuario, descricao}, ...],
             }
         """
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
 
         # garante que o protocolo está no cache
         if protocolo_formatado not in self._trabalhar_links:
@@ -1222,8 +1220,7 @@ class SEIWebClient:
         import os as _os  # noqa: PLC0415
         from datetime import date as _date  # noqa: PLC0415
 
-        if self._inbox_url is None:
-            raise RuntimeError("login() não foi chamado")  # noqa: EM101, TRY003
+        await self.ensure_authenticated()
 
         if protocolo_formatado not in self._trabalhar_links:
             await self.fetch_inbox(detalhada=False)
@@ -1849,17 +1846,19 @@ def _parse_documento_consultar(html: str, id_documento: str) -> dict:  # noqa: C
     result: dict[str, object] = {"id_documento": id_documento}
 
     # -- metadados: tabela de campos (th + td pairs) --
+    _known_tbl_ids = {"tblAssinaturas", "tblCiencias"}
     for tbl in soup.find_all("table"):
         if not isinstance(tbl, Tag):
             continue
+        if tbl.get("id") in _known_tbl_ids:
+            continue
         for tr in tbl.find_all("tr"):
-            tds = tr.find_all(["th", "td"])
-            if len(tds) == 2:  # noqa: PLR2004
-                k = tds[0].get_text(" ", strip=True).rstrip(":").lower()
-                v = tds[1].get_text(" ", strip=True)
+            cells = tr.find_all(["th", "td"])
+            if len(cells) == 2 and cells[0].name != "th":  # noqa: PLR2004
+                k = cells[0].get_text(" ", strip=True).rstrip(":").lower()
+                v = cells[1].get_text(" ", strip=True)
                 if k and v:
-                    key = k.replace(" ", "_").replace("/", "_")
-                    result[key] = v
+                    result[k.replace(" ", "_").replace("/", "_")] = v
 
     # -- assinaturas: tblAssinaturas --
     assinaturas: list[dict] = []
@@ -1902,20 +1901,30 @@ def _parse_procedimento_consultar(html: str, protocolo: str) -> dict:  # noqa: C
     result: dict[str, object] = {"protocolo": protocolo}
 
     # -- metadados gerais: table com th+td pairs --
+    _known_tbl_ids2 = {"tblUnidadesProcesso", "tblInteressados", "tblSobrestamento"}
     for tbl in soup.find_all("table"):
         if not isinstance(tbl, Tag):
             continue
+        if tbl.get("id") in _known_tbl_ids2:
+            continue
         for tr in tbl.find_all("tr"):
-            tds = tr.find_all(["th", "td"])
-            if len(tds) == 2:  # noqa: PLR2004
-                k = tds[0].get_text(" ", strip=True).rstrip(":").lower()
-                v = tds[1].get_text(" ", strip=True)
-                if k and v and len(k) < 60:  # noqa: PLR2004
+            cells = tr.find_all(["th", "td"])
+            if (
+                len(cells) == 2
+                and cells[0].name != "th"
+                and len(  # noqa: PLR2004
+                    cells[0].get_text(" ", strip=True)
+                )
+                < 60
+            ):  # noqa: PLR2004
+                k = cells[0].get_text(" ", strip=True).rstrip(":").lower()
+                v = cells[1].get_text(" ", strip=True)
+                if k and v:
                     result[k.replace(" ", "_").replace("/", "_")] = v
 
     # -- unidades abertas: tblUnidadesProcesso --
     unidades: list[dict] = []
-    for tbl_id in ("tblUnidadesProcesso", "tblAndamento"):
+    for tbl_id in ("tblUnidadesProcesso",):
         tbl_un = soup.find("table", id=tbl_id)
         if tbl_un and isinstance(tbl_un, Tag):
             for tr in tbl_un.find_all("tr")[1:]:

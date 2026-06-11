@@ -809,8 +809,33 @@ async def sei_ler_documento(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915
                     "(protocolo do processo, ex: '50300.018905/2018-67') para ler documentos."
                 )
             web = backend.web
-            if web._inbox_url is None:  # noqa: SLF001
-                await web.login()
+            # Gate de acesso: verificar nível antes de expor conteúdo ao modelo
+            if not confirmar_acesso_restrito and not access_control.env_permite_restritos():
+                try:
+                    meta_web = await web.consultar_documento_web(processo, id_documento)
+                    nivel_str = str(
+                        meta_web.get(
+                            "nível_de_acesso",
+                            meta_web.get("nivel_de_acesso", ""),
+                        )
+                    ).lower()
+                    nivel_cod = (
+                        access_control.SIGILOSO
+                        if "sigiloso" in nivel_str
+                        else access_control.RESTRITO
+                        if "restrito" in nivel_str
+                        else None
+                    )
+                    if nivel_cod is not None:
+                        return _json(
+                            access_control.construir_aviso_bloqueio(
+                                nivel_cod,
+                                None,
+                                {"tipo": "documento", "id": id_documento},
+                            )
+                        )
+                except Exception:  # noqa: BLE001, S110
+                    pass  # falha no check → prossegue (fail-open em web-only)
             tipo_doc = tipo_documento
             if tipo_doc == "auto":
                 # Tenta interno primeiro; se falhar, tenta externo
@@ -919,7 +944,7 @@ async def sei_ler_documento(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915
 
 
 @mcp.tool()
-async def sei_baixar_anexo(  # noqa: PLR0911
+async def sei_baixar_anexo(  # noqa: C901, PLR0911
     id_documento: str,
     confirmar_acesso_restrito: bool = False,  # noqa: FBT001, FBT002
     processo: str | None = None,
@@ -952,6 +977,33 @@ async def sei_baixar_anexo(  # noqa: PLR0911
                     "Em instâncias sem mod-wssei, forneça o parâmetro 'processo' "
                     "para baixar anexos."
                 )
+            # Gate de acesso: verificar nível antes de expor conteúdo ao modelo
+            if not confirmar_acesso_restrito and not access_control.env_permite_restritos():
+                try:
+                    meta_web = await backend.web.consultar_documento_web(processo, id_documento)
+                    nivel_str = str(
+                        meta_web.get(
+                            "nível_de_acesso",
+                            meta_web.get("nivel_de_acesso", ""),
+                        )
+                    ).lower()
+                    nivel_cod = (
+                        access_control.SIGILOSO
+                        if "sigiloso" in nivel_str
+                        else access_control.RESTRITO
+                        if "restrito" in nivel_str
+                        else None
+                    )
+                    if nivel_cod is not None:
+                        return _json(
+                            access_control.construir_aviso_bloqueio(
+                                nivel_cod,
+                                None,
+                                {"tipo": "documento", "id": id_documento},
+                            )
+                        )
+                except Exception:  # noqa: BLE001, S110
+                    pass  # falha no check → prossegue (fail-open em web-only)
             content = await backend.web.baixar_documento_externo_web(processo, id_documento)
             if len(content) > MAX_BINARY_SIZE:
                 return _error(
@@ -2269,17 +2321,16 @@ async def sei_listar_ciencias(
                 result = await backend.rest.listar_ciencias_processo(id_proc)
             return _json(result)
         # web fallback
-        if tipo == "documento":
-            if processo is None:
-                return _error(
-                    "Em instâncias sem mod-wssei, forneça 'processo' para listar ciências de documento."
-                )
-            result = await backend.web.listar_ciencias_web(processo, referencia)
-        else:
-            detalhe = await backend.web.consultar_processo_detalhe(referencia)
-            result = detalhe.get(
-                "sobrestamentos", []
-            )  # sobrestamentos contém andamentos c/ ciência
+        if tipo == "processo":
+            return _error(
+                "Listar ciências de processo requer mod-wssei (REST). "
+                "Configure SEI_URL para habilitar esta funcionalidade."
+            )
+        if processo is None:
+            return _error(
+                "Em instâncias sem mod-wssei, forneça 'processo' para listar ciências de documento."
+            )
+        result = await backend.web.listar_ciencias_web(processo, referencia)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
