@@ -49,9 +49,14 @@ class SEIWebClient:
     def __init__(self, **kwargs: Any) -> None:
         # Reusa as mesmas env vars do SEIClient REST
         sei_url = kwargs.get("sei_url", os.environ.get("SEI_URL", ""))
-        # Deriva a raiz web a partir da URL da REST
-        # Ex: https://sei.antaq.gov.br/sei/modulos/wssei/... → https://sei.antaq.gov.br
-        if "/sei/" in sei_url:
+        # SEI_WEB_URL permite modo web-only (sem mod-wssei) apontando direto para
+        # a raiz do SEI (ex: https://sei.orgao.gov.br). Tem precedência sobre SEI_URL.
+        sei_web_url = kwargs.get("sei_web_url", os.environ.get("SEI_WEB_URL", ""))
+        if sei_web_url:
+            self.sei_root = sei_web_url.rstrip("/")
+        elif "/sei/" in sei_url:
+            # Deriva raiz a partir da URL da REST
+            # Ex: https://sei.antaq.gov.br/sei/modulos/wssei/... → https://sei.antaq.gov.br
             self.sei_root = sei_url.split("/sei/", 1)[0]
         else:
             self.sei_root = sei_url.rstrip("/")
@@ -866,6 +871,7 @@ class SEIWebClient:
         nome_arquivo: Optional[str] = None,
         id_serie: Optional[str] = None,
         data_elaboracao: str = "",
+        nivel_acesso: str = "0",
     ) -> dict:
         """Inclui documento externo (upload de arquivo) em processo SEI via web.
 
@@ -1117,8 +1123,8 @@ class SEIWebClient:
         form4_data["txtDataElaboracao"] = data_elaboracao or _date.today().strftime(
             "%d/%m/%Y"
         )
-        form4_data["hdnStaNivelAcessoLocal"] = "0"
-        form4_data["rdoNivelAcesso"] = "0"  # público
+        form4_data["hdnStaNivelAcessoLocal"] = nivel_acesso
+        form4_data["rdoNivelAcesso"] = nivel_acesso
         form4_data["rdoFormato"] = "N"  # nato-digital
         # JS submeter() altera de '1' → '2' antes do form.submit()
         form4_data["hdnFlagDocumentoCadastro"] = "2"

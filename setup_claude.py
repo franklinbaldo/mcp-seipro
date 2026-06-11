@@ -150,6 +150,28 @@ def prompt_url() -> str:
         return url.rstrip("/")
 
 
+def prompt_web_url() -> str:
+    print()
+    print("  [1b/5] URL base do SEI (necessaria para modo web-only)")
+    print("         Exemplo: https://sei.orgao.gov.br")
+    print("         Esta URL e usada pelo scraper web quando mod-wssei nao esta disponivel.")
+    print()
+    while True:
+        url = input("         URL base do SEI: ").strip()
+        if not url:
+            warn("URL base obrigatoria para modo web-only (sem mod-wssei).")
+            continue
+        parsed = urlparse(url)
+        if not parsed.scheme:
+            warn("URL deve comecar com https:// ou http://")
+            continue
+        if parsed.scheme == "http":
+            warn("Voce esta usando http:// (sem criptografia).")
+            if not confirm("Continuar mesmo assim?", default_yes=False):
+                continue
+        return url.rstrip("/")
+
+
 def prompt_usuario() -> str:
     print()
     print("  [2/5] Usuario do SEI")
@@ -382,6 +404,7 @@ def main():
 
     # Fase 1
     sei_url = prompt_url()
+    sei_web_url = "" if sei_url else prompt_web_url()
     sei_usuario = prompt_usuario()
     sei_senha = prompt_senha()
     sei_orgao = prompt_orgao()
@@ -395,6 +418,8 @@ def main():
     }
     if sei_url:
         env["SEI_URL"] = sei_url
+    if sei_web_url:
+        env["SEI_WEB_URL"] = sei_web_url
 
     # Fase 2
     print()
