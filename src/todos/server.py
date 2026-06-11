@@ -220,15 +220,28 @@ mcp = FastMCP(
 
 @mcp.resource("sei://status")
 async def sei_status_resource(ctx: Context) -> str:  # noqa: D103
-    """Unidade SEI ativa, usuário logado e instância conectada. Leia ao iniciar a sessão."""
+    """Unidade SEI ativa, usuário logado, instância e unidades disponíveis. Leia ao iniciar."""
     web = _get_web_client(ctx)
     try:
-        unidade = await web.unidade_atual()
+        unidade, unidades = await asyncio.gather(
+            web.unidade_atual(),
+            web.listar_unidades(),
+        )
         sigla = unidade.get("sigla", "?")
         nome = unidade.get("nome", "?")
         web_url = os.environ.get("SEI_WEB_URL") or os.environ.get("SEI_URL", "?")
         nome_usuario = web._nome_usuario or web._usuario  # noqa: SLF001
-        return f"Instância SEI: {web_url}\nUsuário: {nome_usuario}\nUnidade ativa: {sigla} — {nome}"
+        linhas = [
+            f"Instância SEI: {web_url}",
+            f"Usuário: {nome_usuario}",
+            f"Unidade ativa: {sigla} — {nome}",
+            "",
+            "Unidades disponíveis:",
+        ]
+        for u in unidades:
+            marker = "▶" if u.get("sigla") == sigla else " "
+            linhas.append(f"  {marker} {u['sigla']} — {u['nome']} (id: {u.get('id_unidade', '?')})")
+        return "\n".join(linhas)
     except Exception as exc:  # noqa: BLE001
         return f"Status: erro ao obter sessão — {exc}"
 
