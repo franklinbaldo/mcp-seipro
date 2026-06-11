@@ -743,8 +743,11 @@ class SEIWebClient:
             if search_form is not None:
                 break
             if attempt == 0:
-                # Sessão pode ter expirado; reautentica e tenta novamente
-                self._authenticated = False
+                # Sessão expirada: invalida o cache de sessão para forçar re-login
+                # (ensure_authenticated só re-login quando _inbox_url is None)
+                self._inbox_url = None
+                self._form_action = None
+                self._pesquisa_rapida_action = None
                 await self.ensure_authenticated()
                 await self.fetch_inbox(detalhada=False)
 
@@ -798,10 +801,14 @@ class SEIWebClient:
 
             siblings: list[Tag] = []
             for sib in row0.next_siblings:
-                if isinstance(sib, Tag) and sib.name == "tr":
-                    siblings.append(sib)
-                    if len(siblings) == 2:  # noqa: PLR2004
-                        break
+                if not (isinstance(sib, Tag) and sib.name == "tr"):
+                    continue
+                # Para se encontrar a linha de outro resultado (próximo protocolo)
+                if sib.find("a", href=re.compile(r"procedimento_trabalhar")):
+                    break
+                siblings.append(sib)
+                if len(siblings) == 2:  # noqa: PLR2004
+                    break
 
             tipo_cell = row0.find("td")
             tipo_text = tipo_cell.get_text(" ", strip=True) if isinstance(tipo_cell, Tag) else ""

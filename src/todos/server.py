@@ -1685,8 +1685,8 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
             start=pagina,
         )
         return _json(result)
-    except ValueError:
-        _rest_unavailable = True  # REST client não configurado (sem SEI_URL)
+    except (ValueError, httpx.UnsupportedProtocol):
+        _rest_unavailable = True  # REST não configurado (sem SEI_URL) ou URL inválida
     except httpx.HTTPStatusError as exc:
         if exc.response.status_code in (404, 501):
             _rest_unavailable = True  # mod-wssei ausente ou endpoint não encontrado
@@ -1695,10 +1695,8 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
-    if not _rest_unavailable:
-        return _error("Pesquisa REST falhou por motivo desconhecido.")  # guarda defensiva
-
     # Fallback via web scraper (instâncias sem mod-wssei)
+    q_web = " ".join(filter(None, [palavras_chave, busca_rapida]))
     dropped = [n for n, v in [
         ("sta_tipo_data", sta_tipo_data),
         ("id_unidade_geradora", id_unidade_geradora),
@@ -1708,22 +1706,28 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
     try:
         web = _get_web_client(ctx)
         items = await web.pesquisar_processos_web(
-            q=palavras_chave or busca_rapida,
+            q=q_web,
             descricao=descricao,
             data_inicio=data_inicio,
             data_fim=data_fim,
             pagina=pagina,
         )
+        page_items = items[:limit]
         paged: dict = {
-            "processos": items[:limit],
+            "processos": page_items,
             "pagina_atual": pagina,
-            "itens_pagina": len(items[:limit]),
-            "total_itens": len(items),
+            "itens_pagina": len(page_items),
+            "total_itens": len(page_items),
             "tem_proxima": len(items) >= 10,  # noqa: PLR2004
             "fonte": "web",
         }
+        avisos: list[str] = []
         if dropped:
-            paged["aviso"] = f"Filtros ignorados (não suportados na pesquisa web): {', '.join(dropped)}"
+            avisos.append(f"filtros ignorados (não suportados na pesquisa web): {', '.join(dropped)}")
+        if limit < 10 and len(items) > limit:  # noqa: PLR2004
+            avisos.append(f"resultados truncados para limit={limit} (página web retorna até 10)")
+        if avisos:
+            paged["aviso"] = "; ".join(avisos).capitalize()
         return _json(paged)
     except Exception as e2:  # noqa: BLE001
         return _error(f"Web: {e2}")
