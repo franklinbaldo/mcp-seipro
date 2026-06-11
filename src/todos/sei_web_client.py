@@ -23,7 +23,7 @@ import re
 import time
 import warnings
 from typing import Any
-from urllib.parse import parse_qsl, urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -66,6 +66,21 @@ def _extrair_erro_sei(html: str) -> str | None:
     m = re.search(r"alert\(['\"](.{10,300})['\"]", html)
     if m:
         return m.group(1)
+    return None
+
+
+def _extrair_submit_btn(form: Tag) -> tuple[str, str] | None:
+    """Extrai o par (name, value) do botão submit de um form.
+
+    O PHP do SEI exige o par name=value do botão submit no POST; sem ele
+    ignora o form silenciosamente. Válido para input[type=submit] e button.
+    """
+    btn = form.find("input", type="submit") or form.find("button", type="submit")
+    if btn and isinstance(btn, Tag):
+        name = _tag_str(btn, "name")
+        if name:
+            value = _tag_str(btn, "value") or btn.get_text(strip=True) or "Enviar"
+            return name, value
     return None
 
 
@@ -1247,6 +1262,420 @@ class SEIWebClient:
             },
             "total_andamentos": len(andamentos),
             "andamentos": andamentos,
+        }
+
+    # ------------------------------------------------------------------
+    # Complex forms — PR #5
+    # ------------------------------------------------------------------
+
+    async def autocomplete_unidades(self, termo: str) -> list[dict]:
+        """Resolve sigla/nome de unidade via AJAX autocomplete do SEI.
+
+        Retorna lista de {"id": str, "sigla": str, "nome": str}.
+        """
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        r = await self._http.get(
+            f"{sei_base}controlador_ajax.php",
+            params={"acao_ajax": "unidade_auto_completar", "termo": termo},
+            headers={"Referer": str(self._inbox_url)},
+        )
+        if r.status_code != 200:  # noqa: PLR2004
+            return []
+        try:
+            raw = r.json()
+        except Exception:  # noqa: BLE001
+            return []
+        results = []
+        for item in raw if isinstance(raw, list) else []:
+            if not isinstance(item, dict):
+                continue
+            results.append(
+                {
+                    "id": str(item.get("id", item.get("value", ""))),
+                    "sigla": str(item.get("sigla", item.get("label", ""))),
+                    "nome": str(item.get("nome", item.get("descricao", ""))),
+                }
+            )
+        return results
+
+    async def enviar_processo_web(  # noqa: C901, PLR0912, PLR0913
+        self,
+        protocolo: str,
+        unidades_ids: list[str],
+        manter_aberto: str = "N",
+        remover_anotacao: str = "N",
+        enviar_email: str = "N",
+        data_retorno: str = "",
+        dias_retorno: str = "",
+    ) -> dict:
+        """Envia (tramita) um processo via scraper web do SEI.
+
+        Fluxo: trabalhar → arvore → link(procedimento_tramitar) → GET form → POST.
+        As `unidades_ids` devem ser IDs numéricos já resolvidos.
+        """
+        await self.ensure_authenticated()
+
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+
+        m = re.search(
+            r"(controlador\.php\?acao=procedimento_tramitar[^\"'\s]*infra_hash=[a-fA-F0-9]+)",
+            html_arvore,
+        )
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Ação 'procedimento_tramitar' não encontrada na árvore de {protocolo}. "  # noqa: EM102
+                "Verifique permissão de tramitação neste processo."
+            )
+
+        tramitar_url = urljoin(sei_base, m.group(1).replace("&amp;", "&"))
+        r = await self._http.get(tramitar_url, headers={"Referer": url_arvore})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"procedimento_tramitar status={r.status_code}")  # noqa: EM102, TRY003
+
+        body = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body)
+        if erro:
+            raise RuntimeError(erro)
+
+        soup = BeautifulSoup(body, "html.parser")
+        form = soup.find("form")
+        if not isinstance(form, Tag):
+            raise RuntimeError("Form procedimento_tramitar não encontrado.")  # noqa: EM101, TRY003, TRY004
+
+        action = _tag_str(form, "action").replace("&amp;", "&")
+        post_url = urljoin(sei_base, action) if action else tramitar_url
+
+        # Coleta campos hidden do form
+        post_data: list[tuple[str, str]] = []
+        for inp in form.find_all("input", type="hidden"):
+            if not isinstance(inp, Tag):
+                continue
+            name = _tag_str(inp, "name")
+            if name:
+                post_data.append((name, _tag_str(inp, "value")))
+
+        # Botão submit obrigatório (PHP ignora POST sem ele silenciosamente)
+        sbm = _extrair_submit_btn(form)
+        if sbm:
+            post_data.append(sbm)
+
+        # Adiciona uma entrada hdnIdUnidadeEnvio por unidade destino
+        post_data.extend(("hdnIdUnidadeEnvio", uid) for uid in unidades_ids)
+
+        # Opções de tramitação — usa os nomes padrão do SEI
+        if manter_aberto.upper() == "S":
+            post_data.append(("chkSinManterAberto", "S"))
+        if remover_anotacao.upper() == "S":
+            post_data.append(("chkSinRemoverAnotacoes", "S"))
+        if enviar_email.upper() == "S":
+            post_data.append(("chkSinEnviarEmailNotificacao", "S"))
+        if data_retorno:
+            post_data.append(("dtaRetorno", data_retorno))
+        if dias_retorno:
+            post_data.append(("numDiasRetorno", dias_retorno))
+
+        r2 = await self._http.post(
+            post_url,
+            content=urlencode(post_data).encode(),
+            headers={"Referer": tramitar_url, "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if r2.status_code not in (200, 302):
+            raise RuntimeError(f"POST procedimento_tramitar falhou com status={r2.status_code}")  # noqa: EM102, TRY003
+        body2 = r2.content.decode("iso-8859-1", "replace")
+        erro2 = _extrair_erro_sei(body2)
+        if erro2:
+            raise RuntimeError(erro2)
+
+        return {
+            "ok": True,
+            "mensagem": f"Processo {protocolo} enviado para {len(unidades_ids)} unidade(s).",
+            "protocolo": protocolo,
+            "unidades": unidades_ids,
+        }
+
+    async def _obter_link_toolbar(self, acao: str) -> str:
+        """Retorna URL assinada (com infra_hash) de uma ação do toolbar da inbox.
+
+        Busca o link da ação `acao` no HTML da inbox. Necessário para ações
+        que não partem de um processo específico (ex: procedimento_cadastrar).
+        """
+        await self.ensure_authenticated()
+        inbox_url = str(self._inbox_url)
+        r = await self._http.get(
+            inbox_url,
+            headers={"Referer": inbox_url},
+        )
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"inbox status={r.status_code}")  # noqa: EM102, TRY003
+        html = r.content.decode("iso-8859-1", "replace")
+        m = re.search(
+            rf"(controlador\.php\?acao={re.escape(acao)}[^\"'\s]*infra_hash=[a-fA-F0-9]+)",
+            html,
+        )
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Ação '{acao}' não encontrada no toolbar da inbox."  # noqa: EM102
+            )
+        sei_base = f"{self.sei_root}/sei/"
+        return urljoin(sei_base, m.group(1).replace("&amp;", "&"))
+
+    async def criar_processo_web(  # noqa: C901, PLR0912, PLR0913, PLR0915
+        self,
+        tipo_processo: str,
+        especificacao: str = "",
+        assuntos_ids: list[str] | None = None,
+        interessados_ids: list[str] | None = None,
+        nivel_acesso: str = "0",
+        hipotese_legal: str = "",
+    ) -> dict:
+        """Cria novo processo via scraper web do SEI.
+
+        Fluxo: toolbar(procedimento_cadastrar) → GET form → POST.
+        """
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+
+        cadastrar_url = await self._obter_link_toolbar("procedimento_cadastrar")
+        r = await self._http.get(cadastrar_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"procedimento_cadastrar status={r.status_code}")  # noqa: EM102, TRY003
+
+        body = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body)
+        if erro:
+            raise RuntimeError(erro)
+
+        soup = BeautifulSoup(body, "html.parser")
+        form = soup.find("form")
+        if not isinstance(form, Tag):
+            raise RuntimeError("Form procedimento_cadastrar não encontrado.")  # noqa: EM101, TRY003, TRY004
+
+        action = _tag_str(form, "action").replace("&amp;", "&")
+        post_url = urljoin(sei_base, action) if action else cadastrar_url
+
+        post_data: list[tuple[str, str]] = []
+        for inp in form.find_all("input", type="hidden"):
+            if not isinstance(inp, Tag):
+                continue
+            name = _tag_str(inp, "name")
+            if name:
+                post_data.append((name, _tag_str(inp, "value")))
+
+        # Botão submit obrigatório (PHP ignora POST sem ele silenciosamente)
+        sbm = _extrair_submit_btn(form)
+        if sbm:
+            post_data.append(sbm)
+
+        post_data.append(("selTipoProcedimento", tipo_processo))
+        if especificacao:
+            post_data.append(("txtDescricao", especificacao))
+        post_data.append(("selNivelAcesso", nivel_acesso))
+        if hipotese_legal and nivel_acesso in ("1", "2"):
+            post_data.append(("selHipoteseLegal", hipotese_legal))
+        post_data.extend(("hdnIdAssunto", aid) for aid in (assuntos_ids or []))
+        post_data.extend(("hdnIdInteressado", iid) for iid in (interessados_ids or []))
+
+        r2 = await self._http.post(
+            post_url,
+            content=urlencode(post_data).encode(),
+            headers={"Referer": cadastrar_url, "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if r2.status_code not in (200, 302):
+            raise RuntimeError(f"POST procedimento_cadastrar falhou com status={r2.status_code}")  # noqa: EM102, TRY003
+        body2 = r2.content.decode("iso-8859-1", "replace")
+        erro2 = _extrair_erro_sei(body2)
+        if erro2:
+            raise RuntimeError(erro2)
+
+        # Extrai o IdProcedimento e protocoloFormatado da resposta
+        id_proc = ""
+        protocolo = ""
+        m_id = re.search(r"IdProcedimento[\"']?\s*[:=]\s*[\"']?(\d+)", body2)
+        if m_id:
+            id_proc = m_id.group(1)
+        m_proto = re.search(r"ProtocoloFormatado[\"']?\s*[:=]\s*[\"']([^\"']+)", body2)
+        if m_proto:
+            protocolo = m_proto.group(1)
+
+        # Fallback: final URL may carry the id
+        if not id_proc:
+            m_url = re.search(r"id_procedimento=(\d+)", str(r2.url))
+            if m_url:
+                id_proc = m_url.group(1)
+
+        if not id_proc:
+            raise RuntimeError(  # noqa: TRY003
+                "Processo aparentemente criado mas idProcedimento não pôde ser extraído da resposta."  # noqa: EM101
+            )
+
+        return {
+            "ok": True,
+            "idProcedimento": id_proc,
+            "protocoloFormatado": protocolo,
+            "mensagem": "Processo criado com sucesso.",
+        }
+
+    async def criar_documento_interno_web(  # noqa: C901, PLR0912, PLR0915
+        self,
+        protocolo: str,
+        id_serie: str,
+        descricao: str = "",
+        nivel_acesso: str = "0",
+        hipotese_legal: str = "",
+    ) -> dict:
+        """Cria documento interno em um processo via scraper web do SEI.
+
+        Fluxo:
+          1. arvore → link documento_escolher_tipo
+          2. GET documento_escolher_tipo → busca link para id_serie
+          3. GET editor_montar para o tipo escolhido
+          4. POST documento_gerar com campos do editor (conteúdo vazio)
+
+        O documento é criado vazio; use sei_editar_secao para inserir conteúdo.
+        """
+        await self.ensure_authenticated()
+
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+
+        # --- Step 1: encontrar link documento_escolher_tipo na árvore ---
+        incluir_href: str | None = None
+        soup_acoes = BeautifulSoup(html_arvore, "html.parser")
+        for a in soup_acoes.find_all("a", href=re.compile(r"documento_escolher_tipo")):
+            incluir_href = _tag_str(a, "href").replace("&amp;", "&")
+            break
+        if not incluir_href:
+            for img in soup_acoes.find_all("img"):
+                if "Incluir" in (img.get("title", "") or "") or "incluir" in (
+                    img.get("src", "") or ""
+                ):
+                    pa = img.find_parent("a")
+                    # Confirm the parent link points to documento_escolher_tipo,
+                    # not "Incluir em Bloco" or other "incluir" toolbar actions.
+                    if pa and "documento_escolher_tipo" in _tag_str(pa, "href"):
+                        incluir_href = _tag_str(pa, "href").replace("&amp;", "&")
+                        break
+
+        if not incluir_href:
+            raise RuntimeError(  # noqa: TRY003
+                "Link 'Incluir Documento' não encontrado nas ações do processo."  # noqa: EM101
+            )
+
+        escolher_url = urljoin(sei_base, incluir_href)
+
+        # --- Step 2: GET documento_escolher_tipo e encontrar link para id_serie ---
+        r3 = await self._http.get(escolher_url, headers={"Referer": url_arvore})
+        if r3.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"documento_escolher_tipo status={r3.status_code}")  # noqa: EM102, TRY003
+
+        body3 = r3.content.decode("iso-8859-1", "replace")
+        erro3 = _extrair_erro_sei(body3)
+        if erro3:
+            raise RuntimeError(erro3)
+
+        # Se id_serie não fornecido — retorna lista de tipos disponíveis
+        if not id_serie:
+            soup3 = BeautifulSoup(body3, "html.parser")
+            tipos = []
+            for a in soup3.find_all("a", href=re.compile(r"id_serie=")):
+                href = _tag_str(a, "href")
+                m_s = re.search(r"id_serie=(\d+)", href)
+                if m_s:
+                    tipos.append({"id_serie": m_s.group(1), "nome": a.get_text(strip=True)})
+            return {"tipos_disponiveis": tipos}
+
+        # Encontra o link do editor para este id_serie
+        m_editor = re.search(
+            rf"(controlador\.php[^\"'\s]*acao=editor_montar[^\"'\s]*id_serie={re.escape(id_serie)}[^\"'\s]*infra_hash=[a-fA-F0-9]+)",
+            body3,
+        )
+        if not m_editor:
+            # Try reverse order: infra_hash before id_serie
+            m_editor = re.search(
+                rf"(controlador\.php[^\"'\s]*acao=editor_montar[^\"'\s]*infra_hash=[a-fA-F0-9]+[^\"'\s]*id_serie={re.escape(id_serie)}[^\"'\s]*)",
+                body3,
+            )
+        if not m_editor:
+            raise RuntimeError(  # noqa: TRY003
+                f"Link editor_montar para id_serie={id_serie} não encontrado. "  # noqa: EM102
+                "Use id_serie='' para listar os tipos disponíveis."
+            )
+
+        editor_url = urljoin(sei_base, m_editor.group(1).replace("&amp;", "&"))
+
+        # --- Step 3: GET editor_montar ---
+        r4 = await self._http.get(editor_url, headers={"Referer": str(r3.url)})
+        if r4.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"editor_montar status={r4.status_code}")  # noqa: EM102, TRY003
+
+        body4 = r4.content.decode("iso-8859-1", "replace")
+        erro4 = _extrair_erro_sei(body4)
+        if erro4:
+            raise RuntimeError(erro4)
+
+        soup4 = BeautifulSoup(body4, "html.parser")
+        form4 = soup4.find("form")
+        if not isinstance(form4, Tag):
+            raise RuntimeError("Form editor_montar não encontrado.")  # noqa: EM101, TRY003, TRY004
+
+        action4 = _tag_str(form4, "action").replace("&amp;", "&")
+        post_url4 = urljoin(sei_base, action4) if action4 else editor_url
+
+        # --- Step 4: POST documento_gerar ---
+        post_data4: list[tuple[str, str]] = []
+        for inp in form4.find_all("input", type="hidden"):
+            if not isinstance(inp, Tag):
+                continue
+            name = _tag_str(inp, "name")
+            if name:
+                post_data4.append((name, _tag_str(inp, "value")))
+
+        # Botão submit obrigatório (PHP ignora POST sem ele silenciosamente)
+        sbm4 = _extrair_submit_btn(form4)
+        if sbm4:
+            post_data4.append(sbm4)
+
+        if descricao:
+            post_data4.append(("txtDescricao", descricao))
+        post_data4.append(("selNivelAcesso", nivel_acesso))
+        if hipotese_legal and nivel_acesso in ("1", "2"):
+            post_data4.append(("selHipoteseLegal", hipotese_legal))
+
+        r5 = await self._http.post(
+            post_url4,
+            content=urlencode(post_data4).encode(),
+            headers={"Referer": editor_url, "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if r5.status_code not in (200, 302):
+            raise RuntimeError(f"POST documento_gerar falhou com status={r5.status_code}")  # noqa: EM102, TRY003
+        body5 = r5.content.decode("iso-8859-1", "replace")
+        erro5 = _extrair_erro_sei(body5)
+        if erro5:
+            raise RuntimeError(erro5)
+
+        # Extrai id do documento criado da resposta / URL final
+        id_doc = ""
+        m_doc = re.search(r"id_documento=(\d+)", str(r5.url))
+        if m_doc:
+            id_doc = m_doc.group(1)
+        if not id_doc:
+            m_doc2 = re.search(r"IdDocumento[\"']?\s*[:=]\s*[\"']?(\d+)", body5)
+            if m_doc2:
+                id_doc = m_doc2.group(1)
+
+        if not id_doc:
+            raise RuntimeError(  # noqa: TRY003
+                "Documento aparentemente criado mas idDocumento não pôde ser extraído da resposta."  # noqa: EM101
+            )
+
+        return {
+            "ok": True,
+            "idDocumento": id_doc,
+            "protocolo": protocolo,
+            "id_serie": id_serie,
+            "mensagem": "Documento criado com sucesso.",
         }
 
     MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # limite de segurança (o SEI rejeita antes)
