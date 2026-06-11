@@ -101,6 +101,8 @@ class SEIWebClient:
         self._form_hidden: dict[str, str] = {}
         # cache de URLs de processos individuais (protocolo → href pré-assinado)
         self._trabalhar_links: dict[str, str] = {}
+        # URL do form de pesquisa rápida (protocolo_pesquisa_rapida + infra_hash)
+        self._pesquisa_rapida_action: Optional[str] = None
 
     async def close(self) -> None:
         await self._http.aclose()
@@ -207,6 +209,7 @@ class SEIWebClient:
         # popula cache do form principal e dos links de processos a partir
         # da própria resposta do post-login (já contém o HTML da inbox)
         self._extract_main_form(post_resp.text)
+        self._extract_pesquisa_rapida(post_resp.text)
         self._populate_trabalhar_links(post_resp.text)
         logger.info("SEI web login bem-sucedido — inbox capturada")
 
@@ -237,6 +240,15 @@ class SEIWebClient:
             if v and v != "null":
                 return v
         raise RuntimeError("Nenhum <option> válido em selOrgao.")
+
+    def _extract_pesquisa_rapida(self, html: str) -> None:
+        """Captura a action do form de pesquisa rápida (protocolo_pesquisa_rapida)."""
+        soup = BeautifulSoup(html, "html.parser")
+        for f in soup.find_all("form"):
+            action = f.get("action") or ""
+            if "protocolo_pesquisa_rapida" in action:
+                self._pesquisa_rapida_action = action.replace("&amp;", "&")
+                return
 
     def _extract_main_form(self, html: str) -> None:
         """Captura action + hidden fields do form principal de procedimento_controlar.
@@ -352,12 +364,68 @@ class SEIWebClient:
 
         # atualiza cache do form (action e hashCriterios podem mudar entre páginas)
         self._extract_main_form(body)
+        self._extract_pesquisa_rapida(body)
         self._populate_trabalhar_links(body)
         return len(resp.content), body
 
     # ------------------------------------------------------------------
     # Consultar processo (página de detalhe)
     # ------------------------------------------------------------------
+
+    async def pesquisar_processo(self, protocolo: str) -> None:
+        """Busca um processo pelo protocolo via pesquisa rápida do SEI.
+
+        Popula `_trabalhar_links` com a URL pré-assinada do processo encontrado,
+        permitindo navegação posterior mesmo para processos fora da caixa atual.
+
+        Raises RuntimeError se o processo não for encontrado.
+        """
+        if self._inbox_url is None:
+            raise RuntimeError("login() não foi chamado")
+
+        if self._pesquisa_rapida_action is None:
+            await self.fetch_inbox(detalhada=False)
+            if self._pesquisa_rapida_action is None:
+                raise RuntimeError("Form de pesquisa rápida não encontrado no HTML da inbox")
+
+        post_url = urljoin(str(self._inbox_url), self._pesquisa_rapida_action)
+        r = await self._http.post(
+            post_url,
+            data={"txtPesquisaRapida": protocolo},
+            headers={"Referer": str(self._inbox_url)},
+        )
+        if r.status_code != 200:
+            raise RuntimeError(f"pesquisa_rapida status={r.status_code}")
+
+        final_url = str(r.url)
+        sei_base = f"{self.sei_root}/sei/"
+
+        if "procedimento_trabalhar" in final_url:
+            # Redirecionou direto para o processo
+            href = final_url.replace(sei_base, "") if final_url.startswith(sei_base) else final_url
+            self._trabalhar_links[protocolo] = href
+            return
+
+        # Página de resultados (protocolo_pesquisar) — busca o link correto
+        soup = BeautifulSoup(r.text, "html.parser")
+        proto_norm = protocolo.replace(" ", "")
+        for a in soup.find_all("a", href=re.compile(r"procedimento_trabalhar")):
+            txt = a.get_text(strip=True).replace(" ", "")
+            if proto_norm in txt:
+                href = a.get("href", "").replace("&amp;", "&")
+                self._trabalhar_links[protocolo] = href
+                return
+
+        # Tenta também via links com id_procedimento (tooltip ou linha da tabela)
+        for a in soup.find_all("a", href=re.compile(r"procedimento_trabalhar")):
+            href = a.get("href", "").replace("&amp;", "&")
+            self._trabalhar_links[protocolo] = href
+            return
+
+        raise RuntimeError(
+            f"Processo {protocolo!r} não encontrado na pesquisa. "
+            "Verifique se o número está correto e se você tem acesso."
+        )
 
     async def consultar_processo(self, protocolo_formatado: str) -> dict:
         """Busca dados de um processo navegando pela cadeia de páginas web.
@@ -392,14 +460,10 @@ class SEIWebClient:
 
         # garante que o protocolo está no cache de links da inbox
         if protocolo_formatado not in self._trabalhar_links:
-            # tenta uma fetch da inbox (pode trazer mais links)
             await self.fetch_inbox(detalhada=False)
-            if protocolo_formatado not in self._trabalhar_links:
-                raise RuntimeError(
-                    f"Protocolo {protocolo_formatado!r} não encontrado nos "
-                    f"links da inbox. Disponíveis: "
-                    f"{list(self._trabalhar_links.keys())[:5]}..."
-                )
+        if protocolo_formatado not in self._trabalhar_links:
+            # processo fora da caixa — usa pesquisa rápida
+            await self.pesquisar_processo(protocolo_formatado)
 
         trab_url = urljoin(str(self._inbox_url), self._trabalhar_links[protocolo_formatado])
 
@@ -553,11 +617,8 @@ class SEIWebClient:
 
         if _find_link(protocolo_formatado) is None:
             await self.fetch_inbox(detalhada=False)
-            if _find_link(protocolo_formatado) is None:
-                raise RuntimeError(
-                    f"Protocolo {protocolo_formatado!r} não encontrado na inbox. "
-                    "O processo precisa estar aberto na unidade atual."
-                )
+        if _find_link(protocolo_formatado) is None:
+            await self.pesquisar_processo(protocolo_formatado)
 
         trab_href = _find_link(protocolo_formatado)
         trab_url = urljoin(str(self._inbox_url), trab_href)
@@ -673,10 +734,8 @@ class SEIWebClient:
         # garante que o protocolo está no cache
         if protocolo_formatado not in self._trabalhar_links:
             await self.fetch_inbox(detalhada=False)
-            if protocolo_formatado not in self._trabalhar_links:
-                raise RuntimeError(
-                    f"Protocolo {protocolo_formatado!r} não encontrado na inbox"
-                )
+        if protocolo_formatado not in self._trabalhar_links:
+            await self.pesquisar_processo(protocolo_formatado)
 
         trab_url = urljoin(str(self._inbox_url), self._trabalhar_links[protocolo_formatado])
 
