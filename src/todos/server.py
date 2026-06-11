@@ -1827,8 +1827,6 @@ async def sei_atribuir_processo(  # noqa: C901, PLR0911
             )
 
         # Via web: parse do <select> de usuários no form atribuicao_salvar
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         form_info = await backend.web.obter_form_acao(numero_processo, "atribuicao_salvar")
         opcoes_usuario = form_info.get("selects", {}).get("selAtribuicao", [])
         if not opcoes_usuario:
@@ -2081,14 +2079,36 @@ async def sei_sobrestar_processo(
             proto_vinculado = ""
             if processo_vinculado:
                 proto_vinculado = await _resolver_processo(backend.rest, processo_vinculado)
-            result = await backend.rest.sobrestar_processo(
-                id_procedimento=id_proc,
-                motivo=motivo,
-                protocolo_vinculado=proto_vinculado,
-            )
-            return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
+            try:
+                result = await backend.rest.sobrestar_processo(
+                    id_procedimento=id_proc,
+                    motivo=motivo,
+                    protocolo_vinculado=proto_vinculado,
+                )
+                return _json(result)
+            except Exception as e:  # noqa: BLE001
+                msg = str(e)
+                if "aberto" in msg.lower() or "unidade" in msg.lower():
+                    try:
+                        resp = await backend.rest._request(  # noqa: SLF001
+                            "GET", f"/processo/listar/unidades/{id_proc}"
+                        )
+                        raw = resp.get("data", []) if isinstance(resp, dict) else []
+                        nomes = [
+                            u.get("nome", u.get("sigla", ""))
+                            for u in (raw if isinstance(raw, list) else [])
+                            if isinstance(u, dict)
+                        ]
+                        return _json(
+                            {
+                                "error": msg,
+                                "unidades_abertas": nomes,
+                                "dica": "Conclua o processo nessas unidades antes de sobrestar.",
+                            }
+                        )
+                    except Exception:  # noqa: BLE001, S110
+                        pass
+                return _error(msg)
         campos: dict[str, str] = {"txaMotivoSobrestamento": motivo}
         if processo_vinculado:
             campos["txtNrProcedimentoVinculado"] = processo_vinculado
@@ -2117,8 +2137,6 @@ async def sei_remover_sobrestamento(
             id_proc = await _resolver_processo(backend.rest, processo)
             result = await backend.rest.remover_sobrestamento(id_proc)
             return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         result = await backend.web.executar_acao_processo(
             processo, "procedimento_remover_sobrestamento"
         )
@@ -2367,8 +2385,6 @@ async def sei_registrar_andamento(
             id_proc = await _resolver_processo(backend.rest, processo)
             result = await backend.rest.registrar_andamento(id_proc, descricao)
             return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         result = await backend.web.executar_acao_processo(
             processo, "procedimento_andamento_registrar", {"txaDescricao": descricao}
         )
@@ -2589,8 +2605,6 @@ async def sei_marcar_processo(
             id_proc = await _resolver_processo(backend.rest, processo)
             result = await backend.rest.marcar_processo(id_proc, marcador, texto)
             return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         if marcador == "?":
             form_info = await backend.web.obter_form_acao(processo, "marcador_alterar")
             return _json(
@@ -2665,8 +2679,6 @@ async def sei_acompanhar_processo(
             id_proc = await _resolver_processo(backend.rest, processo)
             result = await backend.rest.acompanhar_processo(id_proc, grupo, observacao)
             return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         if grupo == "?":
             form_info = await backend.web.obter_form_acao(
                 processo, "acompanhamento_especial_incluir"
@@ -2706,8 +2718,6 @@ async def sei_remover_acompanhamento(
                 return _error("Não foi possível identificar o acompanhamento.")
             result = await backend.rest.excluir_acompanhamento(id_acomp)
             return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         result = await backend.web.executar_acao_processo(
             processo, "acompanhamento_especial_excluir"
         )
@@ -2956,8 +2966,6 @@ async def sei_criar_anotacao(
                 protocolo=id_proc, descricao=descricao, prioridade=prioridade
             )
             return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         result = await backend.web.executar_acao_processo(
             processo,
             "anotacao_incluir",

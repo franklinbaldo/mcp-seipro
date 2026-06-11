@@ -799,8 +799,7 @@ class SEIWebClient:
         - "selects": {name: [{value, texto}, ...]} dos campos select
         - "textareas": [name, ...] dos campos de texto livre
         """
-        if self._inbox_url is None:
-            await self.login()
+        await self.ensure_authenticated()
 
         html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
         sei_base = f"{self.sei_root}/sei/"
