@@ -2252,7 +2252,9 @@ class SEIWebClient:
             "total_itens": total_servidor,
             "total_filtrados": len(rows_filtrados),
             "pagina_atual": pagina,
-            "tem_proxima": len(rows) > 0 and (pagina + 1) * max(len(rows), 1) < total_servidor,
+            # hdnDetalhadoNroItens/hdnRecebidosNroItens refletem o cap da página (500),
+            # não o total real. Página cheia = provavelmente tem mais.
+            "tem_proxima": len(rows) >= 500,  # noqa: PLR2004
             "layout": layout,
         }
 

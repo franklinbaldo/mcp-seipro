@@ -58,9 +58,10 @@ async def lifespan(_server: FastMCP):  # noqa: ANN201, D103
             client = SEIClient()
             web_client = SEIWebClient()
             try:
-                # Login eager: popula _unidade_atual para sei://status responder sem HTTP extra
+                # Login eager com detalhada=True: popula _unidade_atual e
+                # hdnDetalhadoNroItens (total real de processos abertos na unidade)
                 with suppress(Exception):
-                    await web_client.unidade_atual()
+                    await web_client.fetch_inbox(detalhada=True)
                 yield {"sei": client, "sei_web": web_client}
             finally:
                 await client.close()
@@ -239,10 +240,21 @@ async def sei_status_resource(ctx: Context) -> str:
             )
         else:
             usuario_str = id_usuario
+        # hdnDetalhadoNroItens reflete o cap da página (500), não o total global.
+        # Se retornou 500, há múltiplas páginas — exibir como "500+".
+        total = int(web._form_hidden.get("hdnDetalhadoNroItens", "0") or "0")  # noqa: SLF001
+        if total == 0:
+            total_str = "não disponível"
+        elif total >= 500:  # noqa: PLR2004
+            total_str = "500+ (múltiplas páginas — use sei_listar_processos para listar)"
+        else:
+            total_str = str(total)
+
         linhas = [
             f"Instância SEI: {web_url}",
             f"Usuário: {usuario_str}",
             f"Unidade ativa: {sigla} — {nome}",
+            f"Processos abertos na unidade: {total_str}",
             "",
             "Unidades disponíveis:",
         ]
