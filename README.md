@@ -8,6 +8,14 @@
 
 **116 tools** para gerenciar processos, documentos, tramitação, assinatura, blocos, marcadores, acompanhamento, credenciamento, modelos e mais. Operações de leitura críticas usam scraper web (**23×** mais rápido que REST). Metadados estáticos em cache TTL 1h.
 
+## Origem
+
+Este projeto é um fork de [**mcp-seipro**](https://github.com/SEI-Pro/mcp-seipro), criado e mantido por [@opedrosoares](https://github.com/opedrosoares) como parte do ecossistema [SEI Pro](https://github.com/SEI-Pro/sei-pro).
+
+**Por que o fork?** O mcp-seipro depende exclusivamente da API REST mod-wssei — um módulo opcional que precisa ser instalado pelo administrador do SEI. O [SEI de Rondônia](https://sei.sistemas.ro.gov.br) (e diversas outras instâncias públicas) não tem o mod-wssei instalado, tornando todas as 116 tools inoperantes nessas instâncias.
+
+A solução foi implementar um **scraper HTTP do próprio frontend web do SEI** como backend primário: sem dependência de módulo extra, sem configuração no servidor, funciona em qualquer instância que o usuário consiga acessar pelo navegador. O projeto upstream está focado na API REST; este fork mantém compatibilidade total com ela quando disponível e adiciona paridade web completa para quem não tem.
+
 ## Instalação
 
 ### Opção 1: Claude Desktop (extensão com um clique)
@@ -495,7 +503,8 @@ railway up
 
 ## Links
 
-- [SEI Pro](https://sei-pro.github.io/sei-pro/) — Extensão de navegador para o SEI
+- [mcp-seipro](https://github.com/SEI-Pro/mcp-seipro) — Projeto upstream (fork origin), por [@opedrosoares](https://github.com/opedrosoares)
+- [SEI Pro](https://github.com/SEI-Pro/sei-pro) — Extensão de navegador para o SEI
 - [PyPI](https://pypi.org/project/mcp-sei/)
 - [Repositório](https://github.com/franklinbaldo/todos)
 - [RFC 0001 — Web-first](docs/rfc/0001-web-first.md)
