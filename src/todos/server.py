@@ -230,10 +230,12 @@ async def sei_status_resource(ctx: Context) -> str:  # noqa: D103
         sigla = unidade.get("sigla", "?")
         nome = unidade.get("nome", "?")
         web_url = os.environ.get("SEI_WEB_URL") or os.environ.get("SEI_URL", "?")
-        nome_usuario = web._nome_usuario or web._usuario  # noqa: SLF001
+        nome_usuario = web._nome_usuario  # noqa: SLF001
+        login_id = web._usuario  # noqa: SLF001
+        usuario_str = f"{nome_usuario} (login: {login_id})" if nome_usuario else login_id
         linhas = [
             f"Instância SEI: {web_url}",
-            f"Usuário: {nome_usuario}",
+            f"Usuário: {usuario_str}",
             f"Unidade ativa: {sigla} — {nome}",
             "",
             "Unidades disponíveis:",
