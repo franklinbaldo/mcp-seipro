@@ -2043,9 +2043,7 @@ async def sei_sobrestar_processo(
         if "aberto" in msg.lower() or "unidade" in msg.lower() or "sobrestar" in msg.lower():
             # Tentar listar unidades onde o processo está aberto
             try:
-                resp = await client._request("GET", f"/processo/listar/unidades/{id_proc}")  # noqa: SLF001
-                data = resp.json()
-                unidades = data.get("data", [])
+                unidades = await client.listar_unidades_processo(id_proc)
                 nomes = [f"{u.get('sigla', '')} ({u.get('id', '')})" for u in unidades]
                 return _json(
                     {

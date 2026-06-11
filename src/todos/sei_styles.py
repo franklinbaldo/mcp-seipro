@@ -287,7 +287,7 @@ SEI_STYLES = {
 # Mapeamento rápido: intenção → classe CSS recomendada
 STYLE_SHORTCUTS = {
     # Destinatário com âncora SEI
-    "destinatario_ancora": "Texto_Alinhado_Esquerda",  # usar com html_destinatario()
+    "destinatario_ancora": "Texto_Alinhado_Esquerda",  # usar com html_destinatario() de todos.sei_styles
     # Corpo do texto
     "paragrafo": "Texto_Justificado",
     "paragrafo_recuo": "Texto_Justificado_Recuo_Primeira_Linha",

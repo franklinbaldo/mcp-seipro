@@ -1,4 +1,4 @@
-"""OAuth 2.1 provider para MCP SEI Pro.
+"""OAuth 2.1 provider para todos (MCP SEI).
 
 As credenciais do SEI (url, usuario, senha, orgao) são informadas pelo
 usuário na tela de login OAuth. O servidor encripta essas credenciais
@@ -262,7 +262,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SEI Pro — Login</title>
+<title>todos — Login</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, system-ui, sans-serif; background: #0f172a;
@@ -289,8 +289,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
 <body>
 <form class="card" method="POST" action="/login">
   <input type="hidden" name="session" value="{session}">
-  <div class="logo"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAKHSURBVFhH7ZY9aBRBFMf/M3t3uYuJIoIWFjYiCIKNnYWgIIggKIiF2FgIFhYKgp2NjWBhI1iIiI2FhQiCIBZW" alt="SEI Pro"></div>
-  <h1>SEI Pro</h1>
+  <h1>todos</h1>
   <p class="sub">Conecte sua conta do SEI ao Claude</p>
   <label for="sei_url">URL da API do SEI (opcional &#8212; deixe em branco se sem mod-wssei)</label>
   <input id="sei_url" name="sei_url" type="url"
@@ -376,7 +375,7 @@ _SUCCESS_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SEI Pro &#8212; Configurado!</title>
+<title>todos &#8212; Configurado!</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, system-ui, sans-serif; background: #0f172a;
@@ -409,7 +408,7 @@ _SUCCESS_HTML = """<!DOCTYPE html>
 <div class="card">
   <a class="back" href="javascript:history.back()">&larr; Voltar</a>
   <div class="check">&#10003;</div>
-  <h1>SEI Pro configurado!</h1>
+  <h1>todos configurado!</h1>
   <p>Credenciais de <span class="user">{usuario}</span> salvas com seguran&#231;a.</p>
   <ul class="steps">
     <li data-n="1">Clique em <strong>Continuar</strong> para voltar ao Claude</li>
