@@ -697,6 +697,126 @@ class SEIWebClient:
             "Verifique se o número está correto e se você tem acesso."
         )
 
+    async def pesquisar_processos_web(  # noqa: PLR0913, C901, PLR0912, PLR0915
+        self,
+        q: str = "",
+        interessado: str = "",
+        protocolo: str = "",
+        descricao: str = "",
+        data_inicio: str = "",
+        data_fim: str = "",
+        pagina: int = 0,
+    ) -> list[dict[str, str]]:
+        """Pesquisa processos via formulário web do SEI (sem mod-wssei).
+
+        Parâmetros:
+        - q: texto livre (busca no conteúdo dos documentos indexados)
+        - interessado: nome de contato (remetente/destinatário/interessado)
+        - protocolo: número de protocolo formatado (busca exata)
+        - descricao: texto na especificação/descrição do processo
+        - data_inicio / data_fim: filtro de data de inclusão (DD/MM/AAAA)
+        - pagina: página de resultados (0-indexed)
+
+        Retorna lista de dicts com: protocolo, tipo, trecho, unidade, inclusao.
+        """
+        await self.ensure_authenticated()
+
+        if self._pesquisa_rapida_action is None:
+            await self.fetch_inbox(detalhada=False)
+            if self._pesquisa_rapida_action is None:
+                raise RuntimeError("Form de pesquisa rápida não encontrado")  # noqa: EM101, TRY003
+
+        # Passo 1: GET da página de pesquisa (para capturar hidden fields com infra_hash válido)
+        r0 = await self._http.post(
+            urljoin(str(self._inbox_url), self._pesquisa_rapida_action),
+            data={"txtPesquisaRapida": ""},
+            headers={"Referer": str(self._inbox_url)},
+        )
+
+        soup0 = BeautifulSoup(r0.text, "html.parser")
+        search_form = None
+        for f in soup0.find_all("form"):
+            if not isinstance(f, Tag):
+                continue
+            if "acao_origem=protocolo_pesquisa_rapida" in _tag_str(f, "action"):
+                search_form = f
+                break
+
+        if search_form is None:
+            raise RuntimeError("Formulário de pesquisa avançada não encontrado")  # noqa: EM101, TRY003
+
+        action = urljoin(
+            str(r0.url),
+            _tag_str(search_form, "action").replace("&amp;", "&").split("#")[0],
+        )
+        hidden = {
+            _tag_str(h, "name"): _tag_str(h, "value")
+            for h in search_form.find_all("input", type="hidden")
+            if isinstance(h, Tag) and _tag_str(h, "name")
+        }
+
+        # Passo 2: submete a busca avançada
+        post_data: dict[str, str] = {
+            **hidden,
+            "rdoPesquisarEm": "P",
+            "chkSinConsiderarDocumentos": "S",
+            "q": q,
+            "txtContato": interessado,
+            "txtProtocoloPesquisa": protocolo,
+            "txtDescricaoPesquisa": descricao,
+            "txtDataInicio": data_inicio,
+            "txtDataFim": data_fim,
+            "hdnInicio": str(pagina * 10),
+        }
+        if interessado:
+            post_data["chkSinInteressado"] = "S"
+            post_data["chkSinRemetente"] = "S"
+            post_data["chkSinDestinatario"] = "S"
+
+        r1 = await self._http.post(action, data=post_data, headers={"Referer": str(r0.url)})
+        soup1 = BeautifulSoup(r1.text, "html.parser")
+
+        # Passo 3: parse dos resultados — 3 <tr> por resultado:
+        # tr[0] = tipo + protocolo (2 links: ícone sem texto + protocolo com texto)
+        # tr[1] = trecho onde o termo foi encontrado
+        # tr[2] = unidade / usuário / data de inclusão
+        results: list[dict[str, str]] = []
+        rows = [tr for tr in soup1.find_all("tr") if tr.find("td")]
+        i = 0
+        while i < len(rows):
+            if not isinstance(rows[i], Tag):
+                i += 1
+                continue
+            # Há 2 links por linha de resultado: ícone (sem texto) + protocolo (com texto)
+            prot = ""
+            for a in rows[i].find_all("a", href=re.compile(r"procedimento_trabalhar")):
+                if not isinstance(a, Tag):
+                    continue
+                txt = a.get_text(strip=True)
+                if txt:
+                    prot = txt
+                    break
+            if prot:
+                tipo_cell = rows[i].find("td")
+                tipo_text = tipo_cell.get_text(" ", strip=True) if isinstance(tipo_cell, Tag) else ""
+                # tipo_text é "Tipo Nº protocolo" — extrai só o tipo (antes do Nº)
+                tipo = re.sub(r"\s+N[ºo°]?\s*\S+.*$", "", tipo_text).strip()
+                trecho = rows[i + 1].get_text(" ", strip=True) if i + 1 < len(rows) else ""
+                meta = rows[i + 2].get_text(" ", strip=True) if i + 2 < len(rows) else ""
+                unidade = re.search(r"Unidade:\s*(\S+)", meta)
+                inclusao = re.search(r"Inclusão:\s*(\S+)", meta)
+                results.append({
+                    "protocolo": prot,
+                    "tipo": tipo,
+                    "trecho": trecho,
+                    "unidade": unidade.group(1) if unidade else "",
+                    "inclusao": inclusao.group(1) if inclusao else "",
+                })
+                i += 3
+            else:
+                i += 1
+        return results
+
     async def consultar_processo(self, protocolo_formatado: str) -> dict:  # noqa: C901, PLR0912, PLR0915
         """Busca dados de um processo navegando pela cadeia de páginas web.
 

@@ -1684,7 +1684,19 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
         )
         return _json(result)
     except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+        # Fallback: tenta pesquisa via web scraper (para instâncias sem mod-wssei)
+        try:
+            web = _get_web_client(ctx)
+            result = await web.pesquisar_processos_web(
+                q=palavras_chave or busca_rapida,
+                descricao=descricao,
+                data_inicio=data_inicio,
+                data_fim=data_fim,
+                pagina=pagina,
+            )
+            return _json(result)
+        except Exception as e2:  # noqa: BLE001
+            return _error(f"REST: {e} | Web: {e2}")
 
 
 @mcp.tool()
