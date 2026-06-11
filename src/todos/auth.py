@@ -16,17 +16,13 @@ import json
 import os
 import secrets
 import time
-from urllib.parse import urlencode
-
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.responses import HTMLResponse
 
 from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
     AuthorizationParams,
-    AuthorizeError,
-    OAuthAuthorizationServerProvider,
     RefreshToken,
     construct_redirect_uri,
 )
@@ -45,6 +41,7 @@ TOKEN_TTL = 86400 * 30  # 30 dias
 def _sign(payload: dict) -> str:
     """Cria um token JWT-like: base64(payload).base64(signature)."""
     import base64
+
     raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     sig = hmac.new(_JWT_SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
     return f"{raw}.{sig}"
@@ -53,6 +50,7 @@ def _sign(payload: dict) -> str:
 def _verify(token: str) -> dict | None:
     """Verifica e decodifica um token. Retorna None se invalido."""
     import base64
+
     parts = token.split(".")
     if len(parts) != 2:
         return None
@@ -81,6 +79,7 @@ _auth_codes: dict[str, dict] = {}  # code -> {params, sei_creds, ...}
 # ---------------------------------------------------------------------------
 # OAuth Provider
 # ---------------------------------------------------------------------------
+
 
 class SEIProOAuthProvider:
     """OAuth 2.1 provider que encripta credenciais SEI no access token."""
@@ -136,6 +135,7 @@ class SEIProOAuthProvider:
         data = _auth_codes.pop(f"code:{authorization_code.code}", None)
         if not data:
             from mcp.server.auth.provider import TokenError
+
             raise TokenError(error="invalid_grant", error_description="Code not found")
 
         sei_creds = data["sei_creds"]
@@ -198,7 +198,10 @@ class SEIProOAuthProvider:
         payload = _verify(refresh_token.token)
         if not payload:
             from mcp.server.auth.provider import TokenError
-            raise TokenError(error="invalid_grant", error_description="Invalid refresh token")
+
+            raise TokenError(
+                error="invalid_grant", error_description="Invalid refresh token"
+            )
 
         sei_creds = payload["sei"]
         now = time.time()
@@ -322,7 +325,9 @@ async def login_submit(request: Request):
     session_id = str(form.get("session", ""))
     pending = _auth_codes.pop(f"pending:{session_id}", None)
     if not pending:
-        return HTMLResponse("<h1>Sessao expirada. Tente novamente.</h1>", status_code=400)
+        return HTMLResponse(
+            "<h1>Sessao expirada. Tente novamente.</h1>", status_code=400
+        )
 
     # Checkbox marcado envia "false"; desmarcado não envia nada (= "true")
     verify_ssl = "false" if form.get("sei_verify_ssl") == "false" else "true"
@@ -350,7 +355,9 @@ async def login_submit(request: Request):
     )
 
     usuario = sei_creds["sei_usuario"]
-    html = _SUCCESS_HTML.replace("{redirect_uri}", str(redirect_uri)).replace("{usuario}", usuario)
+    html = _SUCCESS_HTML.replace("{redirect_uri}", str(redirect_uri)).replace(
+        "{usuario}", usuario
+    )
     return HTMLResponse(html)
 
 

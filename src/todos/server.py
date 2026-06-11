@@ -15,13 +15,16 @@ from pydantic import BaseModel, Field
 from todos.sei_client import SEIClient
 from todos.sei_web_client import SEIWebClient
 from todos.html_utils import (
-    html_to_text, html_to_markdown,
-    pdf_to_text, pdf_to_markdown,
+    html_to_text,
+    html_to_markdown,
+    pdf_to_text,
+    pdf_to_markdown,
     sanitize_iso8859,
 )
 from todos.sei_styles import (
-    SEI_STYLES, STYLE_SHORTCUTS,
-    html_referencia_sei, html_destinatario,
+    SEI_STYLES,
+    STYLE_SHORTCUTS,
+    html_referencia_sei,
 )
 from todos import access_control
 
@@ -106,7 +109,11 @@ def _get_web_client(ctx: Context) -> SEIWebClient:
 _http_kwargs = {}
 if _http_mode:
     from pydantic import AnyHttpUrl
-    from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
+    from mcp.server.auth.settings import (
+        AuthSettings,
+        ClientRegistrationOptions,
+        RevocationOptions,
+    )
     from todos.auth import SEIProOAuthProvider
 
     _base_url = os.environ.get("BASE_URL", f"http://localhost:{_http_port}")
@@ -184,6 +191,7 @@ mcp = FastMCP(
 
 class _ConsentimentoRestrito(BaseModel):
     """Schema de elicitInput para consentimento de acesso a documento restrito."""
+
     autorizo_acesso: bool = Field(
         default=False,
         description=(
@@ -230,7 +238,9 @@ async def _solicitar_consentimento_via_elicit(
     hl_txt = f"\nHipótese legal: {hipotese}" if hipotese else ""
     alvo_txt = ""
     if alvo.get("tipo") == "documento":
-        alvo_txt = f"\nDocumento: id {alvo.get('id')} (tipo {alvo.get('tipo_documento','?')})"
+        alvo_txt = (
+            f"\nDocumento: id {alvo.get('id')} (tipo {alvo.get('tipo_documento', '?')})"
+        )
     elif alvo.get("tipo") == "processo":
         alvo_txt = f"\nProcesso: {alvo.get('protocolo')}"
 
@@ -286,17 +296,25 @@ async def _aplicar_gate_documento(
         msg = str(e)
         low = msg.lower()
         if "não autorizado" in low or "nao autorizado" in low:
-            return ("erro", None, (
-                f"SEI retornou 'não autorizado' para o id {id_documento!r}. "
-                "Verifique se você passou o id INTERNO do documento (ex.: 3149544) "
-                "e não o número SEI / protocoloFormatado (ex.: 2867926). "
-                "Se tiver apenas o número SEI, use sei_buscar_documento ou "
-                "sei_ler_documento (que faz auto-resolução)."
-            ))
+            return (
+                "erro",
+                None,
+                (
+                    f"SEI retornou 'não autorizado' para o id {id_documento!r}. "
+                    "Verifique se você passou o id INTERNO do documento (ex.: 3149544) "
+                    "e não o número SEI / protocoloFormatado (ex.: 2867926). "
+                    "Se tiver apenas o número SEI, use sei_buscar_documento ou "
+                    "sei_ler_documento (que faz auto-resolução)."
+                ),
+            )
         return ("erro", None, f"Falha ao consultar metadados: {msg}")
 
     nivel, hipotese = access_control.extrair_nivel(meta)
-    alvo = {"tipo": "documento", "id": str(id_documento), "tipo_documento": tipo_documento}
+    alvo = {
+        "tipo": "documento",
+        "id": str(id_documento),
+        "tipo_documento": tipo_documento,
+    }
 
     if not access_control.precisa_disclaimer(nivel):
         return ("liberar", None, "")
@@ -309,7 +327,9 @@ async def _aplicar_gate_documento(
         )
 
     rotulo = access_control.ROTULOS.get(nivel, "Restrito")
-    consent = await _solicitar_consentimento_via_elicit(ctx, nivel, rotulo, hipotese, alvo)
+    consent = await _solicitar_consentimento_via_elicit(
+        ctx, nivel, rotulo, hipotese, alvo
+    )
 
     if consent == "aceitou":
         return (
@@ -420,7 +440,9 @@ async def sei_pesquisar_unidades(
     """
     try:
         client = _get_client(ctx)
-        result = await client.pesquisar_unidades(filtro=filtro, limit=limit, start=pagina)
+        result = await client.pesquisar_unidades(
+            filtro=filtro, limit=limit, start=pagina
+        )
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -442,7 +464,9 @@ async def sei_listar_usuarios(
     """
     try:
         client = _get_client(ctx)
-        result = await client.listar_usuarios(filtro=filtro, apenas_unidade=apenas_unidade)
+        result = await client.listar_usuarios(
+            filtro=filtro, apenas_unidade=apenas_unidade
+        )
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -490,7 +514,9 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
                 logger.warning(f"web login falhou, seguindo só com REST: {e}")
 
         # roda REST completo e web em paralelo; suporta falha individual
-        rest_task = asyncio.create_task(client.consultar_processo_completo(protocolo_formatado))
+        rest_task = asyncio.create_task(
+            client.consultar_processo_completo(protocolo_formatado)
+        )
         web_task = asyncio.create_task(web.consultar_processo(protocolo_formatado))
         rest_result, web_result = await asyncio.gather(
             rest_task, web_task, return_exceptions=True
@@ -515,7 +541,9 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
                     merged[k] = v
 
         if not merged:
-            return _error("Ambas as fontes (REST e Web) falharam: " + " | ".join(warnings))
+            return _error(
+                "Ambas as fontes (REST e Web) falharam: " + " | ".join(warnings)
+            )
 
         if warnings:
             merged["_warnings"] = warnings
@@ -523,7 +551,8 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
         nivel, hipotese = access_control.extrair_nivel(merged)
         if access_control.precisa_disclaimer(nivel):
             merged["_aviso_acesso"] = access_control.construir_disclaimer_acompanhante(
-                nivel, hipotese,
+                nivel,
+                hipotese,
                 alvo={"tipo": "processo", "protocolo": protocolo_formatado},
             )
 
@@ -614,15 +643,19 @@ async def sei_buscar_documento(
             for d in docs:
                 proto = d.get("atributos", {}).get("protocoloFormatado", "")
                 if _match(proto):
-                    return _json({
-                        "encontrado": True,
-                        "id_procedimento": id_procedimento,
-                        "documento": d,
-                    })
-            return _json({
-                "encontrado": False,
-                "mensagem": f"SEI {numero_sei} não encontrado no processo {id_procedimento}",
-            })
+                    return _json(
+                        {
+                            "encontrado": True,
+                            "id_procedimento": id_procedimento,
+                            "documento": d,
+                        }
+                    )
+            return _json(
+                {
+                    "encontrado": False,
+                    "mensagem": f"SEI {numero_sei} não encontrado no processo {id_procedimento}",
+                }
+            )
 
         # Estratégia 2: pesquisa textual (Solr) para achar o processo
         result = await client.pesquisar_processos(palavras_chave=numero_sei, limit=20)
@@ -637,23 +670,27 @@ async def sei_buscar_documento(
                 for d in docs:
                     proto = d.get("atributos", {}).get("protocoloFormatado", "")
                     if _match(proto):
-                        return _json({
-                            "encontrado": True,
-                            "processo": p.get("protocoloFormatadoProcedimento", ""),
-                            "id_procedimento": id_proc,
-                            "documento": d,
-                        })
+                        return _json(
+                            {
+                                "encontrado": True,
+                                "processo": p.get("protocoloFormatadoProcedimento", ""),
+                                "id_procedimento": id_proc,
+                                "documento": d,
+                            }
+                        )
             except Exception:
                 continue
 
-        return _json({
-            "encontrado": False,
-            "processos_pesquisados": len(processos_candidatos),
-            "mensagem": f"SEI {numero_sei} não encontrado via pesquisa textual",
-            "dica": "A pesquisa Solr pode não indexar esse documento. "
-                    "Informe o número do processo (id_procedimento) para busca direta, "
-                    "ou use sei_arvore_processo com o protocolo do processo.",
-        })
+        return _json(
+            {
+                "encontrado": False,
+                "processos_pesquisados": len(processos_candidatos),
+                "mensagem": f"SEI {numero_sei} não encontrado via pesquisa textual",
+                "dica": "A pesquisa Solr pode não indexar esse documento. "
+                "Informe o número do processo (id_procedimento) para busca direta, "
+                "ou use sei_arvore_processo com o protocolo do processo.",
+            }
+        )
     except Exception as e:
         return _error(str(e))
 
@@ -686,7 +723,9 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
                 docs = await client.listar_documentos(id_proc, limit=200)
                 for d in docs:
                     proto = d.get("atributos", {}).get("protocoloFormatado", "")
-                    if proto == referencia or proto.lstrip("0") == referencia.lstrip("0"):
+                    if proto == referencia or proto.lstrip("0") == referencia.lstrip(
+                        "0"
+                    ):
                         doc_id = str(d["id"])
                         tipo = d.get("atributos", {}).get("tipoDocumento", "I")
                         return doc_id, tipo
@@ -761,14 +800,19 @@ async def sei_ler_documento(
                 id_documento = doc_id
                 tipo_documento = detected_tipo
             except Exception as e:
-                return _json({
-                    "error": str(e),
-                    "dica": "Use sei_arvore_processo para ver os documentos "
-                            "do processo e seus IDs.",
-                })
+                return _json(
+                    {
+                        "error": str(e),
+                        "dica": "Use sei_arvore_processo para ver os documentos "
+                        "do processo e seus IDs.",
+                    }
+                )
 
         acao, payload, erro = await _aplicar_gate_documento(
-            ctx, client, str(id_documento), tipo_documento,
+            ctx,
+            client,
+            str(id_documento),
+            tipo_documento,
             confirmou=confirmar_acesso_restrito,
         )
         if acao == "erro":
@@ -817,11 +861,13 @@ async def sei_ler_documento(
     except Exception as e:
         msg = str(e)
         if "não autorizado" in msg.lower() or "nao autorizado" in msg.lower():
-            return _json({
-                "error": msg,
-                "dica": "Acesso negado. Troque para a unidade geradora "
-                        "com sei_trocar_unidade.",
-            })
+            return _json(
+                {
+                    "error": msg,
+                    "dica": "Acesso negado. Troque para a unidade geradora "
+                    "com sei_trocar_unidade.",
+                }
+            )
         return _error(msg)
 
 
@@ -856,14 +902,19 @@ async def sei_baixar_anexo(
             doc_id, _ = await _resolver_documento(client, id_documento)
             id_documento = doc_id
         except Exception as e:
-            return _json({
-                "error": str(e),
-                "dica": "Use sei_arvore_processo ou sei_buscar_documento para "
-                        "encontrar o id correto do documento.",
-            })
+            return _json(
+                {
+                    "error": str(e),
+                    "dica": "Use sei_arvore_processo ou sei_buscar_documento para "
+                    "encontrar o id correto do documento.",
+                }
+            )
 
         acao, payload, erro = await _aplicar_gate_documento(
-            ctx, client, str(id_documento), "X",
+            ctx,
+            client,
+            str(id_documento),
+            "X",
             confirmou=confirmar_acesso_restrito,
         )
         if acao == "erro":
@@ -965,12 +1016,14 @@ async def sei_gerar_referencia(
         client = _get_client(ctx)
         doc_id, _ = await _resolver_documento(client, numero_sei)
         snippet = html_referencia_sei(doc_id, numero_sei)
-        return _json({
-            "numero_sei": numero_sei,
-            "id_documento": doc_id,
-            "html": snippet,
-            "uso": f'...SEI n&ordm; {snippet}...',
-        })
+        return _json(
+            {
+                "numero_sei": numero_sei,
+                "id_documento": doc_id,
+                "html": snippet,
+                "uso": f"...SEI n&ordm; {snippet}...",
+            }
+        )
     except Exception as e:
         return _error(str(e))
 
@@ -995,17 +1048,23 @@ async def sei_estilos(categoria: str = "", ctx: Context = None) -> str:
     """
     try:
         if not categoria or categoria == "atalhos":
-            return _json({
-                "atalhos": STYLE_SHORTCUTS,
-                "dica": "Use sei_estilos('todos') para ver todos os estilos com exemplos.",
-            })
+            return _json(
+                {
+                    "atalhos": STYLE_SHORTCUTS,
+                    "dica": "Use sei_estilos('todos') para ver todos os estilos com exemplos.",
+                }
+            )
 
         if categoria == "todos":
             return _json(SEI_STYLES)
 
         filtros = {
             "texto": ["Texto_"],
-            "titulo": ["Texto_Centralizado_Maiusculas", "Texto_Fundo_Cinza", "Texto_Espaco_Duplo"],
+            "titulo": [
+                "Texto_Centralizado_Maiusculas",
+                "Texto_Fundo_Cinza",
+                "Texto_Espaco_Duplo",
+            ],
             "lista": ["Paragrafo_Numerado", "Item_Nivel", "Item_Alinea", "Item_Inciso"],
             "tabela": ["Tabela_"],
             "destaque": ["Citacao", "Tachado", "Texto_Fundo_Cinza", "Texto_Mono"],
@@ -1013,10 +1072,12 @@ async def sei_estilos(categoria: str = "", ctx: Context = None) -> str:
 
         prefixos = filtros.get(categoria, [])
         if not prefixos:
-            return _json({
-                "error": f"Categoria '{categoria}' não encontrada",
-                "categorias": list(filtros.keys()) + ["todos", "atalhos"],
-            })
+            return _json(
+                {
+                    "error": f"Categoria '{categoria}' não encontrada",
+                    "categorias": list(filtros.keys()) + ["todos", "atalhos"],
+                }
+            )
 
         resultado = {}
         for nome, info in SEI_STYLES.items():
@@ -1086,11 +1147,13 @@ async def sei_editar_secao(
                 # Seção original — fazer unescape do HTML-escaped
                 conteudo = html_module.unescape(s.get("conteudo", "") or "")
 
-            secoes_enviar.append({
-                "id": str(sid),
-                "idSecaoModelo": str(modelo),
-                "conteudo": sanitize_iso8859(conteudo),
-            })
+            secoes_enviar.append(
+                {
+                    "id": str(sid),
+                    "idSecaoModelo": str(modelo),
+                    "conteudo": sanitize_iso8859(conteudo),
+                }
+            )
 
         result = await client.alterar_secao_documento(
             id_documento=id_documento,
@@ -1179,67 +1242,99 @@ _CAMPOS_AGRUPAMENTO = {
     },
     "tramitacao": {
         "desc": "Em tramitação",
-        "extract": lambda a, s: "Em tramitação" if s.get("processoEmTramitacao") == "S" else "Fora de tramitação",
+        "extract": lambda a, s: (
+            "Em tramitação"
+            if s.get("processoEmTramitacao") == "S"
+            else "Fora de tramitação"
+        ),
     },
     "sobrestado": {
         "desc": "Sobrestamento",
-        "extract": lambda a, s: "Sobrestado" if s.get("processoSobrestado") == "S" else "Ativo",
+        "extract": lambda a, s: (
+            "Sobrestado" if s.get("processoSobrestado") == "S" else "Ativo"
+        ),
     },
     "bloqueado": {
         "desc": "Bloqueio",
-        "extract": lambda a, s: "Bloqueado" if s.get("processoBloqueado") == "S" else "Desbloqueado",
+        "extract": lambda a, s: (
+            "Bloqueado" if s.get("processoBloqueado") == "S" else "Desbloqueado"
+        ),
     },
     "novo": {
         "desc": "Documento novo",
-        "extract": lambda a, s: "Com documentos novos" if s.get("documentoNovo") == "S" else "Sem documentos novos",
+        "extract": lambda a, s: (
+            "Com documentos novos"
+            if s.get("documentoNovo") == "S"
+            else "Sem documentos novos"
+        ),
     },
     "anotacao": {
         "desc": "Anotação",
         "extract": lambda a, s: (
-            "Anotação prioritária" if s.get("anotacaoPrioridade") == "S"
-            else "Com anotação" if s.get("anotacao") == "S"
+            "Anotação prioritária"
+            if s.get("anotacaoPrioridade") == "S"
+            else "Com anotação"
+            if s.get("anotacao") == "S"
             else "Sem anotação"
         ),
     },
     "retorno": {
         "desc": "Retorno programado",
         "extract": lambda a, s: (
-            f"Atrasado ({s.get('retornoData', '')})" if s.get("retornoAtrasado") == "S"
-            else f"Programado ({s.get('retornoData', '')})" if s.get("retornoProgramado") == "S"
+            f"Atrasado ({s.get('retornoData', '')})"
+            if s.get("retornoAtrasado") == "S"
+            else f"Programado ({s.get('retornoData', '')})"
+            if s.get("retornoProgramado") == "S"
             else "Sem retorno"
         ),
     },
     "lido_usuario": {
         "desc": "Acessado pelo usuário",
-        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUsuario") == "S" else "Não lido",
+        "extract": lambda a, s: (
+            "Lido" if s.get("processoAcessadoUsuario") == "S" else "Não lido"
+        ),
     },
     "lido_unidade": {
         "desc": "Acessado pela unidade",
-        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUnidade") == "S" else "Não lido",
+        "extract": lambda a, s: (
+            "Lido" if s.get("processoAcessadoUnidade") == "S" else "Não lido"
+        ),
     },
     "origem": {
         "desc": "Gerado/Recebido",
-        "extract": lambda a, s: "Gerado na unidade" if s.get("processoGeradoRecebido") == "G" else "Recebido",
+        "extract": lambda a, s: (
+            "Gerado na unidade"
+            if s.get("processoGeradoRecebido") == "G"
+            else "Recebido"
+        ),
     },
     "anexado": {
         "desc": "Anexado",
-        "extract": lambda a, s: "Anexado" if s.get("processoAnexado") == "S" else "Independente",
+        "extract": lambda a, s: (
+            "Anexado" if s.get("processoAnexado") == "S" else "Independente"
+        ),
     },
     "unidades": {
         "desc": "Unidades de abertura",
-        "extract": lambda a, s: ", ".join(
-            u.get("sigla", "") for u in a.get("dadosAbertura", {}).get("lista", [])
-        ) or "N/A",
+        "extract": lambda a, s: (
+            ", ".join(
+                u.get("sigla", "") for u in a.get("dadosAbertura", {}).get("lista", [])
+            )
+            or "N/A"
+        ),
     },
     "marcador": {
         "desc": "Marcador",
-        "extract": lambda a, s: ", ".join(
-            m.get("nome", "") for m in a.get("marcador", [])
-        ) or "Sem marcador",
+        "extract": lambda a, s: (
+            ", ".join(m.get("nome", "") for m in a.get("marcador", []))
+            or "Sem marcador"
+        ),
     },
     "ciencia": {
         "desc": "Ciência",
-        "extract": lambda a, s: "Com ciência" if s.get("ciencia") == "S" else "Sem ciência",
+        "extract": lambda a, s: (
+            "Com ciência" if s.get("ciencia") == "S" else "Sem ciência"
+        ),
     },
 }
 
@@ -1291,7 +1386,9 @@ async def sei_resumo_processos(
             campo2 = _CAMPOS_AGRUPAMENTO.get(agrupar_por_2)
             if not campo2:
                 campos = ", ".join(sorted(_CAMPOS_AGRUPAMENTO.keys()))
-                return _error(f"Campo '{agrupar_por_2}' inválido. Disponíveis: {campos}")
+                return _error(
+                    f"Campo '{agrupar_por_2}' inválido. Disponíveis: {campos}"
+                )
 
         client = _get_client(ctx)
 
@@ -1300,7 +1397,10 @@ async def sei_resumo_processos(
         pg = 0
         while True:
             result = await client.listar_processos(
-                limit=200, start=pg, apenas_meus=apenas_meus, filtro=filtro,
+                limit=200,
+                start=pg,
+                apenas_meus=apenas_meus,
+                filtro=filtro,
             )
             todos.extend(result["processos"])
             if not result.get("tem_proxima"):
@@ -1339,12 +1439,14 @@ async def sei_resumo_processos(
         if campo2:
             header += f" × {campo2['desc']}"
 
-        return _json({
-            "agrupamento": header,
-            "total_processos": len(todos),
-            "total_grupos": len(resumo),
-            "grupos": resumo,
-        })
+        return _json(
+            {
+                "agrupamento": header,
+                "total_processos": len(todos),
+                "total_grupos": len(resumo),
+                "grupos": resumo,
+            }
+        )
     except Exception as e:
         return _error(str(e))
 
@@ -1416,7 +1518,9 @@ async def sei_pesquisar_hipoteses_legais(
     try:
         client = _get_client(ctx)
         result = await client.pesquisar_hipoteses_legais(
-            filtro=filtro, limit=limit, start=pagina,
+            filtro=filtro,
+            limit=limit,
+            start=pagina,
         )
         return _json(result)
     except Exception as e:
@@ -1443,7 +1547,10 @@ async def sei_pesquisar_tipos_processo(
     try:
         client = _get_client(ctx)
         result = await client.pesquisar_tipos_processo(
-            filtro=filtro, favoritos=favoritos, limit=limit, start=pagina,
+            filtro=filtro,
+            favoritos=favoritos,
+            limit=limit,
+            start=pagina,
         )
         return _json(result)
     except Exception as e:
@@ -1579,10 +1686,12 @@ async def sei_enviar_processo(
                         # Usar a primeira que contém o texto
                         ids_resolvidos.append(str(unidades[0].get("id", "")))
                     else:
-                        return _json({
-                            "error": f"Unidade '{destino}' não encontrada",
-                            "dica": "Use sei_pesquisar_unidades para buscar.",
-                        })
+                        return _json(
+                            {
+                                "error": f"Unidade '{destino}' não encontrada",
+                                "dica": "Use sei_pesquisar_unidades para buscar.",
+                            }
+                        )
 
         result = await client.enviar_processo(
             numero_processo=numero_processo,
@@ -1624,10 +1733,12 @@ async def sei_marcar_nao_lido(
             remover_anotacao="N",
             enviar_email="N",
         )
-        return _json({
-            "mensagem": "Processo marcado como não lido.",
-            "detalhe": result.get("mensagem", ""),
-        })
+        return _json(
+            {
+                "mensagem": "Processo marcado como não lido.",
+                "detalhe": result.get("mensagem", ""),
+            }
+        )
     except Exception as e:
         return _error(str(e))
 
@@ -1693,10 +1804,12 @@ async def sei_atribuir_processo(
         result = await client.listar_usuarios(filtro=usuario)
         candidatos = result.get("usuarios", [])
         if not candidatos:
-            return _json({
-                "error": f"Nenhum usuário encontrado com '{usuario}'",
-                "dica": "Use sei_listar_usuarios para ver os usuários disponíveis.",
-            })
+            return _json(
+                {
+                    "error": f"Nenhum usuário encontrado com '{usuario}'",
+                    "dica": "Use sei_listar_usuarios para ver os usuários disponíveis.",
+                }
+            )
 
         # Tentar cada candidato até um funcionar
         erros = []
@@ -1706,19 +1819,25 @@ async def sei_atribuir_processo(
             sigla = u.get("sigla", "")
             try:
                 result = await client.atribuir_processo(numero_processo, id_u)
-                return _json({
-                    "mensagem": result.get("mensagem", "Processo atribuído com sucesso!"),
-                    "usuario": {"id": id_u, "nome": nome, "sigla": sigla},
-                })
+                return _json(
+                    {
+                        "mensagem": result.get(
+                            "mensagem", "Processo atribuído com sucesso!"
+                        ),
+                        "usuario": {"id": id_u, "nome": nome, "sigla": sigla},
+                    }
+                )
             except Exception as e:
                 erros.append(f"{nome} ({sigla}): {e}")
                 continue
 
-        return _json({
-            "error": f"Nenhum dos {len(candidatos)} usuários com '{usuario}' tem permissão na unidade atual",
-            "tentativas": erros,
-            "dica": "Verifique se está na unidade correta com sei_trocar_unidade.",
-        })
+        return _json(
+            {
+                "error": f"Nenhum dos {len(candidatos)} usuários com '{usuario}' tem permissão na unidade atual",
+                "tentativas": erros,
+                "dica": "Verifique se está na unidade correta com sei_trocar_unidade.",
+            }
+        )
     except Exception as e:
         return _error(str(e))
 
@@ -1768,28 +1887,34 @@ async def sei_cancelar_assinatura(
             sid = s.get("id")
             modelo = s.get("idSecaoModelo")
             conteudo = html_module.unescape(s.get("conteudo", "") or "")
-            secoes_enviar.append({
-                "id": str(sid),
-                "idSecaoModelo": str(modelo),
-                "conteudo": sanitize_iso8859(conteudo),
-            })
+            secoes_enviar.append(
+                {
+                    "id": str(sid),
+                    "idSecaoModelo": str(modelo),
+                    "conteudo": sanitize_iso8859(conteudo),
+                }
+            )
 
         # Tentar editar (derruba assinatura se permitido)
         result = await client.alterar_secao_documento(doc_id, secoes_enviar, versao)
-        return _json({
-            "mensagem": "Assinatura cancelada com sucesso. O documento foi editado (nova versão).",
-            "versao": result,
-        })
+        return _json(
+            {
+                "mensagem": "Assinatura cancelada com sucesso. O documento foi editado (nova versão).",
+                "versao": result,
+            }
+        )
     except Exception as e:
         msg = str(e)
         if "assinado" in msg.lower():
-            return _json({
-                "error": "Não foi possível cancelar a assinatura via API.",
-                "motivo": msg,
-                "dica": "O processo pode ter sido enviado ou lido por outra unidade. "
-                        "Cancele a assinatura pela interface web do SEI: "
-                        "abra o documento → clique em 'Editar Conteúdo'.",
-            })
+            return _json(
+                {
+                    "error": "Não foi possível cancelar a assinatura via API.",
+                    "motivo": msg,
+                    "dica": "O processo pode ter sido enviado ou lido por outra unidade. "
+                    "Cancele a assinatura pela interface web do SEI: "
+                    "abra o documento → clique em 'Editar Conteúdo'.",
+                }
+            )
         return _error(msg)
 
 
@@ -1838,14 +1963,16 @@ async def sei_assinar_documento(
                 cargos = data.get("data", [])
             except Exception:
                 cargos = []
-            return _json({
-                "error": "Cargo/Função não informado — é obrigatório para assinatura.",
-                "cargos_disponiveis": cargos,
-                "dica": "Pergunte ao usuário qual cargo/função usar para assinar. "
-                        "Os cargos disponíveis estão listados acima. "
-                        "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
-                        "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
-            })
+            return _json(
+                {
+                    "error": "Cargo/Função não informado — é obrigatório para assinatura.",
+                    "cargos_disponiveis": cargos,
+                    "dica": "Pergunte ao usuário qual cargo/função usar para assinar. "
+                    "Os cargos disponíveis estão listados acima. "
+                    "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
+                    "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
+                }
+            )
 
         # Garante que a autenticação rodou e captura IdUsuario da sessão
         await client._get_headers()
@@ -1854,7 +1981,9 @@ async def sei_assinar_documento(
         # Fallback: procurar via /usuario/listar caso loginData não traga o id
         if not id_usuario:
             try:
-                result = await client.listar_usuarios(filtro=login, apenas_unidade=False)
+                result = await client.listar_usuarios(
+                    filtro=login, apenas_unidade=False
+                )
                 for u in result.get("usuarios", []):
                     if u.get("sigla", "").lower() == login.lower():
                         id_usuario = str(u.get("id_usuario") or "")
@@ -1946,23 +2075,28 @@ async def sei_sobrestar_processo(
     except Exception as e:
         msg = str(e)
         # Erro comum: processo aberto em outras unidades
-        if "aberto" in msg.lower() or "unidade" in msg.lower() or "sobrestar" in msg.lower():
+        if (
+            "aberto" in msg.lower()
+            or "unidade" in msg.lower()
+            or "sobrestar" in msg.lower()
+        ):
             # Tentar listar unidades onde o processo está aberto
             try:
-                proc = await client.consultar_processo(processo)
                 resp = await client._request(
                     "GET", f"/processo/listar/unidades/{id_proc}"
                 )
                 data = resp.json()
                 unidades = data.get("data", [])
                 nomes = [f"{u.get('sigla', '')} ({u.get('id', '')})" for u in unidades]
-                return _json({
-                    "error": msg,
-                    "unidades_abertas": nomes,
-                    "dica": "O processo precisa estar aberto somente na unidade atual "
-                            "para ser sobrestado. Conclua o processo nas unidades "
-                            "listadas acima antes de sobrestar.",
-                })
+                return _json(
+                    {
+                        "error": msg,
+                        "unidades_abertas": nomes,
+                        "dica": "O processo precisa estar aberto somente na unidade atual "
+                        "para ser sobrestado. Conclua o processo nas unidades "
+                        "listadas acima antes de sobrestar.",
+                    }
+                )
             except Exception:
                 pass
         return _error(msg)
@@ -2201,8 +2335,10 @@ async def sei_criar_documento_externo(
         client = _get_client(ctx)
         id_proc = await _resolver_processo(client, processo)
         result = await client.criar_documento_externo(
-            id_procedimento=id_proc, id_serie=id_serie,
-            arquivo_path=arquivo_path, descricao=descricao,
+            id_procedimento=id_proc,
+            id_serie=id_serie,
+            arquivo_path=arquivo_path,
+            descricao=descricao,
             nivel_acesso=nivel_acesso,
         )
         return _json(result)
@@ -2238,15 +2374,20 @@ async def sei_assinar_bloco(
                 cargos = data.get("data", [])
             except Exception:
                 cargos = []
-            return _json({
-                "error": "Cargo/Função não informado.",
-                "cargos_disponiveis": cargos,
-                "dica": "Pergunte ao usuário qual cargo usar. "
-                        "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
-                        "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
-            })
+            return _json(
+                {
+                    "error": "Cargo/Função não informado.",
+                    "cargos_disponiveis": cargos,
+                    "dica": "Pergunte ao usuário qual cargo usar. "
+                    "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
+                    "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
+                }
+            )
         result = await client.assinar_bloco(
-            id_bloco=id_bloco, login=login, senha=senha, cargo=cargo,
+            id_bloco=id_bloco,
+            login=login,
+            senha=senha,
+            cargo=cargo,
         )
         return _json(result)
     except Exception as e:
@@ -2281,15 +2422,20 @@ async def sei_assinar_documentos_bloco(
                 cargos = data.get("data", [])
             except Exception:
                 cargos = []
-            return _json({
-                "error": "Cargo/Função não informado.",
-                "cargos_disponiveis": cargos,
-                "dica": "Pergunte ao usuário qual cargo usar. "
-                        "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
-                        "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
-            })
+            return _json(
+                {
+                    "error": "Cargo/Função não informado.",
+                    "cargos_disponiveis": cargos,
+                    "dica": "Pergunte ao usuário qual cargo usar. "
+                    "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
+                    "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
+                }
+            )
         result = await client.assinar_documentos_bloco(
-            login=login, senha=senha, cargo=cargo, documentos=documentos,
+            login=login,
+            senha=senha,
+            cargo=cargo,
+            documentos=documentos,
         )
         return _json(result)
     except Exception as e:
@@ -2317,10 +2463,12 @@ async def sei_criar_marcador(
         client = _get_client(ctx)
         if not id_cor:
             cores = await client.listar_cores_marcador()
-            return _json({
-                "error": "Cor não informada — escolha uma das cores disponíveis.",
-                "cores": cores,
-            })
+            return _json(
+                {
+                    "error": "Cor não informada — escolha uma das cores disponíveis.",
+                    "cores": cores,
+                }
+            )
         result = await client.criar_marcador(nome, id_cor)
         return _json(result)
     except Exception as e:
@@ -2871,24 +3019,31 @@ async def sei_consultar_documento_externo(
                     else:
                         raise primeira
                 except Exception:
-                    return _json({
-                        "error": msg,
-                        "dica": (
-                            "SEI retornou 'não autorizado' para o id "
-                            f"{id_documento!r}. Verifique se você passou o id "
-                            "INTERNO do documento (ex.: 3149544) e não o número "
-                            "SEI / protocoloFormatado (ex.: 2867926). Use "
-                            "sei_buscar_documento para resolver número SEI → id."
-                        ),
-                    })
+                    return _json(
+                        {
+                            "error": msg,
+                            "dica": (
+                                "SEI retornou 'não autorizado' para o id "
+                                f"{id_documento!r}. Verifique se você passou o id "
+                                "INTERNO do documento (ex.: 3149544) e não o número "
+                                "SEI / protocoloFormatado (ex.: 2867926). Use "
+                                "sei_buscar_documento para resolver número SEI → id."
+                            ),
+                        }
+                    )
             else:
                 raise
 
         nivel, hipotese = access_control.extrair_nivel(result)
         if access_control.precisa_disclaimer(nivel):
             result["_aviso_acesso"] = access_control.construir_disclaimer_acompanhante(
-                nivel, hipotese,
-                alvo={"tipo": "documento", "id": str(id_documento), "tipo_documento": "X"},
+                nivel,
+                hipotese,
+                alvo={
+                    "tipo": "documento",
+                    "id": str(id_documento),
+                    "tipo_documento": "X",
+                },
             )
         return _json(result)
     except Exception as e:
@@ -3208,7 +3363,6 @@ async def sei_gerar_pdf_processo(
     Nota: o processo precisa estar aberto na caixa da unidade atual.
     Para processos de outras unidades, use sei_trocar_unidade primeiro.
     """
-    import re as _re
     import tempfile
 
     try:
@@ -3229,12 +3383,14 @@ async def sei_gerar_pdf_processo(
         with open(pdf_path, "wb") as f:
             f.write(pdf_bytes)
 
-        return _json({
-            "arquivo": pdf_path,
-            "tamanho_mb": round(tamanho_mb, 2),
-            "tamanho_bytes": len(pdf_bytes),
-            "base64": base64.b64encode(pdf_bytes).decode(),
-        })
+        return _json(
+            {
+                "arquivo": pdf_path,
+                "tamanho_mb": round(tamanho_mb, 2),
+                "tamanho_bytes": len(pdf_bytes),
+                "base64": base64.b64encode(pdf_bytes).decode(),
+            }
+        )
     except Exception as e:
         return _error(str(e))
 
@@ -3276,12 +3432,14 @@ async def sei_gerar_zip_processo(
         with open(zip_path, "wb") as f:
             f.write(zip_bytes)
 
-        return _json({
-            "arquivo": zip_path,
-            "tamanho_mb": round(tamanho_mb, 2),
-            "tamanho_bytes": len(zip_bytes),
-            "base64": base64.b64encode(zip_bytes).decode(),
-        })
+        return _json(
+            {
+                "arquivo": zip_path,
+                "tamanho_mb": round(tamanho_mb, 2),
+                "tamanho_bytes": len(zip_bytes),
+                "base64": base64.b64encode(zip_bytes).decode(),
+            }
+        )
     except Exception as e:
         return _error(str(e))
 
@@ -3766,7 +3924,9 @@ async def sei_anotar_processo_bloco_interno(
     try:
         client = _get_client(ctx)
         id_proc = await _resolver_processo(client, processo)
-        result = await client.anotar_processo_bloco_interno(id_bloco, id_proc, descricao)
+        result = await client.anotar_processo_bloco_interno(
+            id_bloco, id_proc, descricao
+        )
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -3787,7 +3947,9 @@ async def sei_alterar_anotacao_bloco_interno(
     try:
         client = _get_client(ctx)
         id_proc = await _resolver_processo(client, processo)
-        result = await client.alterar_anotacao_bloco_interno(id_bloco, id_proc, descricao)
+        result = await client.alterar_anotacao_bloco_interno(
+            id_bloco, id_proc, descricao
+        )
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -3933,7 +4095,9 @@ async def sei_anotar_documento_bloco_assinatura(
     """
     try:
         client = _get_client(ctx)
-        result = await client.anotar_documento_bloco_assinatura(id_bloco, documento, descricao)
+        result = await client.anotar_documento_bloco_assinatura(
+            id_bloco, documento, descricao
+        )
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -3953,7 +4117,9 @@ async def sei_alterar_anotacao_bloco_assinatura(
     """
     try:
         client = _get_client(ctx)
-        result = await client.alterar_anotacao_bloco_assinatura(id_bloco, documento, descricao)
+        result = await client.alterar_anotacao_bloco_assinatura(
+            id_bloco, documento, descricao
+        )
         return _json(result)
     except Exception as e:
         return _error(str(e))
@@ -3971,7 +4137,8 @@ def main():
         # Favicon / ícone do SEI Pro — busca em vários locais possíveis
         _icon_bytes = b""
         for _candidate in [
-            Path(__file__).resolve().parent.parent.parent / "icon.png",  # dev: repo root
+            Path(__file__).resolve().parent.parent.parent
+            / "icon.png",  # dev: repo root
             Path("/app/icon.png"),  # Docker
         ]:
             if _candidate.exists():
@@ -3981,8 +4148,11 @@ def main():
         from starlette.responses import HTMLResponse
 
         async def favicon(request):
-            return Response(_icon_bytes, media_type="image/png",
-                            headers={"Cache-Control": "public, max-age=86400"})
+            return Response(
+                _icon_bytes,
+                media_type="image/png",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
 
         _base = os.environ.get("BASE_URL", f"http://localhost:{_http_port}")
         _root_html = f"""<!DOCTYPE html>
@@ -4011,6 +4181,7 @@ def main():
             log_level="info",
         )
         import anyio
+
         anyio.run(uvicorn.Server(config).serve)
     else:
         mcp.run(transport="stdio")

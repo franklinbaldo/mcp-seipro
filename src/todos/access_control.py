@@ -245,12 +245,12 @@ def envelopar_html(disclaimer: dict, conteudo: str) -> str:
     aside = (
         '<aside style="border:2px solid #c00;padding:12px;margin-bottom:12px;'
         'background:#fff8f8;font-family:sans-serif">'
-        f'<p><strong>{disclaimer["mensagem"]}</strong></p>'
-        f'<p>Nível: {disclaimer["rotulo_nivel"]} '
-        f'(nivelAcesso={disclaimer["nivel_acesso"]})</p>'
-        f'{hl_html}'
-        f'<p><strong>Riscos:</strong></p><ul>{riscos_html}</ul>'
-        '</aside>'
+        f"<p><strong>{disclaimer['mensagem']}</strong></p>"
+        f"<p>Nível: {disclaimer['rotulo_nivel']} "
+        f"(nivelAcesso={disclaimer['nivel_acesso']})</p>"
+        f"{hl_html}"
+        f"<p><strong>Riscos:</strong></p><ul>{riscos_html}</ul>"
+        "</aside>"
     )
     return aside + conteudo
 
@@ -281,7 +281,11 @@ def extrair_nivel(metadata: dict) -> tuple[str | None, str | None]:
     )
     hipotese: str | None = None
     if isinstance(hl_raw, dict):
-        hipotese = hl_raw.get("nome") or hl_raw.get("descricao") or str(hl_raw.get("id", "") or "")
+        hipotese = (
+            hl_raw.get("nome")
+            or hl_raw.get("descricao")
+            or str(hl_raw.get("id", "") or "")
+        )
         hipotese = hipotese or None
     elif hl_raw:
         hipotese = str(hl_raw)

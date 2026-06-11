@@ -20,8 +20,12 @@ def html_to_text(raw: str) -> str:
         html = html_module.unescape(raw)
 
         # Remover blocos <style> e <script> antes do parse
-        cleaned = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
-        cleaned = re.sub(r"<script[^>]*>.*?</script>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+        cleaned = re.sub(
+            r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE
+        )
+        cleaned = re.sub(
+            r"<script[^>]*>.*?</script>", "", cleaned, flags=re.DOTALL | re.IGNORECASE
+        )
 
         soup = BeautifulSoup(cleaned, "html.parser")
 
@@ -102,8 +106,12 @@ def html_to_markdown(raw: str) -> str:
     """
     try:
         html = html_module.unescape(raw)
-        cleaned = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
-        cleaned = re.sub(r"<script[^>]*>.*?</script>", "", cleaned, flags=re.DOTALL | re.IGNORECASE)
+        cleaned = re.sub(
+            r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE
+        )
+        cleaned = re.sub(
+            r"<script[^>]*>.*?</script>", "", cleaned, flags=re.DOTALL | re.IGNORECASE
+        )
         resultado = markdownify(
             cleaned,
             heading_style="ATX",
@@ -126,7 +134,6 @@ def _ocr_pdf(content: bytes, lang: str = "") -> list[tuple[int, str]]:
     Retorna lista de (num_pagina, texto).
     Limita a MAX_OCR_PAGES páginas para evitar timeout.
     """
-    import io
     from pdf2image import convert_from_bytes
     import pytesseract
 
@@ -139,12 +146,14 @@ def _ocr_pdf(content: bytes, lang: str = "") -> list[tuple[int, str]]:
         if text and text.strip():
             pages.append((i, text.strip()))
     if len(images) > MAX_OCR_PAGES:
-        pages.append((
-            MAX_OCR_PAGES + 1,
-            f"[OCR limitado a {MAX_OCR_PAGES} páginas. "
-            f"O documento tem {len(images)} páginas no total. "
-            f"Use sei_baixar_anexo para obter o PDF completo.]",
-        ))
+        pages.append(
+            (
+                MAX_OCR_PAGES + 1,
+                f"[OCR limitado a {MAX_OCR_PAGES} páginas. "
+                f"O documento tem {len(images)} páginas no total. "
+                f"Use sei_baixar_anexo para obter o PDF completo.]",
+            )
+        )
     return pages
 
 
@@ -157,9 +166,7 @@ def _extract_pdf_pages(content: bytes) -> list[tuple[int, str]]:
     import pdfplumber
 
     pages = []
-    total = 0
     with pdfplumber.open(io.BytesIO(content)) as pdf:
-        total = len(pdf.pages)
         for i, page in enumerate(pdf.pages, 1):
             text = page.extract_text()
             if text and text.strip():
@@ -185,9 +192,7 @@ def pdf_to_text(content: bytes) -> str:
     if not pages:
         return "[PDF sem texto extraível — nem texto nativo nem OCR disponível]"
     total = max(p[0] for p in pages)
-    return "\n\n".join(
-        f"--- Página {num}/{total} ---\n{text}" for num, text in pages
-    )
+    return "\n\n".join(f"--- Página {num}/{total} ---\n{text}" for num, text in pages)
 
 
 def pdf_to_markdown(content: bytes) -> str:

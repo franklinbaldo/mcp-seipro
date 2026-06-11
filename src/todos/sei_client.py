@@ -30,7 +30,9 @@ class SEIClient:
         self._cache: dict[str, tuple[float, Any]] = {}
         self._cache_ttl: float = 3600.0  # 1 hora
 
-        verify_ssl = kwargs.get("sei_verify_ssl", os.environ.get("SEI_VERIFY_SSL", "true"))
+        verify_ssl = kwargs.get(
+            "sei_verify_ssl", os.environ.get("SEI_VERIFY_SSL", "true")
+        )
         if isinstance(verify_ssl, str):
             verify_ssl = verify_ssl.lower() != "false"
         self._client = httpx.AsyncClient(
@@ -66,7 +68,9 @@ class SEIClient:
             logger.info("Token expirado, re-autenticando...")
             await self.autenticar()
             kwargs["headers"].update({"token": self._token})
-            resp = await self._client.request(method, f"{self.base_url}{path}", **kwargs)
+            resp = await self._client.request(
+                method, f"{self.base_url}{path}", **kwargs
+            )
         resp.raise_for_status()
         return resp
 
@@ -214,7 +218,9 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao consultar documento {id_documento}: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao consultar documento {id_documento}: {data.get('mensagem')}"
+            )
         return data["data"]
 
     async def consultar_documento_externo(self, id_documento: str) -> dict:
@@ -226,7 +232,9 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao consultar documento externo {id_documento}: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao consultar documento externo {id_documento}: {data.get('mensagem')}"
+            )
         return data["data"]
 
     async def alterar_documento_interno(
@@ -251,7 +259,9 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar documento interno: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao alterar documento interno: {data.get('mensagem')}"
+            )
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def alterar_documento_externo(
@@ -275,6 +285,7 @@ class SEIClient:
 
         if arquivo_path:
             import os
+
             headers = await self._get_headers()
             with open(arquivo_path, "rb") as f:
                 resp = await self._client.post(
@@ -289,7 +300,9 @@ class SEIClient:
             )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar documento externo: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao alterar documento externo: {data.get('mensagem')}"
+            )
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def pesquisar_tipos_conferencia(
@@ -301,20 +314,28 @@ class SEIClient:
         params: dict = {"limit": limit, "start": start}
         if filtro:
             params["filter"] = filtro
-        resp = await self._request("GET", "/documento/tipoconferencia/pesquisar", params=params)
+        resp = await self._request(
+            "GET", "/documento/tipoconferencia/pesquisar", params=params
+        )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar tipos de conferência: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao pesquisar tipos de conferência: {data.get('mensagem')}"
+            )
         return self._paginated(data, "tipos", data.get("data", []), start, limit)
 
     async def sugestao_assuntos_documento(self, id_serie: str) -> list[dict]:
         """Lista sugestões de assuntos para um tipo de documento (série).
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
         """
-        resp = await self._request("GET", f"/documento/assunto/sugestao/{id_serie}/listar")
+        resp = await self._request(
+            "GET", f"/documento/assunto/sugestao/{id_serie}/listar"
+        )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar sugestões de assunto: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao listar sugestões de assunto: {data.get('mensagem')}"
+            )
         return data.get("data", [])
 
     async def listar_blocos_documento(self, id_documento: str) -> list[dict]:
@@ -326,7 +347,9 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar blocos do documento: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao listar blocos do documento: {data.get('mensagem')}"
+            )
         return data.get("data", [])
 
     async def pesquisar_tipos_documento_externo(
@@ -341,7 +364,9 @@ class SEIClient:
         resp = await self._request("GET", "/serie/externo/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar tipos de doc externo: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao pesquisar tipos de doc externo: {data.get('mensagem')}"
+            )
         return self._paginated(data, "tipos", data.get("data", []), start, limit)
 
     async def parametros_upload(self) -> dict:
@@ -351,7 +376,9 @@ class SEIClient:
         resp = await self._request("GET", "/upload/parametros")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao obter parâmetros de upload: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao obter parâmetros de upload: {data.get('mensagem')}"
+            )
         return data.get("data", {})
 
     async def listar_assinaturas(self, id_documento: str) -> list[dict]:
@@ -366,10 +393,14 @@ class SEIClient:
 
     async def visualizar_documento_interno(self, id_documento: str) -> str:
         """Visualiza conteúdo HTML de documento interno (tipoDocumento=I)."""
-        resp = await self._request("GET", f"/documento/{id_documento}/interno/visualizar")
+        resp = await self._request(
+            "GET", f"/documento/{id_documento}/interno/visualizar"
+        )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao visualizar documento {id_documento}: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao visualizar documento {id_documento}: {data.get('mensagem')}"
+            )
         return data["data"]
 
     async def baixar_anexo(self, id_documento: str) -> bytes:
@@ -379,7 +410,9 @@ class SEIClient:
         if "json" in content_type:
             data = resp.json()
             if not data.get("sucesso"):
-                raise Exception(f"Erro ao baixar anexo {id_documento}: {data.get('mensagem')}")
+                raise Exception(
+                    f"Erro ao baixar anexo {id_documento}: {data.get('mensagem')}"
+                )
             return base64.b64decode(data["data"])
         return resp.content
 
@@ -432,7 +465,9 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar seções do documento {id_documento}: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao listar seções do documento {id_documento}: {data.get('mensagem')}"
+            )
         return data.get("data", {})
 
     async def alterar_secao_documento(
@@ -456,7 +491,9 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar seção do documento {id_documento}: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao alterar seção do documento {id_documento}: {data.get('mensagem')}"
+            )
         return data.get("data", {})
 
     # ------------------------------------------------------------------
@@ -532,7 +569,9 @@ class SEIClient:
         resp = await self._request("GET", "/unidade/outras/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar outras unidades: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao pesquisar outras unidades: {data.get('mensagem')}"
+            )
         return self._paginated(data, "unidades", data.get("data", []), start, limit)
 
     async def pesquisar_textos_padrao(
@@ -545,7 +584,9 @@ class SEIClient:
         params: dict = {"limit": limit, "start": start}
         if filtro:
             params["filter"] = filtro
-        resp = await self._request("GET", "/unidade/textopadrao/interno/pesquisar", params=params)
+        resp = await self._request(
+            "GET", "/unidade/textopadrao/interno/pesquisar", params=params
+        )
         data = resp.json()
         if not data.get("sucesso"):
             raise Exception(f"Erro ao pesquisar textos padrão: {data.get('mensagem')}")
@@ -577,7 +618,8 @@ class SEIClient:
         if filtro:
             filtro_lower = filtro.lower()
             usuarios = [
-                u for u in usuarios
+                u
+                for u in usuarios
                 if filtro_lower in u.get("nome", "").lower()
                 or filtro_lower in u.get("sigla", "").lower()
             ]
@@ -681,7 +723,11 @@ class SEIClient:
         if na == "0":
             hl = ""
         else:
-            hl = hipotese_legal if hipotese_legal is not None else proc.get("hipoteseLegal", "")
+            hl = (
+                hipotese_legal
+                if hipotese_legal is not None
+                else proc.get("hipoteseLegal", "")
+            )
 
         # Assuntos: reenviar os existentes (a API exige)
         assuntos_atuais = proc.get("assuntos", [])
@@ -689,7 +735,9 @@ class SEIClient:
 
         payload = {
             "idTipoProcesso": proc.get("tipoProcesso", ""),
-            "especificacao": especificacao if especificacao is not None else proc.get("especificacao", ""),
+            "especificacao": especificacao
+            if especificacao is not None
+            else proc.get("especificacao", ""),
             "nivelAcesso": na,
             "idHipoteseLegal": hl,
             "grauSigilo": proc.get("grauSigilo", ""),
@@ -723,7 +771,9 @@ class SEIClient:
         resp = await self._request("GET", "/hipoteseLegal/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar hipóteses legais: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao pesquisar hipóteses legais: {data.get('mensagem')}"
+            )
         return self._paginated(data, "hipoteses", data.get("data", []), start, limit)
 
     async def pesquisar_tipos_processo(
@@ -744,7 +794,9 @@ class SEIClient:
         resp = await self._request("GET", "/processo/tipo/listar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar tipos de processo: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao pesquisar tipos de processo: {data.get('mensagem')}"
+            )
         result = self._paginated(data, "tipos", data.get("data", []), start, limit)
         if not filtro and not favoritos:
             self._cache_set(cache_key, result)
@@ -908,7 +960,9 @@ class SEIClient:
         resp = await self._request("GET", "/documento/tipo/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar tipos de documento: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao pesquisar tipos de documento: {data.get('mensagem')}"
+            )
         return self._paginated(data, "tipos", data.get("data", []), start, limit)
 
     # ------------------------------------------------------------------
@@ -960,9 +1014,7 @@ class SEIClient:
 
     async def dar_ciencia_processo(self, id_procedimento: str) -> dict:
         """Dá ciência em um processo."""
-        resp = await self._request(
-            "POST", f"/processo/{id_procedimento}/ciencia"
-        )
+        resp = await self._request("POST", f"/processo/{id_procedimento}/ciencia")
         data = resp.json()
         if not data.get("sucesso"):
             raise Exception(f"Erro ao dar ciência no processo: {data.get('mensagem')}")
@@ -970,22 +1022,22 @@ class SEIClient:
 
     async def listar_ciencias_documento(self, id_documento: str) -> list[dict]:
         """Lista ciências registradas em um documento."""
-        resp = await self._request(
-            "GET", f"/documento/listar/ciencia/{id_documento}"
-        )
+        resp = await self._request("GET", f"/documento/listar/ciencia/{id_documento}")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar ciências do documento: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao listar ciências do documento: {data.get('mensagem')}"
+            )
         return data.get("data", [])
 
     async def listar_ciencias_processo(self, id_procedimento: str) -> list[dict]:
         """Lista ciências registradas em um processo."""
-        resp = await self._request(
-            "GET", f"/processo/{id_procedimento}/ciencia/listar"
-        )
+        resp = await self._request("GET", f"/processo/{id_procedimento}/ciencia/listar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar ciências do processo: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao listar ciências do processo: {data.get('mensagem')}"
+            )
         return data.get("data", [])
 
     # ------------------------------------------------------------------
@@ -1014,7 +1066,9 @@ class SEIClient:
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     @staticmethod
-    def _paginated(data: dict, items_key: str, itens: list, pagina: int, limit: int) -> dict:
+    def _paginated(
+        data: dict, items_key: str, itens: list, pagina: int, limit: int
+    ) -> dict:
         """Monta resposta paginada com metadados."""
         try:
             total = int(data.get("total", 0))
@@ -1032,7 +1086,9 @@ class SEIClient:
     # Marcador
     # ------------------------------------------------------------------
 
-    async def pesquisar_marcadores(self, filtro: str = "", limit: int = 50, start: int = 0) -> dict:
+    async def pesquisar_marcadores(
+        self, filtro: str = "", limit: int = 50, start: int = 0
+    ) -> dict:
         """Pesquisa marcadores disponíveis na unidade.
         Resultado cacheado por 1 hora quando chamado sem filtros."""
         cache_key = f"marcadores:{filtro}:{limit}:{start}"
@@ -1073,7 +1129,8 @@ class SEIClient:
     async def alterar_marcador(self, id_marcador: str, nome: str, id_cor: str) -> dict:
         """Altera nome e/ou cor de um marcador."""
         resp = await self._request(
-            "POST", f"/marcador/{id_marcador}/alterar",
+            "POST",
+            f"/marcador/{id_marcador}/alterar",
             data={"nome": nome, "idCor": id_cor},
         )
         data = resp.json()
@@ -1111,10 +1168,13 @@ class SEIClient:
             raise Exception(f"Erro ao reativar marcadores: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
-    async def marcar_processo(self, id_procedimento: str, id_marcador: str, texto: str = "") -> dict:
+    async def marcar_processo(
+        self, id_procedimento: str, id_marcador: str, texto: str = ""
+    ) -> dict:
         """Adiciona marcador a um processo."""
         resp = await self._request(
-            "POST", f"/marcador/processo/{id_procedimento}/marcar",
+            "POST",
+            f"/marcador/processo/{id_procedimento}/marcar",
             data={"marcador": id_marcador, "texto": texto},
         )
         data = resp.json()
@@ -1124,7 +1184,9 @@ class SEIClient:
 
     async def consultar_marcador_processo(self, id_procedimento: str) -> list[dict]:
         """Consulta marcadores de um processo."""
-        resp = await self._request("GET", f"/marcador/processo/{id_procedimento}/consultar")
+        resp = await self._request(
+            "GET", f"/marcador/processo/{id_procedimento}/consultar"
+        )
         data = resp.json()
         if not data.get("sucesso"):
             raise Exception(f"Erro ao consultar marcador: {data.get('mensagem')}")
@@ -1152,7 +1214,8 @@ class SEIClient:
     async def consultar_acompanhamento(self, id_procedimento: str) -> dict:
         """Consulta acompanhamento de um processo."""
         resp = await self._request(
-            "GET", "/processo/acompanhamento/consultar",
+            "GET",
+            "/processo/acompanhamento/consultar",
             params={"protocolo": id_procedimento},
         )
         data = resp.json()
@@ -1200,7 +1263,9 @@ class SEIClient:
             raise Exception(f"Erro ao excluir grupo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
-    async def listar_grupos_acompanhamento(self, filtro: str = "", limit: int = 50) -> dict:
+    async def listar_grupos_acompanhamento(
+        self, filtro: str = "", limit: int = 50
+    ) -> dict:
         """Lista grupos de acompanhamento disponíveis."""
         params: dict = {"limit": limit}
         if filtro:
@@ -1217,16 +1282,21 @@ class SEIClient:
 
     async def criar_bloco_interno(self, descricao: str) -> dict:
         """Cria bloco interno."""
-        resp = await self._request("POST", "/bloco/interno/criar", data={"descricao": descricao})
+        resp = await self._request(
+            "POST", "/bloco/interno/criar", data={"descricao": descricao}
+        )
         data = resp.json()
         if not data.get("sucesso"):
             raise Exception(f"Erro ao criar bloco interno: {data.get('mensagem')}")
         return data.get("data", {})
 
-    async def incluir_processo_bloco_interno(self, id_bloco: str, protocolos: str) -> dict:
+    async def incluir_processo_bloco_interno(
+        self, id_bloco: str, protocolos: str
+    ) -> dict:
         """Inclui processo(s) em bloco interno."""
         resp = await self._request(
-            "POST", f"/bloco/interno/{id_bloco}/processos/incluir",
+            "POST",
+            f"/bloco/interno/{id_bloco}/processos/incluir",
             data={"protocolos": protocolos},
         )
         data = resp.json()
@@ -1234,10 +1304,13 @@ class SEIClient:
             raise Exception(f"Erro ao incluir no bloco: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
-    async def retirar_processo_bloco_interno(self, id_bloco: str, protocolos: str) -> dict:
+    async def retirar_processo_bloco_interno(
+        self, id_bloco: str, protocolos: str
+    ) -> dict:
         """Remove processo(s) de bloco interno."""
         resp = await self._request(
-            "POST", f"/bloco/interno/{id_bloco}/processos/retirar",
+            "POST",
+            f"/bloco/interno/{id_bloco}/processos/retirar",
             data={"protocolos": protocolos},
         )
         data = resp.json()
@@ -1252,12 +1325,15 @@ class SEIClient:
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
         """
         resp = await self._request(
-            "GET", f"/bloco/interno/{id_bloco}/processos/listar",
+            "GET",
+            f"/bloco/interno/{id_bloco}/processos/listar",
             params={"limit": limit},
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar processos do bloco: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao listar processos do bloco: {data.get('mensagem')}"
+            )
         return data.get("data", [])
 
     async def alterar_bloco_interno(self, id_bloco: str, descricao: str) -> dict:
@@ -1265,7 +1341,8 @@ class SEIClient:
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
         """
         resp = await self._request(
-            "POST", f"/bloco/interno/{id_bloco}/alterar",
+            "POST",
+            f"/bloco/interno/{id_bloco}/alterar",
             data={"descricao": descricao},
         )
         data = resp.json()
@@ -1301,9 +1378,7 @@ class SEIClient:
         """Reabre bloco interno concluído.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
         """
-        resp = await self._request(
-            "POST", f"/bloco/interno/{id_bloco}/reabrir"
-        )
+        resp = await self._request("POST", f"/bloco/interno/{id_bloco}/reabrir")
         data = resp.json()
         if not data.get("sucesso"):
             raise Exception(f"Erro ao reabrir bloco interno: {data.get('mensagem')}")
@@ -1316,7 +1391,8 @@ class SEIClient:
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
         """
         resp = await self._request(
-            "POST", "/bloco/interno/anotacao/cadastrar",
+            "POST",
+            "/bloco/interno/anotacao/cadastrar",
             data={"bloco": id_bloco, "protocolo": protocolo, "descricao": descricao},
         )
         data = resp.json()
@@ -1331,15 +1407,20 @@ class SEIClient:
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
         """
         resp = await self._request(
-            "POST", "/bloco/interno/anotacao/alterar",
+            "POST",
+            "/bloco/interno/anotacao/alterar",
             data={"bloco": id_bloco, "protocolo": protocolo, "descricao": descricao},
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar anotação do bloco interno: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao alterar anotação do bloco interno: {data.get('mensagem')}"
+            )
         return data.get("data", {"mensagem": data.get("mensagem")})
 
-    async def pesquisar_blocos_internos(self, filtro: str = "", limit: int = 50, start: int = 0) -> dict:
+    async def pesquisar_blocos_internos(
+        self, filtro: str = "", limit: int = 50, start: int = 0
+    ) -> dict:
         """Pesquisa blocos internos."""
         params: dict = {"limit": limit, "start": start}
         if filtro:
@@ -1362,13 +1443,18 @@ class SEIClient:
         resp = await self._request("POST", "/bloco/assinatura/criar", data=payload)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao criar bloco de assinatura: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao criar bloco de assinatura: {data.get('mensagem')}"
+            )
         return data.get("data", {})
 
-    async def incluir_documento_bloco_assinatura(self, id_bloco: str, documentos: str) -> dict:
+    async def incluir_documento_bloco_assinatura(
+        self, id_bloco: str, documentos: str
+    ) -> dict:
         """Inclui documento(s) em bloco de assinatura."""
         resp = await self._request(
-            "POST", f"/bloco/assinatura/{id_bloco}/documentos/incluir",
+            "POST",
+            f"/bloco/assinatura/{id_bloco}/documentos/incluir",
             data={"documentos": documentos},
         )
         data = resp.json()
@@ -1393,10 +1479,14 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao cancelar disponibilização: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao cancelar disponibilização: {data.get('mensagem')}"
+            )
         return data.get("data", {"mensagem": data.get("mensagem")})
 
-    async def pesquisar_blocos_assinatura(self, filtro: str = "", limit: int = 50, start: int = 0) -> dict:
+    async def pesquisar_blocos_assinatura(
+        self, filtro: str = "", limit: int = 50, start: int = 0
+    ) -> dict:
         """Pesquisa blocos de assinatura."""
         params: dict = {"limit": limit, "start": start}
         if filtro:
@@ -1407,21 +1497,29 @@ class SEIClient:
             raise Exception(f"Erro ao pesquisar blocos: {data.get('mensagem')}")
         return self._paginated(data, "blocos", data.get("data", []), start, limit)
 
-    async def listar_documentos_bloco_assinatura(self, id_bloco: str, limit: int = 200) -> list[dict]:
+    async def listar_documentos_bloco_assinatura(
+        self, id_bloco: str, limit: int = 200
+    ) -> list[dict]:
         """Lista documentos de um bloco de assinatura."""
         resp = await self._request(
-            "GET", f"/bloco/assinatura/{id_bloco}/documentos/listar",
+            "GET",
+            f"/bloco/assinatura/{id_bloco}/documentos/listar",
             params={"limit": limit},
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar documentos do bloco: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao listar documentos do bloco: {data.get('mensagem')}"
+            )
         return data.get("data", [])
 
-    async def retirar_documento_bloco_assinatura(self, id_bloco: str, documentos: str) -> dict:
+    async def retirar_documento_bloco_assinatura(
+        self, id_bloco: str, documentos: str
+    ) -> dict:
         """Retira documento(s) de bloco de assinatura."""
         resp = await self._request(
-            "POST", f"/bloco/assinatura/{id_bloco}/documentos/retirar",
+            "POST",
+            f"/bloco/assinatura/{id_bloco}/documentos/retirar",
             data={"documentos": documentos},
         )
         data = resp.json()
@@ -1434,12 +1532,15 @@ class SEIClient:
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
         """
         resp = await self._request(
-            "POST", f"/bloco/assinatura/{id_bloco}/alterar",
+            "POST",
+            f"/bloco/assinatura/{id_bloco}/alterar",
             data={"descricao": descricao},
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar bloco de assinatura: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao alterar bloco de assinatura: {data.get('mensagem')}"
+            )
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def excluir_blocos_assinatura(self, ids: str) -> dict:
@@ -1451,7 +1552,9 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao excluir blocos de assinatura: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao excluir blocos de assinatura: {data.get('mensagem')}"
+            )
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def concluir_blocos_assinatura(self, ids: str) -> dict:
@@ -1463,31 +1566,33 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao concluir blocos de assinatura: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao concluir blocos de assinatura: {data.get('mensagem')}"
+            )
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def reabrir_bloco_assinatura(self, id_bloco: str) -> dict:
         """Reabre bloco de assinatura concluído.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
         """
-        resp = await self._request(
-            "POST", f"/bloco/assinatura/{id_bloco}/reabrir"
-        )
+        resp = await self._request("POST", f"/bloco/assinatura/{id_bloco}/reabrir")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao reabrir bloco de assinatura: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao reabrir bloco de assinatura: {data.get('mensagem')}"
+            )
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def retornar_bloco_assinatura(self, id_bloco: str) -> dict:
         """Retorna bloco de assinatura para a unidade de origem.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
         """
-        resp = await self._request(
-            "POST", f"/bloco/assinatura/{id_bloco}/retornar"
-        )
+        resp = await self._request("POST", f"/bloco/assinatura/{id_bloco}/retornar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao retornar bloco de assinatura: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao retornar bloco de assinatura: {data.get('mensagem')}"
+            )
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def anotar_documento_bloco_assinatura(
@@ -1497,12 +1602,15 @@ class SEIClient:
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
         """
         resp = await self._request(
-            "POST", "/bloco/assinatura/anotacao/cadastrar",
+            "POST",
+            "/bloco/assinatura/anotacao/cadastrar",
             data={"bloco": id_bloco, "documento": documento, "descricao": descricao},
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao anotar no bloco de assinatura: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao anotar no bloco de assinatura: {data.get('mensagem')}"
+            )
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def alterar_anotacao_bloco_assinatura(
@@ -1512,12 +1620,15 @@ class SEIClient:
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
         """
         resp = await self._request(
-            "POST", "/bloco/assinatura/anotacao/alterar",
+            "POST",
+            "/bloco/assinatura/anotacao/alterar",
             data={"bloco": id_bloco, "documento": documento, "descricao": descricao},
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar anotação do bloco: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao alterar anotação do bloco: {data.get('mensagem')}"
+            )
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -1567,6 +1678,7 @@ class SEIClient:
         """
         import os
         from datetime import datetime
+
         if not os.path.exists(arquivo_path):
             raise Exception(f"Arquivo não encontrado: {arquivo_path}")
 
@@ -1607,13 +1719,21 @@ class SEIClient:
                     f"{self.base_url}/documento/{id_procedimento}/externo/criar",
                     headers=headers,
                     data={
-                        "idSerie": id_serie, "numero": "", "descricao": descricao,
-                        "dataElaboracao": data_hoje, "nivelAcesso": nivel_acesso,
-                        "idHipoteseLegal": "", "grauSigilo": "",
+                        "idSerie": id_serie,
+                        "numero": "",
+                        "descricao": descricao,
+                        "dataElaboracao": data_hoje,
+                        "nivelAcesso": nivel_acesso,
+                        "idHipoteseLegal": "",
+                        "grauSigilo": "",
                         "idUnidadeGeradoraProtocolo": id_unidade,
-                        "assuntos": "", "interessados": "", "remetente": "",
-                        "destinatarios": "", "observacao": "",
-                        "idTextoPadraoInterno": "", "idTipoConferencia": "",
+                        "assuntos": "",
+                        "interessados": "",
+                        "remetente": "",
+                        "destinatarios": "",
+                        "observacao": "",
+                        "idTextoPadraoInterno": "",
+                        "idTipoConferencia": "",
                         "protocoloDocumentoModelo": "",
                     },
                     files={"anexo": (nome_arquivo, f)},
@@ -1630,8 +1750,11 @@ class SEIClient:
     # ------------------------------------------------------------------
 
     async def agendar_retorno_programado(
-        self, numero_processo: str, data_retorno: str = "",
-        dias_retorno: str = "", dias_uteis: str = "S",
+        self,
+        numero_processo: str,
+        data_retorno: str = "",
+        dias_retorno: str = "",
+        dias_uteis: str = "S",
     ) -> dict:
         """Agenda retorno programado para um processo."""
         payload: dict = {"numeroProcesso": numero_processo}
@@ -1706,7 +1829,9 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar sugestões de assunto: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao listar sugestões de assunto: {data.get('mensagem')}"
+            )
         return data.get("data", [])
 
     async def consultar_atribuicao(self, id_procedimento: str) -> dict:
@@ -1758,7 +1883,9 @@ class SEIClient:
         data = resp.json()
         if not data.get("sucesso"):
             raise Exception(f"Erro ao listar acompanhamentos: {data.get('mensagem')}")
-        return self._paginated(data, "acompanhamentos", data.get("data", []), start, limit)
+        return self._paginated(
+            data, "acompanhamentos", data.get("data", []), start, limit
+        )
 
     async def listar_acompanhamentos_unidade(
         self, limit: int = 50, start: int = 0
@@ -1772,8 +1899,12 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar acompanhamentos da unidade: {data.get('mensagem')}")
-        return self._paginated(data, "acompanhamentos", data.get("data", []), start, limit)
+            raise Exception(
+                f"Erro ao listar acompanhamentos da unidade: {data.get('mensagem')}"
+            )
+        return self._paginated(
+            data, "acompanhamentos", data.get("data", []), start, limit
+        )
 
     async def alterar_acompanhamento(
         self, id_procedimento: str, id_grupo: str = "", observacao: str = ""
@@ -1814,7 +1945,8 @@ class SEIClient:
     ) -> dict:
         """Concede credenciamento de acesso a um processo sigiloso."""
         resp = await self._request(
-            "POST", f"/processo/{id_procedimento}/credenciamento/conceder",
+            "POST",
+            f"/processo/{id_procedimento}/credenciamento/conceder",
             data={"usuario": id_usuario},
         )
         data = resp.json()
@@ -1837,7 +1969,8 @@ class SEIClient:
     ) -> dict:
         """Cassa credenciamento de acesso de um usuário a processo sigiloso."""
         resp = await self._request(
-            "POST", f"/processo/{id_procedimento}/credenciamento/cassar",
+            "POST",
+            f"/processo/{id_procedimento}/credenciamento/cassar",
             data={"usuario": id_usuario},
         )
         data = resp.json()
@@ -1862,12 +1995,11 @@ class SEIClient:
             raise Exception(f"Erro ao listar atividades: {data.get('mensagem')}")
         return self._paginated(data, "atividades", data.get("data", []), start, limit)
 
-    async def registrar_andamento(
-        self, id_procedimento: str, descricao: str
-    ) -> dict:
+    async def registrar_andamento(self, id_procedimento: str, descricao: str) -> dict:
         """Registra andamento (atividade) em um processo."""
         resp = await self._request(
-            "POST", "/atividade/lancar/andamento/processo",
+            "POST",
+            "/atividade/lancar/andamento/processo",
             data={"protocolo": id_procedimento, "descricao": descricao},
         )
         data = resp.json()
@@ -1927,7 +2059,9 @@ class SEIClient:
         resp = await self._request("GET", "/assinante/orgao")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar órgãos para assinatura: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao listar órgãos para assinatura: {data.get('mensagem')}"
+            )
         return data.get("data", [])
 
     # ------------------------------------------------------------------
@@ -1935,14 +2069,13 @@ class SEIClient:
     # Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     # ------------------------------------------------------------------
 
-    async def criar_observacao(
-        self, id_procedimento: str, descricao: str
-    ) -> dict:
+    async def criar_observacao(self, id_procedimento: str, descricao: str) -> dict:
         """Cria observação da unidade em um processo (diferente de anotação).
         Observação é visível apenas para a unidade, anotação é post-it individual.
         """
         resp = await self._request(
-            "POST", "/observacao/",
+            "POST",
+            "/observacao/",
             data={"protocolo": id_procedimento, "descricao": descricao},
         )
         data = resp.json()
@@ -1958,7 +2091,9 @@ class SEIClient:
     async def listar_grupos_modelos(self, limit: int = 50, start: int = 0) -> dict:
         """Lista grupos de modelos de documento disponíveis."""
         params: dict = {"limit": limit, "start": start}
-        resp = await self._request("GET", "/protocolomodelo/grupo/listar", params=params)
+        resp = await self._request(
+            "GET", "/protocolomodelo/grupo/listar", params=params
+        )
         data = resp.json()
         if not data.get("sucesso"):
             raise Exception(f"Erro ao listar grupos de modelos: {data.get('mensagem')}")
@@ -1991,7 +2126,9 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar histórico de marcadores: {data.get('mensagem')}")
+            raise Exception(
+                f"Erro ao listar histórico de marcadores: {data.get('mensagem')}"
+            )
         return data.get("data", [])
 
     # ------------------------------------------------------------------
@@ -1999,8 +2136,13 @@ class SEIClient:
     # ------------------------------------------------------------------
 
     async def assinar_bloco(
-        self, id_bloco: str, login: str, senha: str,
-        cargo: str, orgao: str = "", id_usuario: str = "",
+        self,
+        id_bloco: str,
+        login: str,
+        senha: str,
+        cargo: str,
+        orgao: str = "",
+        id_usuario: str = "",
     ) -> dict:
         """Assina todos os documentos de um bloco de assinatura."""
         payload = {
@@ -2020,8 +2162,13 @@ class SEIClient:
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def assinar_documentos_bloco(
-        self, login: str, senha: str, cargo: str,
-        documentos: str, orgao: str = "", id_usuario: str = "",
+        self,
+        login: str,
+        senha: str,
+        cargo: str,
+        documentos: str,
+        orgao: str = "",
+        id_usuario: str = "",
     ) -> dict:
         """Assina documentos específicos (de um ou mais blocos)."""
         payload = {
