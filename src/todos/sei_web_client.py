@@ -697,6 +697,141 @@ class SEIWebClient:
             "Verifique se o número está correto e se você tem acesso."
         )
 
+    async def pesquisar_processos_web(  # noqa: C901, PLR0912, PLR0915
+        self,
+        q: str = "",
+        descricao: str = "",
+        data_inicio: str = "",
+        data_fim: str = "",
+        pagina: int = 0,
+    ) -> list[dict[str, str]]:
+        """Pesquisa processos via formulário web do SEI (sem mod-wssei).
+
+        Parâmetros:
+        - q: texto livre (busca no conteúdo dos documentos indexados)
+        - descricao: texto na especificação/descrição do processo
+        - data_inicio / data_fim: filtro de data de inclusão (DD/MM/AAAA)
+        - pagina: página de resultados (0-indexed, 10 itens/página)
+
+        Retorna lista de dicts com: protocoloFormatado, tipo, trecho, unidade, inclusao.
+        """
+        await self.ensure_authenticated()
+
+        if self._pesquisa_rapida_action is None:
+            await self.fetch_inbox(detalhada=False)
+            if self._pesquisa_rapida_action is None:
+                raise RuntimeError("Form de pesquisa rápida não encontrado")  # noqa: EM101, TRY003
+
+        # Passo 1: POST vazio para obter hidden fields com infra_hash válido.
+        # Tenta até 2 vezes em caso de sessão expirada.
+        search_form = None
+        r0 = None
+        for attempt in range(2):
+            r0 = await self._http.post(
+                urljoin(str(self._inbox_url), self._pesquisa_rapida_action),
+                data={"txtPesquisaRapida": ""},
+                headers={"Referer": str(self._inbox_url)},
+            )
+            r0.raise_for_status()
+            soup0 = BeautifulSoup(r0.text, "html.parser")
+            for f in soup0.find_all("form"):
+                if not isinstance(f, Tag):
+                    continue
+                if "acao_origem=protocolo_pesquisa_rapida" in _tag_str(f, "action"):
+                    search_form = f
+                    break
+            if search_form is not None:
+                break
+            if attempt == 0:
+                # Sessão expirada: invalida o cache de sessão para forçar re-login
+                # (ensure_authenticated só re-login quando _inbox_url is None)
+                self._inbox_url = None
+                self._form_action = None
+                self._pesquisa_rapida_action = None
+                await self.ensure_authenticated()
+                await self.fetch_inbox(detalhada=False)
+
+        if search_form is None or r0 is None:
+            raise RuntimeError("Formulário de pesquisa avançada não encontrado")  # noqa: EM101, TRY003
+
+        action = urljoin(
+            str(r0.url),
+            _tag_str(search_form, "action").replace("&amp;", "&").split("#")[0],
+        )
+        hidden = {
+            _tag_str(h, "name"): _tag_str(h, "value")
+            for h in search_form.find_all("input", type="hidden")
+            if isinstance(h, Tag) and _tag_str(h, "name")
+        }
+
+        # Passo 2: submete a busca avançada (SEI exibe 10 resultados/página; hdnInicio = offset)
+        post_data: dict[str, str] = {
+            **hidden,
+            "rdoPesquisarEm": "P",
+            "chkSinConsiderarDocumentos": "S",
+            "q": q,
+            "txtDescricaoPesquisa": descricao,
+            "txtDataInicio": data_inicio,
+            "txtDataFim": data_fim,
+            "hdnInicio": str(pagina * 10),
+        }
+
+        r1 = await self._http.post(action, data=post_data, headers={"Referer": str(r0.url)})
+        r1.raise_for_status()
+        soup1 = BeautifulSoup(r1.text, "html.parser")
+
+        # Passo 3: parse dos resultados.
+        # Âncora: <a href="...procedimento_trabalhar..."> com texto = protocolo.
+        # Para cada protocolo, a <tr> pai é a linha de resultado; os 2 próximos
+        # <tr> irmãos contêm trecho e metadados (unidade/usuário/data).
+        results: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        for a in soup1.find_all("a", href=re.compile(r"procedimento_trabalhar")):
+            if not isinstance(a, Tag):
+                continue
+            prot = a.get_text(strip=True)
+            if not prot or prot in seen:
+                continue
+            seen.add(prot)
+
+            row0 = a.find_parent("tr")
+            if row0 is None or not isinstance(row0, Tag):
+                continue
+
+            siblings: list[Tag] = []
+            for sib in row0.next_siblings:
+                if not (isinstance(sib, Tag) and sib.name == "tr"):
+                    continue
+                # Para se encontrar a linha de outro resultado (próximo protocolo)
+                if sib.find("a", href=re.compile(r"procedimento_trabalhar")):
+                    break
+                siblings.append(sib)
+                if len(siblings) == 2:  # noqa: PLR2004
+                    break
+
+            tipo_cell = row0.find("td")
+            tipo_text = tipo_cell.get_text(" ", strip=True) if isinstance(tipo_cell, Tag) else ""
+            # tipo_text é "Tipo Nº protocolo" — extrai só o tipo (antes do Nº)
+            tipo = re.sub(r"\s+N[ºo°]?\s*\S+.*$", "", tipo_text).strip()
+
+            trecho = siblings[0].get_text(" ", strip=True) if len(siblings) > 0 else ""
+            meta = siblings[1].get_text(" ", strip=True) if len(siblings) > 1 else ""
+
+            # campo meta contém unidade, login do usuário e data de inclusão separados por pipe
+            unidade_m = re.search(r"Unidade:\s*([^|]+)", meta)
+            inclusao_m = re.search(r"Inclusão:\s*(\S+)", meta)
+
+            results.append({
+                "protocoloFormatado": prot,
+                "tipo": tipo,
+                "trecho": trecho,
+                "unidade": unidade_m.group(1).strip() if unidade_m else "",
+                "inclusao": inclusao_m.group(1) if inclusao_m else "",
+            })
+
+        return results
+
     async def consultar_processo(self, protocolo_formatado: str) -> dict:  # noqa: C901, PLR0912, PLR0915
         """Busca dados de um processo navegando pela cadeia de páginas web.
 

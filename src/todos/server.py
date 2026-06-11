@@ -9,6 +9,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Literal, cast
 
+import httpx
 from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
@@ -1667,6 +1668,7 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
 
     Paginação: pagina=0 é a primeira página, pagina=1 a segunda, etc.
     """
+    _rest_unavailable = False
     try:
         client = _get_client(ctx)
         result = await client.pesquisar_processos(
@@ -1683,8 +1685,52 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
             start=pagina,
         )
         return _json(result)
+    except (ValueError, httpx.UnsupportedProtocol):
+        _rest_unavailable = True  # REST não configurado (sem SEI_URL) ou URL inválida
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (404, 501):
+            _rest_unavailable = True  # mod-wssei ausente ou endpoint não encontrado
+        else:
+            return _error(str(exc))
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
+
+    # Fallback via web scraper (instâncias sem mod-wssei)
+    q_web = " ".join(filter(None, [palavras_chave, busca_rapida]))
+    dropped = [n for n, v in [
+        ("sta_tipo_data", sta_tipo_data),
+        ("id_unidade_geradora", id_unidade_geradora),
+        ("id_assunto", id_assunto),
+        ("grupo", grupo),
+    ] if v]
+    try:
+        web = _get_web_client(ctx)
+        items = await web.pesquisar_processos_web(
+            q=q_web,
+            descricao=descricao,
+            data_inicio=data_inicio,
+            data_fim=data_fim,
+            pagina=pagina,
+        )
+        page_items = items[:limit]
+        paged: dict = {
+            "processos": page_items,
+            "pagina_atual": pagina,
+            "itens_pagina": len(page_items),
+            "total_itens": len(page_items),
+            "tem_proxima": len(items) >= 10,  # noqa: PLR2004
+            "fonte": "web",
+        }
+        avisos: list[str] = []
+        if dropped:
+            avisos.append(f"filtros ignorados (não suportados na pesquisa web): {', '.join(dropped)}")
+        if limit < 10 and len(items) > limit:  # noqa: PLR2004
+            avisos.append(f"resultados truncados para limit={limit} (página web retorna até 10)")
+        if avisos:
+            paged["aviso"] = "; ".join(avisos).capitalize()
+        return _json(paged)
+    except Exception as e2:  # noqa: BLE001
+        return _error(f"Web: {e2}")
 
 
 @mcp.tool()
