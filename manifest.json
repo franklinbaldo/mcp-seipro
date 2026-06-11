@@ -25,6 +25,7 @@
       "args": ["${__dirname}/bootstrap.py"],
       "env": {
         "SEI_URL": "${user_config.sei_url}",
+        "SEI_WEB_URL": "${user_config.sei_web_url}",
         "SEI_USUARIO": "${user_config.sei_usuario}",
         "SEI_SENHA": "${user_config.sei_senha}",
         "SEI_ORGAO": "${user_config.sei_orgao}",
@@ -37,6 +38,12 @@
       "type": "string",
       "title": "URL da API do SEI",
       "description": "URL base da API REST mod-wssei v2 (opcional — deixe em branco se sua instância não tiver mod-wssei). Ex: https://sei.orgao.gov.br/sei/modulos/wssei/controlador_ws.php/api/v2",
+      "required": false
+    },
+    "sei_web_url": {
+      "type": "string",
+      "title": "URL base do SEI (web)",
+      "description": "Raiz do SEI para o scraper web — obrigatória quando URL da API não for informada. Ex: https://sei.orgao.gov.br",
       "required": false
     },
     "sei_usuario": {

@@ -872,6 +872,7 @@ class SEIWebClient:
         id_serie: Optional[str] = None,
         data_elaboracao: str = "",
         nivel_acesso: str = "0",
+        hipotese_legal: str = "",
     ) -> dict:
         """Inclui documento externo (upload de arquivo) em processo SEI via web.
 
@@ -918,6 +919,8 @@ class SEIWebClient:
                 nome_arquivo,
                 id_serie,
                 data_elaboracao,
+                nivel_acesso,
+                hipotese_legal,
             )
 
         soup_fs = BeautifulSoup(r1.text, "html.parser")
@@ -1125,6 +1128,8 @@ class SEIWebClient:
         )
         form4_data["hdnStaNivelAcessoLocal"] = nivel_acesso
         form4_data["rdoNivelAcesso"] = nivel_acesso
+        if hipotese_legal and nivel_acesso in ("1", "2"):
+            form4_data["selHipoteseLegal"] = hipotese_legal
         form4_data["rdoFormato"] = "N"  # nato-digital
         # JS submeter() altera de '1' → '2' antes do form.submit()
         form4_data["hdnFlagDocumentoCadastro"] = "2"

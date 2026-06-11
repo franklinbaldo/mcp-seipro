@@ -3451,6 +3451,7 @@ async def sei_incluir_documento_externo(
     id_serie: str = "",
     data_elaboracao: str = "",
     nivel_acesso: str = "0",
+    hipotese_legal: str = "",
     ctx: Context = None,
 ) -> str:
     """Inclui documento externo (PDF, imagem, etc.) em um processo SEI via web scraper.
@@ -3464,6 +3465,8 @@ async def sei_incluir_documento_externo(
       Para Nota Fiscal, use sei_pesquisar_tipos_documento para descobrir o id.
     - data_elaboracao: data de elaboração no formato dd/mm/aaaa (padrão: hoje)
     - nivel_acesso: 0=público (padrão), 1=restrito, 2=sigiloso
+    - hipotese_legal: ID da hipótese legal (obrigatório se nivel_acesso=1 ou 2).
+      Use sei_listar_hipoteses_legais para descobrir os IDs disponíveis.
 
     Se id_serie não for informado, retorna os tipos disponíveis para que você
     possa escolher e chamar novamente com o id correto.
@@ -3482,6 +3485,7 @@ async def sei_incluir_documento_externo(
             id_serie=id_serie or None,
             data_elaboracao=data_elaboracao,
             nivel_acesso=nivel_acesso,
+            hipotese_legal=hipotese_legal,
         )
         return _json(result)
     except Exception as e:
