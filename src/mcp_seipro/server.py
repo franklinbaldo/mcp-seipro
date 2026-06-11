@@ -3239,6 +3239,53 @@ async def sei_gerar_pdf_processo(
         return _error(str(e))
 
 
+@mcp.tool()
+async def sei_gerar_zip_processo(
+    processo: str,
+    ctx: Context = None,
+) -> str:
+    """Gera e baixa o ZIP com todos os documentos de um processo SEI.
+
+    Baixa todos os documentos do processo num único arquivo ZIP, exatamente
+    como o botão "Gerar ZIP" da interface web do SEI.
+
+    Implementação via scraper web (procedimento_gerar_zip).
+
+    Parâmetros:
+    - processo: protocolo formatado (ex: 0029.000123/2024-00)
+
+    Retorna base64 do ZIP, tamanho e caminho do arquivo salvo em disco.
+    """
+    import tempfile
+
+    try:
+        web = _get_web_client(ctx)
+        if web._inbox_url is None:
+            await web.login()
+
+        zip_bytes = await web.gerar_zip_processo(processo)
+
+        tamanho_mb = len(zip_bytes) / 1024 / 1024
+        if tamanho_mb > 200:
+            return _error(
+                f"ZIP muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI."
+            )
+
+        protocolo_safe = processo.replace("/", "-")
+        zip_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.zip")
+        with open(zip_path, "wb") as f:
+            f.write(zip_bytes)
+
+        return _json({
+            "arquivo": zip_path,
+            "tamanho_mb": round(tamanho_mb, 2),
+            "tamanho_bytes": len(zip_bytes),
+            "base64": base64.b64encode(zip_bytes).decode(),
+        })
+    except Exception as e:
+        return _error(str(e))
+
+
 # -- Acompanhamento: meus, da unidade, alterar --
 
 
