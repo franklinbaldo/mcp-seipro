@@ -124,6 +124,11 @@ class SEIWebClient:
 
     async def login(self) -> None:
         """Faz login via formulário SIP e captura a inbox URL com infra_hash."""
+        if not self.sei_root:
+            raise RuntimeError(
+                "Nenhuma URL do SEI configurada. Defina SEI_URL (API REST "
+                "mod-wssei) ou SEI_WEB_URL (raiz web, ex: https://sei.orgao.gov.br)."
+            )
         resp = await self._http.get(self.login_url)
         if resp.status_code != 200:
             raise RuntimeError(f"GET login.php retornou {resp.status_code}")
@@ -1129,7 +1134,10 @@ class SEIWebClient:
         _SEP = "%B1"  # ± URL-encoded como ISO-8859-1 (PHP split target)
 
         def _qpart(s: str) -> str:
-            return _up.quote(s.replace(" ", "+"), safe="+-.!~*'()_")
+            # '+' fora do safe → vira %2B ('+' literal no nome não pode chegar
+            # cru ao corpo x-www-form-urlencoded, onde decodifica como espaço);
+            # espaço → %20 → '+' (convenção form-urlencoded)
+            return _up.quote(s, safe="-.!~*'()_").replace("%20", "+")
 
         hdn_anexos = _SEP.join(
             [
