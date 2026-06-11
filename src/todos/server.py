@@ -506,8 +506,8 @@ async def sei_trocar_unidade(id_unidade: str, ctx: Context) -> str:
         try:
             rest = _get_client(ctx)
             await rest.trocar_unidade(result.get("id_unidade", id_unidade))
-        except Exception:  # noqa: BLE001
-            pass  # best-effort; web unit already switched
+        except Exception as rest_err:  # noqa: BLE001
+            logger.debug("REST unit sync failed (best-effort): %s", rest_err)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
