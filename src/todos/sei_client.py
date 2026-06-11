@@ -547,7 +547,10 @@ class SEIClient:
         return self._paginated(data, "textos", data.get("data", []), start, limit)
 
     async def listar_usuarios(
-        self, filtro: str = "", id_unidade: str = "", apenas_unidade: bool = True  # noqa: FBT001, FBT002
+        self,
+        filtro: str = "",
+        id_unidade: str = "",
+        apenas_unidade: bool = True,  # noqa: FBT001, FBT002
     ) -> dict:
         """Lista usuários.
 
