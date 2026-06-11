@@ -22,7 +22,7 @@ import os
 import re
 import warnings
 from typing import Any
-from urllib.parse import parse_qsl, urljoin
+from urllib.parse import parse_qsl, urlencode, urljoin
 
 import httpx
 from bs4 import BeautifulSoup, Tag
@@ -1199,10 +1199,7 @@ class SEIWebClient:
         """
         await self.ensure_authenticated()
         sei_base = f"{self.sei_root}/sei/"
-        url = (
-            f"{sei_base}controlador_ajax.php"
-            f"?acao_ajax=unidade_auto_completar&termo={termo}"
-        )
+        url = f"{sei_base}controlador_ajax.php?acao_ajax=unidade_auto_completar&termo={termo}"
         r = await self._http.get(url, headers={"Referer": str(self._inbox_url)})
         if r.status_code != 200:  # noqa: PLR2004
             return []
@@ -1297,7 +1294,7 @@ class SEIWebClient:
 
         r2 = await self._http.post(
             post_url,
-            data=post_data,
+            content=urlencode(post_data).encode(),
             headers={"Referer": tramitar_url, "Content-Type": "application/x-www-form-urlencoded"},
         )
         body2 = r2.content.decode("iso-8859-1", "replace")
@@ -1319,9 +1316,10 @@ class SEIWebClient:
         que não partem de um processo específico (ex: procedimento_cadastrar).
         """
         await self.ensure_authenticated()
+        inbox_url = str(self._inbox_url)
         r = await self._http.get(
-            self._inbox_url,  # type: ignore[arg-type]
-            headers={"Referer": str(self._inbox_url)},
+            inbox_url,
+            headers={"Referer": inbox_url},
         )
         if r.status_code != 200:  # noqa: PLR2004
             raise RuntimeError(f"inbox status={r.status_code}")  # noqa: EM102, TRY003
@@ -1354,9 +1352,7 @@ class SEIWebClient:
         sei_base = f"{self.sei_root}/sei/"
 
         cadastrar_url = await self._obter_link_toolbar("procedimento_cadastrar")
-        r = await self._http.get(
-            cadastrar_url, headers={"Referer": str(self._inbox_url)}
-        )
+        r = await self._http.get(cadastrar_url, headers={"Referer": str(self._inbox_url)})
         if r.status_code != 200:  # noqa: PLR2004
             raise RuntimeError(f"procedimento_cadastrar status={r.status_code}")  # noqa: EM102, TRY003
 
@@ -1392,7 +1388,7 @@ class SEIWebClient:
 
         r2 = await self._http.post(
             post_url,
-            data=post_data,
+            content=urlencode(post_data).encode(),
             headers={"Referer": cadastrar_url, "Content-Type": "application/x-www-form-urlencoded"},
         )
         body2 = r2.content.decode("iso-8859-1", "replace")
@@ -1420,7 +1416,9 @@ class SEIWebClient:
             "ok": True,
             "idProcedimento": id_proc,
             "protocoloFormatado": protocolo,
-            "mensagem": "Processo criado com sucesso." if id_proc else "Processo criado (id não extraído).",
+            "mensagem": "Processo criado com sucesso."
+            if id_proc
+            else "Processo criado (id não extraído).",
         }
 
     async def criar_documento_interno_web(  # noqa: C901, PLR0912, PLR0915
@@ -1544,7 +1542,7 @@ class SEIWebClient:
 
         r5 = await self._http.post(
             post_url4,
-            data=post_data4,
+            content=urlencode(post_data4).encode(),
             headers={"Referer": editor_url, "Content-Type": "application/x-www-form-urlencoded"},
         )
         body5 = r5.content.decode("iso-8859-1", "replace")
@@ -1567,7 +1565,9 @@ class SEIWebClient:
             "idDocumento": id_doc,
             "protocolo": protocolo,
             "id_serie": id_serie,
-            "mensagem": "Documento criado com sucesso." if id_doc else "Documento criado (id não extraído).",
+            "mensagem": "Documento criado com sucesso."
+            if id_doc
+            else "Documento criado (id não extraído).",
         }
 
     MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # limite de segurança (o SEI rejeita antes)
