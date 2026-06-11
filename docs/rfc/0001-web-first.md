@@ -258,7 +258,18 @@ no web — mas **também aparecem como `<select>` em forms** (ex.: `selSerie` co
    contorna a chave.** Porém o WSDL costuma ser servido sem autenticação (a
    chave só é validada ao invocar operações), então ele serve para
    **enumerar operações e schemas de parâmetros** — útil para mapear capacidade
-   da instância. No SEI-RO, `/sei/ws/SeiWS.php` responde (endpoint existe);
-   confirmar o WSDL com `curl` é o primeiro passo do spike. Plano: spike de
-   descoberta (WSDL) após Fase 1; invocação como backend 3 só se/quando houver
-   chave concedida pelo órgão.
+   da instância. **Spike realizado em 2026-06-11** — WSDL do SEI-RO confirmado
+   em `https://sei.sistemas.ro.gov.br/sei/ws/SeiWS.php`. Resultado:
+
+   | Aspecto | Detalhe |
+   |---|---|
+   | Operações | **67** (vs ~131 do mod-wssei REST) |
+   | Protocolo | SOAP 1.1, `rpc/encoded` — estilo antigo, `zeep` deprecou suporte a `encoded`; exige plugin |
+   | Auth | `SiglaSistema` + `IdentificacaoServico` em cada chamada; sem endpoint de sessão |
+   | Operações únicas vs REST | Upload chunked (`adicionarArquivo` + `adicionarConteudoArquivo`), `lancarAndamento` com `IdTarefa`, `enviarEmail`, `registrarOuvidoria`, `bloquearProcesso`, controle de prazo (3 ops), catálogos geo (países/estados/cidades) |
+   | Sem equivalente no SOAP | Pesquisa Solr, assinatura digital, listagem inbox/painel |
+
+   **Conclusão do spike**: 67 operações cobrem os mesmos fluxos cotidianos que o web scraper
+   almeja para Fases 1–3. Invocação como backend 3 só se/quando houver chave concedida pelo
+   órgão — não substitui o web para o usuário sem chave. Ao receber chave, implementação
+   exigiria client SOAP customizado (não `zeep` puro) devido ao binding `rpc/encoded`.
