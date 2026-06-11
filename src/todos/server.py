@@ -234,7 +234,9 @@ async def sei_status_resource(ctx: Context) -> str:
         id_usuario = web._id_usuario or web._usuario  # noqa: SLF001
         orgao_usuario = web._orgao_usuario  # noqa: SLF001
         if nome_usuario:
-            usuario_str = f"{nome_usuario} (id: {id_usuario}" + (f", órgão: {orgao_usuario})" if orgao_usuario else ")")
+            usuario_str = f"{nome_usuario} (id: {id_usuario}" + (
+                f", órgão: {orgao_usuario})" if orgao_usuario else ")"
+            )
         else:
             usuario_str = id_usuario
         linhas = [
