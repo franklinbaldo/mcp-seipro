@@ -1771,7 +1771,7 @@ async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str
 
 
 @mcp.tool()
-async def sei_atribuir_processo(
+async def sei_atribuir_processo(  # noqa: C901, PLR0911
     numero_processo: str,
     usuario: str,
     ctx: Context | None = None,
@@ -1783,54 +1783,78 @@ async def sei_atribuir_processo(
     - usuario: ID numérico do usuário OU nome/parte do nome
       (ex: "100001860" ou "Karina" ou "Karina Shimoishi")
 
-    Quando um nome é informado, busca os usuários correspondentes
-    e tenta atribuir a cada um até encontrar um com permissão
-    na unidade atual.
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    Via web, o usuário é escolhido de um <select> no form — use
+    sei_atribuir_processo(usuario="?") para listar os usuários disponíveis.
     """
     try:
-        client = _get_client(ctx)
-
-        # Se parece ser um ID numérico, usa direto
-        if usuario.isdigit():
-            result = await client.atribuir_processo(numero_processo, usuario)
-            return _json(result)
-
-        # Busca por nome
-        result = await client.listar_usuarios(filtro=usuario)
-        candidatos = result.get("usuarios", [])
-        if not candidatos:
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            if usuario.isdigit():
+                result = await backend.rest.atribuir_processo(numero_processo, usuario)
+                return _json(result)
+            result = await backend.rest.listar_usuarios(filtro=usuario)
+            candidatos = result.get("usuarios", [])
+            if not candidatos:
+                return _json(
+                    {
+                        "error": f"Nenhum usuário encontrado com '{usuario}'",
+                        "dica": "Use sei_listar_usuarios para ver os usuários disponíveis.",
+                    }
+                )
+            erros = []
+            for u in candidatos:
+                id_u = u.get("id_usuario", "")
+                nome = u.get("nome", "")
+                sigla = u.get("sigla", "")
+                try:
+                    result = await backend.rest.atribuir_processo(numero_processo, id_u)
+                    return _json(
+                        {
+                            "mensagem": result.get("mensagem", "Processo atribuído com sucesso!"),
+                            "usuario": {"id": id_u, "nome": nome, "sigla": sigla},
+                        }
+                    )
+                except Exception as e:  # noqa: BLE001
+                    erros.append(f"{nome} ({sigla}): {e}")
+                    continue
             return _json(
                 {
-                    "error": f"Nenhum usuário encontrado com '{usuario}'",
-                    "dica": "Use sei_listar_usuarios para ver os usuários disponíveis.",
+                    "error": f"Nenhum dos {len(candidatos)} usuários com '{usuario}' tem permissão na unidade atual",
+                    "tentativas": erros,
+                    "dica": "Verifique se está na unidade correta com sei_trocar_unidade.",
                 }
             )
 
-        # Tentar cada candidato até um funcionar
-        erros = []
-        for u in candidatos:
-            id_u = u.get("id_usuario", "")
-            nome = u.get("nome", "")
-            sigla = u.get("sigla", "")
-            try:
-                result = await client.atribuir_processo(numero_processo, id_u)
-                return _json(
-                    {
-                        "mensagem": result.get("mensagem", "Processo atribuído com sucesso!"),
-                        "usuario": {"id": id_u, "nome": nome, "sigla": sigla},
-                    }
-                )
-            except Exception as e:  # noqa: BLE001
-                erros.append(f"{nome} ({sigla}): {e}")
-                continue
-
-        return _json(
-            {
-                "error": f"Nenhum dos {len(candidatos)} usuários com '{usuario}' tem permissão na unidade atual",
-                "tentativas": erros,
-                "dica": "Verifique se está na unidade correta com sei_trocar_unidade.",
-            }
+        # Via web: parse do <select> de usuários no form atribuicao_salvar
+        form_info = await backend.web.obter_form_acao(numero_processo, "atribuicao_salvar")
+        opcoes_usuario = form_info.get("selects", {}).get("selAtribuicao", [])
+        if not opcoes_usuario:
+            return _json(
+                {
+                    "error": "Nenhum usuário disponível para atribuição nesta unidade.",
+                    "dica": "Verifique se há usuários ativos na unidade atual.",
+                }
+            )
+        if usuario == "?":
+            return _json({"usuarios_disponiveis": opcoes_usuario})
+        # Encontra o usuário pelo ID ou por correspondência de nome
+        id_usuario = ""
+        for opt in opcoes_usuario:
+            if opt["value"] == usuario or usuario.lower() in opt["texto"].lower():
+                id_usuario = opt["value"]
+                break
+        if not id_usuario:
+            return _json(
+                {
+                    "error": f"Usuário '{usuario}' não encontrado no form.",
+                    "usuarios_disponiveis": opcoes_usuario,
+                }
+            )
+        result = await backend.web.executar_acao_processo(
+            numero_processo, "atribuicao_salvar", {"selAtribuicao": id_usuario}
         )
+        return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
@@ -2044,43 +2068,56 @@ async def sei_sobrestar_processo(
     Parâmetros:
     - processo: protocolo formatado (ex: 50300.018905/2018-67) ou IdProcedimento
     - motivo: motivo do sobrestamento (obrigatório)
-    - processo_vinculado: protocolo de outro processo para vincular (opcional).
-      Se informado, o sobrestamento fica vinculado ao andamento desse processo.
+    - processo_vinculado: protocolo de outro processo para vincular (opcional)
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-
-        proto_vinculado = ""
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            proto_vinculado = ""
+            if processo_vinculado:
+                proto_vinculado = await _resolver_processo(backend.rest, processo_vinculado)
+            try:
+                result = await backend.rest.sobrestar_processo(
+                    id_procedimento=id_proc,
+                    motivo=motivo,
+                    protocolo_vinculado=proto_vinculado,
+                )
+                return _json(result)
+            except Exception as e:  # noqa: BLE001
+                msg = str(e)
+                if "aberto" in msg.lower() or "unidade" in msg.lower():
+                    try:
+                        resp = await backend.rest._request(  # noqa: SLF001
+                            "GET", f"/processo/listar/unidades/{id_proc}"
+                        )
+                        raw = resp.get("data", []) if isinstance(resp, dict) else []
+                        nomes = [
+                            u.get("nome", u.get("sigla", ""))
+                            for u in (raw if isinstance(raw, list) else [])
+                            if isinstance(u, dict)
+                        ]
+                        return _json(
+                            {
+                                "error": msg,
+                                "unidades_abertas": nomes,
+                                "dica": "Conclua o processo nessas unidades antes de sobrestar.",
+                            }
+                        )
+                    except Exception:  # noqa: BLE001, S110
+                        pass
+                return _error(msg)
+        campos: dict[str, str] = {"txaMotivoSobrestamento": motivo}
         if processo_vinculado:
-            proto_vinculado = await _resolver_processo(client, processo_vinculado)
-
-        result = await client.sobrestar_processo(
-            id_procedimento=id_proc,
-            motivo=motivo,
-            protocolo_vinculado=proto_vinculado,
+            campos["txtNrProcedimentoVinculado"] = processo_vinculado
+        result = await backend.web.executar_acao_processo(
+            processo, "procedimento_sobrestar", campos
         )
         return _json(result)
     except Exception as e:  # noqa: BLE001
-        msg = str(e)
-        # Erro comum: processo aberto em outras unidades
-        if "aberto" in msg.lower() or "unidade" in msg.lower() or "sobrestar" in msg.lower():
-            # Tentar listar unidades onde o processo está aberto
-            try:
-                unidades = await client.listar_unidades_processo(id_proc)
-                nomes = [f"{u.get('sigla', '')} ({u.get('id', '')})" for u in unidades]
-                return _json(
-                    {
-                        "error": msg,
-                        "unidades_abertas": nomes,
-                        "dica": "O processo precisa estar aberto somente na unidade atual "
-                        "para ser sobrestado. Conclua o processo nas unidades "
-                        "listadas acima antes de sobrestar.",
-                    }
-                )
-            except Exception:  # noqa: BLE001, S110
-                pass
-        return _error(msg)
+        return _error(str(e))
 
 
 @mcp.tool()
@@ -2091,11 +2128,18 @@ async def sei_remover_sobrestamento(
     """Remove o sobrestamento de um processo no SEI.
 
     - processo: protocolo formatado (ex: 50300.018905/2018-67) ou IdProcedimento
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.remover_sobrestamento(id_proc)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.remover_sobrestamento(id_proc)
+            return _json(result)
+        result = await backend.web.executar_acao_processo(
+            processo, "procedimento_remover_sobrestamento"
+        )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -2332,11 +2376,18 @@ async def sei_registrar_andamento(
 
     - processo: protocolo formatado ou IdProcedimento
     - descricao: texto do andamento
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.registrar_andamento(id_proc, descricao)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.registrar_andamento(id_proc, descricao)
+            return _json(result)
+        result = await backend.web.executar_acao_processo(
+            processo, "procedimento_andamento_registrar", {"txaDescricao": descricao}
+        )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -2543,15 +2594,26 @@ async def sei_marcar_processo(
 
     Parâmetros:
     - processo: protocolo formatado ou IdProcedimento
-    - marcador: ID do marcador (use sei_pesquisar_marcadores para listar)
+    - marcador: ID do marcador OU "?" para listar os disponíveis
     - texto: texto/comentário associado ao marcador (opcional)
 
-    Para remover, use marcador vazio ou marque com outro marcador.
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.marcar_processo(id_proc, marcador, texto)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.marcar_processo(id_proc, marcador, texto)
+            return _json(result)
+        if marcador == "?":
+            form_info = await backend.web.obter_form_acao(processo, "marcador_alterar")
+            return _json(
+                {"marcadores_disponiveis": form_info.get("selects", {}).get("selMarcador", [])}
+            )
+        campos: dict[str, str] = {"selMarcador": marcador}
+        if texto:
+            campos["txtTexto"] = texto
+        result = await backend.web.executar_acao_processo(processo, "marcador_alterar", campos)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -2606,13 +2668,30 @@ async def sei_acompanhar_processo(
 
     Parâmetros:
     - processo: protocolo formatado ou IdProcedimento
-    - grupo: ID do grupo de acompanhamento (use sei_listar_grupos_acompanhamento)
+    - grupo: ID do grupo de acompanhamento (ou "?" para listar disponíveis)
     - observacao: observação/anotação do acompanhamento
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.acompanhar_processo(id_proc, grupo, observacao)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.acompanhar_processo(id_proc, grupo, observacao)
+            return _json(result)
+        if grupo == "?":
+            form_info = await backend.web.obter_form_acao(
+                processo, "acompanhamento_especial_incluir"
+            )
+            return _json({"grupos_disponiveis": form_info.get("selects", {}).get("selGrupo", [])})
+        campos: dict[str, str] = {}
+        if grupo:
+            campos["selGrupo"] = grupo
+        if observacao:
+            campos["txaObservacao"] = observacao
+        result = await backend.web.executar_acao_processo(
+            processo, "acompanhamento_especial_incluir", campos
+        )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -2625,18 +2704,23 @@ async def sei_remover_acompanhamento(
 ) -> str:
     """Remove acompanhamento especial de um processo.
 
-    Consulta o acompanhamento ativo e remove.
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        acomp = await client.consultar_acompanhamento(id_proc)
-        if not acomp:
-            return _json({"mensagem": "Nenhum acompanhamento ativo neste processo."})
-        id_acomp = str(acomp.get("idAcompanhamento", acomp.get("id", "")))
-        if not id_acomp:
-            return _error("Não foi possível identificar o acompanhamento.")
-        result = await client.excluir_acompanhamento(id_acomp)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            acomp = await backend.rest.consultar_acompanhamento(id_proc)
+            if not acomp:
+                return _json({"mensagem": "Nenhum acompanhamento ativo neste processo."})
+            id_acomp = str(acomp.get("idAcompanhamento", acomp.get("id", "")))
+            if not id_acomp:
+                return _error("Não foi possível identificar o acompanhamento.")
+            result = await backend.rest.excluir_acompanhamento(id_acomp)
+            return _json(result)
+        result = await backend.web.executar_acao_processo(
+            processo, "acompanhamento_especial_excluir"
+        )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -2870,15 +2954,22 @@ async def sei_criar_anotacao(
     Parâmetros:
     - processo: protocolo formatado (ex: 50300.018905/2018-67) ou IdProcedimento
     - descricao: texto da anotação
-    - prioridade: nível de prioridade (1=normal)
+    - prioridade: nível de prioridade (1=normal, 2=alta)
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.criar_anotacao(
-            protocolo=id_proc,
-            descricao=descricao,
-            prioridade=prioridade,
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.criar_anotacao(
+                protocolo=id_proc, descricao=descricao, prioridade=prioridade
+            )
+            return _json(result)
+        result = await backend.web.executar_acao_processo(
+            processo,
+            "anotacao_incluir",
+            {"txaDescricao": descricao, "selPrioridade": prioridade},
         )
         return _json(result)
     except Exception as e:  # noqa: BLE001

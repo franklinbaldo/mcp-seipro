@@ -784,6 +784,81 @@ class SEIWebClient:
             "protocolo": protocolo,
         }
 
+    async def obter_form_acao(  # noqa: C901, PLR0912
+        self,
+        protocolo: str,
+        nome_acao: str,
+    ) -> dict:
+        """Retorna os campos e opções disponíveis no form de uma ação.
+
+        Útil para descobrir os IDs válidos de selects (ex: selUsuario, selMarcador)
+        antes de submeter o form com executar_acao_processo.
+
+        Retorna dict com:
+        - "campos": {name: value} dos hidden inputs pré-preenchidos
+        - "selects": {name: [{value, texto}, ...]} dos campos select
+        - "textareas": [name, ...] dos campos de texto livre
+        """
+        await self.ensure_authenticated()
+
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+
+        m = re.search(
+            rf"(controlador\.php\?acao={re.escape(nome_acao)}[^\"'\s]*infra_hash=[a-f0-9]+)",
+            html_arvore,
+        )
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Ação '{nome_acao}' não encontrada no menu do processo."  # noqa: EM102
+            )
+
+        acao_url = urljoin(sei_base, m.group(1).replace("&amp;", "&"))
+        r = await self._http.get(acao_url, headers={"Referer": url_arvore})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"GET {nome_acao} status={r.status_code}")  # noqa: EM102, TRY003
+
+        body = r.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body, "html.parser")
+        form = soup.find("form")
+        if not isinstance(form, Tag):
+            return {"campos": {}, "selects": {}, "textareas": []}
+
+        campos: dict[str, str] = {}
+        for inp in form.find_all("input", type="hidden"):
+            if not isinstance(inp, Tag):
+                continue
+            n = _tag_str(inp, "name")
+            if n:
+                campos[n] = _tag_str(inp, "value")
+
+        selects: dict[str, list[dict]] = {}
+        for sel in form.find_all("select"):
+            if not isinstance(sel, Tag):
+                continue
+            n = _tag_str(sel, "name")
+            if not n:
+                continue
+            opcoes = []
+            for opt in sel.find_all("option"):
+                if not isinstance(opt, Tag):
+                    continue
+                v = _tag_str(opt, "value")
+                t = opt.get_text(strip=True)
+                if v:
+                    opcoes.append({"value": v, "texto": t})
+            selects[n] = opcoes
+
+        textareas = []
+        for ta in form.find_all("textarea"):
+            if not isinstance(ta, Tag):
+                continue
+            n = _tag_str(ta, "name")
+            if n:
+                textareas.append(n)
+
+        return {"campos": campos, "selects": selects, "textareas": textareas}
+
     async def _gerar_arquivo_processo(self, protocolo_formatado: str, acao: str) -> bytes:  # noqa: C901, PLR0912, PLR0915
         """Helper compartilhado para gerar_pdf_processo e gerar_zip_processo.
 
