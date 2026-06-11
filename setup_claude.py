@@ -113,7 +113,7 @@ def detect_repo_root() -> Path | None:
     if pyproject.exists():
         try:
             text = pyproject.read_text(encoding="utf-8")
-            if 'name = "todos-sei"' in text:
+            if 'name = "todos"' in text:
                 info(f"Repositorio todos detectado: {script_dir}")
                 return script_dir
         except Exception:
@@ -270,9 +270,9 @@ def install_package(repo_root: Path | None, uv_path: str | None):
             check=True,
         )
     else:
-        info("Instalando todos-sei do PyPI ...")
+        info("Instalando todos do PyPI ...")
         subprocess.run(
-            [*pip_cmd, "todos-sei"],
+            [*pip_cmd, "todos"],
             check=True,
         )
 

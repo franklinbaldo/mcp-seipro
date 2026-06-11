@@ -3,7 +3,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "todos-sei"
+name = "todos"
 version = "0.4.0"
 description = "TOdos Domina O Sei — MCP server para o SEI com paridade web-first: 116 tools, scraper HTTP + REST híbrido, funciona em instâncias sem mod-wssei"
 readme = "README.md"
