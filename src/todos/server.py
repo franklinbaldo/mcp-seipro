@@ -21,6 +21,7 @@ from todos.html_utils import (
     pdf_to_text,
     sanitize_iso8859,
 )
+from todos.sei_backend import SEIBackend
 from todos.sei_client import SEIClient
 from todos.sei_styles import (
     SEI_STYLES,
@@ -111,6 +112,13 @@ def _get_web_client(ctx: Context | None) -> SEIWebClient:
         return client
 
     raise ValueError("SEIWebClient nao configurado.")  # noqa: EM101, TRY003
+
+
+def _get_backend(ctx: Context | None) -> SEIBackend:
+    """Retorna SEIBackend com REST + web para o contexto atual."""
+    rest = _get_client(ctx)
+    web = _get_web_client(ctx)
+    return SEIBackend(rest, web)
 
 
 _http_kwargs: dict[str, Any] = {}
@@ -1720,10 +1728,16 @@ async def sei_concluir_processo(numero_processo: str, ctx: Context | None = None
 
     O processo é removido da caixa da unidade mas permanece acessível.
     Use sei_reabrir_processo para reverter.
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.concluir_processo(numero_processo)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.concluir_processo(numero_processo)
+            return _json(result)
+        if backend.web._inbox_url is None:  # noqa: SLF001
+            await backend.web.login()
+        result = await backend.web.executar_acao_processo(numero_processo, "procedimento_concluir")
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -1736,11 +1750,17 @@ async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str
     - processo: protocolo formatado (ex: 50300.018905/2018-67) ou IdProcedimento
 
     O processo volta para a caixa da unidade atual.
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.reabrir_processo(id_proc)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.reabrir_processo(id_proc)
+            return _json(result)
+        if backend.web._inbox_url is None:  # noqa: SLF001
+            await backend.web.login()
+        result = await backend.web.executar_acao_processo(processo, "procedimento_reabrir")
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -2092,18 +2112,25 @@ async def sei_dar_ciencia(
     Exemplos:
     - sei_dar_ciencia("1482875", tipo="documento")  → ciência na NT 16
     - sei_dar_ciencia("50300.018905/2018-67", tipo="processo")  → ciência no processo
+
+    Funciona via REST (mod-wssei) ou via scraper web para tipo="processo" em
+    instâncias sem mod-wssei. Tipo "documento" exige REST.
     """
     try:
-        client = _get_client(ctx)
+        backend = _get_backend(ctx)
 
         if tipo == "documento":
-            # Resolver número SEI → id interno
-            doc_id, _ = await _resolver_documento(client, referencia)
-            result = await client.dar_ciencia_documento(doc_id)
+            doc_id, _ = await _resolver_documento(backend.rest, referencia)
+            result = await backend.rest.dar_ciencia_documento(doc_id)
             return _json(result)
-        # Resolver protocolo → IdProcedimento
-        id_proc = await _resolver_processo(client, referencia)
-        result = await client.dar_ciencia_processo(id_proc)
+
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, referencia)
+            result = await backend.rest.dar_ciencia_processo(id_proc)
+            return _json(result)
+        if backend.web._inbox_url is None:  # noqa: SLF001
+            await backend.web.login()
+        result = await backend.web.executar_acao_processo(referencia, "processo_dar_ciencia")
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -2148,11 +2175,17 @@ async def sei_remover_atribuicao(
     """Remove a atribuição de um processo (desatribui de qualquer usuário).
 
     - processo: protocolo formatado ou IdProcedimento
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.remover_atribuicao(id_proc)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.remover_atribuicao(id_proc)
+            return _json(result)
+        if backend.web._inbox_url is None:  # noqa: SLF001
+            await backend.web.login()
+        result = await backend.web.executar_acao_processo(processo, "atribuicao_cancelar")
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -2166,11 +2199,62 @@ async def sei_receber_processo(
     """Confirma o recebimento de um processo na unidade atual.
 
     - processo: protocolo formatado ou IdProcedimento
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.receber_processo(id_proc)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.receber_processo(id_proc)
+            return _json(result)
+        if backend.web._inbox_url is None:  # noqa: SLF001
+            await backend.web.login()
+        result = await backend.web.executar_acao_processo(processo, "procedimento_receber")
+        return _json(result)
+    except Exception as e:  # noqa: BLE001
+        return _error(str(e))
+
+
+@mcp.tool()
+async def sei_executar_acao(
+    processo: str,
+    acao: str,
+    confirmar: bool = False,  # noqa: FBT001, FBT002
+    ctx: Context | None = None,
+) -> str:
+    """Executa qualquer ação disponível no menu de um processo via scraper web.
+
+    Parâmetros:
+    - processo: protocolo formatado (ex: "50300.018905/2018-67")
+    - acao: nome da ação no controlador SEI (ex: "procedimento_concluir")
+    - confirmar: False (padrão) = dry-run que valida se a ação existe;
+                 True = executa a ação de fato
+
+    Esta é uma ferramenta de baixo nível — prefira as tools específicas
+    (sei_concluir_processo, sei_reabrir_processo, etc.) quando disponíveis.
+    Útil para ações sem tool dedicada ou para debugging.
+
+    Exemplos:
+    - sei_executar_acao("50300.018905/2018-67", "procedimento_concluir", confirmar=True)
+    - sei_executar_acao("50300.018905/2018-67", "procedimento_visualizar")  # dry-run
+    """
+    if not confirmar:
+        return _json(
+            {
+                "dry_run": True,
+                "mensagem": (
+                    f"Ação '{acao}' NÃO executada. Passe confirmar=True para executar. "
+                    "Revise a ação antes de confirmar — algumas são irreversíveis."
+                ),
+                "processo": processo,
+                "acao": acao,
+            }
+        )
+    try:
+        web = _get_web_client(ctx)
+        if web._inbox_url is None:  # noqa: SLF001
+            await web.login()
+        result = await web.executar_acao_processo(processo, acao)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))

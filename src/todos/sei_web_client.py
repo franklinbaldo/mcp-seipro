@@ -40,6 +40,30 @@ def _tag_str(tag: Tag, attr: str, default: str = "") -> str:
     return default
 
 
+def _extrair_erro_sei(html: str) -> str | None:
+    """Extrai mensagem de erro do HTML do SEI, se houver.
+
+    O SEI exibe erros em divs/spans com classes infraMsg ou infraMensagemErro,
+    ou como alertas JavaScript. Retorna None se não houver erro detectável.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    for el in (
+        soup.find(class_="infraMsg"),
+        soup.find(class_="infraMensagemErro"),
+        soup.find(id="divInfraMensagem"),
+        soup.find(class_="alert-danger"),
+    ):
+        if el and isinstance(el, Tag):
+            txt = el.get_text(" ", strip=True)
+            if txt:
+                return txt
+    # JavaScript alert("mensagem de erro")
+    m = re.search(r"alert\(['\"](.{10,300})['\"]", html)
+    if m:
+        return m.group(1)
+    return None
+
+
 class SEIWebClient:
     """Cliente HTTP assíncrono para o frontend web do SEI.
 
@@ -633,6 +657,119 @@ class SEIWebClient:
             },
             "total_documentos": len(docs),
             "documentos": docs,
+        }
+
+    # ------------------------------------------------------------------
+    # Ações genéricas em processos
+    # ------------------------------------------------------------------
+
+    async def _garantir_link_trabalhar(self, protocolo: str) -> str:
+        """Garante que _trabalhar_links[protocolo] existe e retorna o href."""
+        if protocolo not in self._trabalhar_links:
+            await self.fetch_inbox(detalhada=False)
+        if protocolo not in self._trabalhar_links:
+            await self.pesquisar_processo(protocolo)
+        href = self._trabalhar_links.get(protocolo)
+        if not href:
+            raise RuntimeError(f"Processo {protocolo!r} não encontrado")  # noqa: EM102, TRY003
+        return href
+
+    async def _arvore_do_processo(self, protocolo: str) -> tuple[str, str]:
+        """Navega trabalhar→frameset→arvore; retorna (html_arvore, url_arvore)."""
+        href = await self._garantir_link_trabalhar(protocolo)
+        trab_url = urljoin(str(self._inbox_url), href)
+
+        r1 = await self._http.get(trab_url, headers={"Referer": str(self._inbox_url)})
+        if r1.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"trabalhar status={r1.status_code}")  # noqa: EM102, TRY003
+        if 'name="txtUsuario"' in r1.text or 'id="txtUsuario"' in r1.text:
+            self._form_action = None
+            self._form_hidden = {}
+            self._trabalhar_links.pop(protocolo, None)
+            await self.login()
+            return await self._arvore_do_processo(protocolo)
+
+        soup_fs = BeautifulSoup(r1.text, "html.parser")
+        ifr = soup_fs.find("iframe", id="ifrArvore")
+        if not isinstance(ifr, Tag):
+            raise RuntimeError("ifrArvore não encontrado no frameset")  # noqa: EM101, TRY003, TRY004
+        arvore_url = urljoin(str(r1.url), _tag_str(ifr, "src").replace("&amp;", "&"))
+
+        r2 = await self._http.get(arvore_url, headers={"Referer": trab_url})
+        if r2.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"arvore status={r2.status_code}")  # noqa: EM102, TRY003
+        return r2.text, str(r2.url)
+
+    async def executar_acao_processo(  # noqa: C901
+        self,
+        protocolo: str,
+        nome_acao: str,
+        campos_extras: dict[str, str] | None = None,
+    ) -> dict:
+        """Executa uma ação simples em um processo via scraper web do SEI.
+
+        Fluxo: trabalhar → arvore_montar → link(acao=nome_acao) → GET [→ POST form]
+
+        Parâmetros:
+        - protocolo: número SEI formatado (ex: "50300.018905/2018-67")
+        - nome_acao: nome da ação no controlador (ex: "procedimento_concluir")
+        - campos_extras: campos adicionais para o POST do form de confirmação
+
+        Retorna dict com {"ok": True, "mensagem": str} ou levanta RuntimeError.
+        """
+        if self._inbox_url is None:
+            await self.login()
+
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+
+        m = re.search(
+            rf"(controlador\.php\?acao={re.escape(nome_acao)}[^\"'\s]*infra_hash=[a-f0-9]+)",
+            html_arvore,
+        )
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Ação '{nome_acao}' não encontrada no menu do processo. "  # noqa: EM102
+                "Verifique se você tem permissão para esta ação e se o "
+                "processo está no estado correto."
+            )
+
+        acao_url = urljoin(sei_base, m.group(1).replace("&amp;", "&"))
+        r = await self._http.get(acao_url, headers={"Referer": url_arvore})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"GET {nome_acao} status={r.status_code}")  # noqa: EM102, TRY003
+
+        body = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body)
+        if erro:
+            raise RuntimeError(erro)
+
+        soup = BeautifulSoup(body, "html.parser")
+        form = soup.find("form")
+        if form and isinstance(form, Tag):
+            action = _tag_str(form, "action").replace("&amp;", "&")
+            post_url = urljoin(str(r.url), action) if action else str(r.url)
+            post_data: dict[str, str] = {}
+            for inp in form.find_all("input"):
+                if not isinstance(inp, Tag):
+                    continue
+                n = _tag_str(inp, "name")
+                if n:
+                    post_data[n] = _tag_str(inp, "value")
+            if campos_extras:
+                post_data.update(campos_extras)
+            r2 = await self._http.post(post_url, data=post_data, headers={"Referer": str(r.url)})
+            if r2.status_code != 200:  # noqa: PLR2004
+                raise RuntimeError(f"POST {nome_acao} status={r2.status_code}")  # noqa: EM102, TRY003
+            body2 = r2.content.decode("iso-8859-1", "replace")
+            erro2 = _extrair_erro_sei(body2)
+            if erro2:
+                raise RuntimeError(erro2)
+
+        return {
+            "ok": True,
+            "mensagem": f"Ação '{nome_acao}' executada com sucesso.",
+            "protocolo": protocolo,
         }
 
     async def _gerar_arquivo_processo(self, protocolo_formatado: str, acao: str) -> bytes:  # noqa: C901, PLR0912, PLR0915
