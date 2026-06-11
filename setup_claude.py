@@ -150,15 +150,21 @@ def prompt_url() -> str:
         return url.rstrip("/")
 
 
-def prompt_web_url() -> str:
+def prompt_web_url(default: str = "") -> str:
     print()
-    print("  [1b/5] URL base do SEI (necessaria para modo web-only)")
+    print("  [1b/5] URL base do SEI (usada pelo scraper web)")
     print("         Exemplo: https://sei.orgao.gov.br")
-    print("         Esta URL e usada pelo scraper web quando mod-wssei nao esta disponivel.")
+    if default:
+        print(f"         Derivada da URL da API: {default}")
+    else:
+        print("         Obrigatoria para modo web-only (sem mod-wssei).")
     print()
+    hint = f"[Enter para usar {default}]" if default else "URL base do SEI"
     while True:
-        url = input("         URL base do SEI: ").strip()
+        url = input(f"         {hint}: ").strip()
         if not url:
+            if default:
+                return default
             warn("URL base obrigatoria para modo web-only (sem mod-wssei).")
             continue
         parsed = urlparse(url)
@@ -404,7 +410,10 @@ def main():
 
     # Fase 1
     sei_url = prompt_url()
-    sei_web_url = "" if sei_url else prompt_web_url()
+    # Derive web root from REST URL when possible (split on /sei/).
+    # Always prompt so hybrid deployments (separate API hostname) can override.
+    derived_web = sei_url.split("/sei/", 1)[0] if sei_url and "/sei/" in sei_url else ""
+    sei_web_url = prompt_web_url(default=derived_web)
     sei_usuario = prompt_usuario()
     sei_senha = prompt_senha()
     sei_orgao = prompt_orgao()
