@@ -376,12 +376,13 @@ class SEIWebClient:
         Retorna `(bytes, html)`.
         """
         await self.ensure_authenticated()
+        inbox_url = str(self._inbox_url)
 
         # Caso simples: GET inicial sem detalhada/filtros/paginação
         if not detalhada and pagina == 0 and not apenas_meus and self._form_action is None:
             resp = await self._http.get(
-                self._inbox_url,
-                headers={"Referer": str(self._inbox_url)},
+                inbox_url,
+                headers={"Referer": inbox_url},
             )
             if resp.status_code != 200:  # noqa: PLR2004
                 raise RuntimeError(f"fetch_inbox status={resp.status_code}")  # noqa: EM102, TRY003
@@ -392,8 +393,8 @@ class SEIWebClient:
         # Precisa do form action — fetch inicial se ainda não temos
         if self._form_action is None:
             seed = await self._http.get(
-                self._inbox_url,
-                headers={"Referer": str(self._inbox_url)},
+                inbox_url,
+                headers={"Referer": inbox_url},
             )
             if seed.status_code != 200:  # noqa: PLR2004
                 raise RuntimeError(f"seed inbox status={seed.status_code}")  # noqa: EM102, TRY003
@@ -1909,15 +1910,9 @@ def _parse_procedimento_consultar(html: str, protocolo: str) -> dict:  # noqa: C
             continue
         for tr in tbl.find_all("tr"):
             cells = tr.find_all(["th", "td"])
-            if (
-                len(cells) == 2
-                and cells[0].name != "th"
-                and len(  # noqa: PLR2004
-                    cells[0].get_text(" ", strip=True)
-                )
-                < 60
-            ):  # noqa: PLR2004
-                k = cells[0].get_text(" ", strip=True).rstrip(":").lower()
+            _key_text = cells[0].get_text(" ", strip=True) if cells else ""
+            if len(cells) == 2 and cells[0].name != "th" and len(_key_text) < 60:  # noqa: PLR2004
+                k = _key_text.rstrip(":").lower()
                 v = cells[1].get_text(" ", strip=True)
                 if k and v:
                     result[k.replace(" ", "_").replace("/", "_")] = v
