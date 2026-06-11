@@ -58,9 +58,10 @@ async def lifespan(_server: FastMCP):  # noqa: ANN201, D103
             client = SEIClient()
             web_client = SEIWebClient()
             try:
-                # Login eager: popula _unidade_atual para sei://status responder sem HTTP extra
+                # Login eager com detalhada=True: popula _unidade_atual e
+                # hdnDetalhadoNroItens (total real de processos abertos na unidade)
                 with suppress(Exception):
-                    await web_client.unidade_atual()
+                    await web_client.fetch_inbox(detalhada=True)
                 yield {"sei": client, "sei_web": web_client}
             finally:
                 await client.close()
@@ -239,16 +240,15 @@ async def sei_status_resource(ctx: Context) -> str:
             )
         else:
             usuario_str = id_usuario
-        # Totais populados pelo login eager — sem HTTP extra (visualização resumida)
-        recebidos = int(web._form_hidden.get("hdnRecebidosNroItens", "0") or "0")  # noqa: SLF001
-        gerados = int(web._form_hidden.get("hdnGeradosNroItens", "0") or "0")  # noqa: SLF001
+        # Total real populado pelo login eager (detalhada=True) — sem HTTP extra
+        total = int(web._form_hidden.get("hdnDetalhadoNroItens", "0") or "0")  # noqa: SLF001
+        total_str = str(total) if total else "não disponível"
 
         linhas = [
             f"Instância SEI: {web_url}",
             f"Usuário: {usuario_str}",
             f"Unidade ativa: {sigla} — {nome}",
-            f"Processos recebidos na unidade: {recebidos}",
-            f"Processos gerados pela unidade: {gerados}",
+            f"Processos abertos na unidade: {total_str}",
             "",
             "Unidades disponíveis:",
         ]
