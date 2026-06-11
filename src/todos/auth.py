@@ -326,7 +326,7 @@ async def login_submit(request: Request):
     """POST /login — recebe credenciais, gera auth code, redireciona de volta ao Claude."""
     form = await request.form()
     session_id = str(form.get("session", ""))
-    pending = _auth_codes.pop(f"pending:{session_id}", None)
+    pending = _auth_codes.get(f"pending:{session_id}")
     if not pending:
         return HTMLResponse(
             "<h1>Sessao expirada. Tente novamente.</h1>", status_code=400
@@ -337,10 +337,14 @@ async def login_submit(request: Request):
     sei_url = str(form.get("sei_url", "")).strip()
     sei_web_url = str(form.get("sei_web_url", "")).strip()
     if not sei_url and not sei_web_url:
+        # Não consome a sessão pendente: o usuário pode voltar e corrigir
         return HTMLResponse(
             "<h1>Informe a URL da API do SEI ou a URL base do SEI (web).</h1>",
             status_code=400,
         )
+
+    # Validação ok — consome a sessão pendente (uso único)
+    _auth_codes.pop(f"pending:{session_id}", None)
     sei_creds = {
         "sei_url": sei_url,
         "sei_web_url": sei_web_url,
