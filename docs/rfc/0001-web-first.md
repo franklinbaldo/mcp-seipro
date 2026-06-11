@@ -15,9 +15,10 @@ O mod-wssei é um módulo opcional. A maioria dos órgãos estaduais e municipai
 não o instala. O frontend web, por outro lado, **existe em 100% das instâncias**
 — é o próprio SEI. Quem scrapeia o frontend atende qualquer instância.
 
-A prova de conceito já existe no projeto: 7 tools migradas para o
-`SEIWebClient` (listar_processos 23× mais rápido, arvore 10×, upload de
-documento externo funcionando em SEI-RO onde o REST nem autentica).
+A prova de conceito já existe no projeto: 8 tools usam o `SEIWebClient`
+(listar_processos 23× mais rápido, arvore 10×, upload de documento externo
+funcionando em SEI-RO onde o REST nem autentica, além de gerar_pdf_processo
+e gerar_zip_processo — scraping dos forms `frmProcedimentoPdf/Zip`).
 
 ## 2. Objetivo
 
@@ -80,9 +81,10 @@ class SEIBackend:
         self._web = web
         self._has_rest = rest is not None
 
-    async def detect(self):
+    async def detect(self) -> None:
         # 1 chamada no startup: GET /api/v2/versao (ou /autenticar)
         # 404 → rest = None; tudo roteia para web
+        ...
 
     async def listar_processos(self, ...) -> list[dict]:
         # web é sempre mais rápido para listagem
@@ -107,12 +109,18 @@ O coração da proposta — um método único que executa o padrão universal:
 async def executar_acao_processo(
     self,
     protocolo: str,
-    acao: str,                     # ex. "procedimento_concluir"
-    campos: dict[str, str] = {},   # campos do form a sobrescrever
-    confirmar: bool = True,        # POSTar o form ou só retornar os campos
+    acao: str,                            # ex. "procedimento_concluir"
+    campos: dict[str, str] | None = None, # campos do form a sobrescrever
+    confirmar: bool = True,               # False = dry-run (retorna campos sem POSTar)
 ) -> dict:
     """trabalhar → arvore → Nos[0].acoes → link acao= → GET form → POST."""
+    ...
 ```
+
+Na primitiva interna, `confirmar=True` é o default (os wrappers mapeados como
+`concluir_processo` executam de verdade). Na **tool MCP genérica**
+`sei_executar_acao`, o default inverte para `confirmar=False` (dry-run) — ver
+Decisão 1 na §9.
 
 `incluir_documento_externo` vira um caso especializado dessa primitiva
 (precisa do upload em duas fases). As ações simples viram one-liners:
@@ -136,11 +144,12 @@ no web — mas **também aparecem como `<select>` em forms** (ex.: `selSerie` co
 ### 4.4 Fases de implementação
 
 **Fase 1 — fundações + ações simples** (1 semana)
+- `scripts/smoke_web.py` (pré-requisito: é o critério de aceite de tudo abaixo)
 - `SEIBackend` com detecção de capacidade no startup
 - `executar_acao_processo` genérico
 - Migrar: `concluir_processo`, `reabrir_processo`, `receber_processo`,
   `remover_atribuicao`, `dar_ciencia`
-- Critério de aceite: as 5 tools funcionam em SEI-RO
+- Critério de aceite: as 5 tools funcionam em SEI-RO (via smoke test)
 
 **Fase 2 — forms com campos** (1–2 semanas)
 - `registrar_andamento` (txtDescricao)
@@ -227,14 +236,29 @@ no web — mas **também aparecem como `<select>` em forms** (ex.: `selSerie` co
 - **M1**: 100% das tools de fluxo cotidiano (listar, consultar, concluir,
   reabrir, andamento, ciência, anotação, marcador, upload externo, enviar)
   funcionando em SEI-RO.
-- **M2**: zero regressão nas instâncias com REST (ANTAQ) — suite atual passa.
+- **M2**: zero regressão nas instâncias com REST (ANTAQ) — `smoke_web.py`
+  passa contra a ANTAQ antes e depois de cada fase (não há suite de testes
+  unitários no repo hoje; o smoke test é a linha de base).
 - **M3**: tempo médio por operação web ≤ 2 s (hoje: 0.6–1.5 s nas migradas).
 
-## 9. Decisões em aberto
+## 9. Decisões
 
-1. O `executar_acao_processo` deve expor uma tool MCP genérica
-   (`sei_executar_acao`) para ações ainda não mapeadas? (Poder vs. risco de
-   uso indevido.)
-2. Persistir cache de catálogos em disco ou só memória? (Disco sobrevive a
-   restart do MCP; memória é mais simples.)
-3. SOAP SeiWS como backend 3: investigar agora ou após Fase 2?
+1. **`sei_executar_acao` como tool MCP genérica: SIM, com dry-run por padrão.**
+   `confirmar=False` é o default — a tool retorna os campos do form sem POSTar;
+   o POST exige `confirmar=True` explícito na chamada. Equilibra o poder de
+   alcançar ações não mapeadas com proteção contra POST destrutivo acidental.
+   (Decidido em 2026-06-11.)
+2. **Cache de catálogos: disco** (`~/.cache/todos/`, TTL 24h). O Claude Desktop
+   reinicia o servidor MCP com frequência; memória obrigaria re-scrape de
+   selects com 400+ opções a cada restart. (Decidido em 2026-06-11.)
+3. **SOAP SeiWS: descoberta sim, invocação não (sem chave).** Esclarecimento
+   importante: a autenticação SOAP (`SiglaSistema` + `IdentificacaoServico`) é
+   **sistema-a-sistema**, validada por chamada contra o cadastro do SIP — é um
+   plano de autenticação separado da sessão de usuário. **Login web não
+   contorna a chave.** Porém o WSDL costuma ser servido sem autenticação (a
+   chave só é validada ao invocar operações), então ele serve para
+   **enumerar operações e schemas de parâmetros** — útil para mapear capacidade
+   da instância. No SEI-RO, `/sei/ws/SeiWS.php` responde (endpoint existe);
+   confirmar o WSDL com `curl` é o primeiro passo do spike. Plano: spike de
+   descoberta (WSDL) após Fase 1; invocação como backend 3 só se/quando houver
+   chave concedida pelo órgão.
