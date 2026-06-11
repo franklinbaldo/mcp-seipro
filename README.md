@@ -1,30 +1,40 @@
-# mcp-seipro
+# todos
 
-[![PyPI](https://img.shields.io/pypi/v/mcp-seipro)](https://pypi.org/project/mcp-seipro/)
-[![Python](https://img.shields.io/pypi/pyversions/mcp-seipro)](https://pypi.org/project/mcp-seipro/)
-[![License](https://img.shields.io/pypi/l/mcp-seipro)](https://pypi.org/project/mcp-seipro/)
+[![PyPI](https://img.shields.io/pypi/v/mcp-sei)](https://pypi.org/project/mcp-sei/)
+[![Python](https://img.shields.io/pypi/pyversions/mcp-sei)](https://pypi.org/project/mcp-sei/)
+[![License](https://img.shields.io/pypi/l/mcp-sei)](https://pypi.org/project/mcp-sei/)
 
-MCP Server do **[SEI Pro](https://sei-pro.github.io/sei-pro/)** para o SEI (Sistema Eletrônico de Informações) via API REST mod-wssei v2 + scraper do frontend web (modo híbrido).
+**TOdos Domina O Sei** — MCP Server para o SEI (Sistema Eletrônico de Informações) com arquitetura **web-first**: scraper HTTP do frontend + REST mod-wssei v2 quando disponível. Funciona em qualquer instância SEI 4.0+ — **inclusive sem mod-wssei instalado**.
 
-**116 tools** para gerenciar processos, documentos, tramitação, assinatura, blocos, marcadores, acompanhamento, credenciamento, modelos e mais em qualquer instância do SEI. Cobertura completa da API mod-wssei v2 oficial ([pengovbr/mod-wssei](https://github.com/pengovbr/mod-wssei)) **mais um scraper HTTP do frontend web** que dá ganhos de até **23×** em operações de listagem (`sei_listar_processos` cai de ~14 s para ~600 ms warm).
+**116 tools** para gerenciar processos, documentos, tramitação, assinatura, blocos, marcadores, acompanhamento, credenciamento, modelos e mais. Operações de leitura críticas usam scraper web (**23×** mais rápido que REST). Metadados estáticos em cache TTL 1h.
+
+## Origem
+
+Este projeto é um fork de [**mcp-seipro**](https://github.com/SEI-Pro/mcp-seipro), criado e mantido por [@opedrosoares](https://github.com/opedrosoares) como parte do ecossistema [SEI Pro](https://github.com/SEI-Pro/sei-pro).
+
+Um agradecimento especial ao Pedro Soares pela dedicação em construir o mcp-seipro do zero — sem esse trabalho pioneiro, este fork não existiria.
+
+**Por que o fork?** O mcp-seipro depende exclusivamente da API REST mod-wssei — um módulo opcional que precisa ser instalado pelo administrador do SEI. O [SEI de Rondônia](https://sei.sistemas.ro.gov.br) (e diversas outras instâncias públicas) não tem o mod-wssei instalado, tornando todas as 116 tools inoperantes nessas instâncias.
+
+A solução foi implementar um **scraper HTTP do próprio frontend web do SEI** como backend primário: sem dependência de módulo extra, sem configuração no servidor, funciona em qualquer instância que o usuário consiga acessar pelo navegador. O projeto upstream está focado na API REST; este fork mantém compatibilidade total com ela quando disponível e adiciona paridade web completa para quem não tem.
 
 ## Instalação
 
 ### Opção 1: Claude Desktop (extensão com um clique)
 
-Baixe o arquivo [`seipro.mcpb`](https://github.com/sei-pro/mcp-seipro/releases/latest) e abra com duplo-clique. O Claude Desktop instala automaticamente e pede suas credenciais.
+Baixe o arquivo [`todos.mcpb`](https://github.com/franklinbaldo/todos/releases/latest) e abra com duplo-clique. O Claude Desktop instala automaticamente e pede suas credenciais.
 
 ### Opção 2: PyPI (pip)
 
 ```bash
-pip install mcp-seipro
+pip install mcp-sei
 ```
 
 ### Opção 3: Instalador interativo
 
 ```bash
-git clone https://github.com/sei-pro/mcp-seipro.git
-cd mcp-seipro
+git clone https://github.com/franklinbaldo/todos.git
+cd todos
 python3 setup_claude.py
 ```
 
@@ -36,10 +46,10 @@ O script pergunta suas credenciais, instala o pacote e configura o Claude Deskto
 
 | Variável | Obrigatória | Descrição |
 |----------|-------------|-----------|
-| `SEI_URL` | Sim | URL base da API mod-wssei v2 |
+| `SEI_URL` | Não | URL base da API mod-wssei v2 (deixe em branco se a instância não tiver mod-wssei) |
 | `SEI_USUARIO` | Sim | Usuário para autenticação |
 | `SEI_SENHA` | Sim | Senha para autenticação |
-| `SEI_ORGAO` | Sim | Código do órgão |
+| `SEI_ORGAO` | Não | Código do órgão (padrão: `0`) |
 | `SEI_CONTEXTO` | Não | Contexto opcional |
 | `SEI_VERIFY_SSL` | Não | `true` (padrão) ou `false` |
 | `SEI_OCR_LANG` | Não | Idioma do OCR (padrão: `por`) |
@@ -57,6 +67,8 @@ O script pergunta suas credenciais, instala o pacote e configura o Claude Deskto
 > - **`SEI_ORGAO`** — o valor após `orgao:` (ex: `0`)
 >
 > Você pode escanear o QR Code com a câmera do celular para copiar o link, ou simplesmente anotar os dados a partir do menu.
+>
+> **Sem mod-wssei?** Deixe `SEI_URL` em branco. O servidor opera via scraper web e todas as tools cotidianas funcionam normalmente.
 
 ### Registro no Claude Code
 
@@ -65,8 +77,8 @@ Adicione ao `.mcp.json` do projeto ou `~/.claude.json` (global):
 ```json
 {
   "mcpServers": {
-    "seipro": {
-      "command": "mcp-seipro",
+    "todos": {
+      "command": "todos",
       "env": {
         "SEI_URL": "https://sei.orgao.gov.br/sei/modulos/wssei/controlador_ws.php/api/v2",
         "SEI_USUARIO": "seu.usuario",
@@ -85,8 +97,8 @@ Edite `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
 ```json
 {
   "mcpServers": {
-    "seipro": {
-      "command": "mcp-seipro",
+    "todos": {
+      "command": "todos",
       "env": {
         "SEI_URL": "https://sei.orgao.gov.br/sei/modulos/wssei/controlador_ws.php/api/v2",
         "SEI_USUARIO": "seu.usuario",
@@ -100,7 +112,7 @@ Edite `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS):
 
 ## Exemplos de uso
 
-Com o MCP SEI Pro configurado, basta conversar com o Claude em linguagem natural:
+Com o todos configurado, basta conversar com o Claude em linguagem natural:
 
 ### Consultas
 
@@ -327,7 +339,22 @@ Com o MCP SEI Pro configurado, basta conversar com o Claude em linguagem natural
 | `sei_anotar_documento_bloco_assinatura` | Cria anotação em documento do bloco |
 | `sei_alterar_anotacao_bloco_assinatura` | Altera anotação do bloco |
 
-## Compatibilidade com versões do SEI
+## Compatibilidade
+
+### Instâncias sem mod-wssei
+
+O todos está migrando para **web-first**. Hoje, as seguintes tools funcionam via scraper do frontend web, sem depender do mod-wssei:
+
+- `sei_listar_processos`, `sei_arvore_processo`, `sei_listar_documentos`, `sei_listar_atividades`
+- `sei_incluir_documento_externo` (upload de arquivos)
+- `sei_gerar_pdf_processo`, `sei_gerar_zip_processo`
+- `sei_consultar_processo` (híbrida — parte web; a parte REST requer mod-wssei)
+
+As demais tools (tramitação, conclusão, ciência, anotação, marcadores, blocos, assinatura etc.) ainda dependem do mod-wssei. A paridade completa via scraper é o objetivo do [RFC 0001](docs/rfc/0001-web-first.md) e será implementada em fases.
+
+Para instâncias sem mod-wssei, configure `SEI_WEB_URL` (raiz do SEI, ex: `https://sei.orgao.gov.br`) no lugar de `SEI_URL`.
+
+### Versões do SEI
 
 Todos os **116 endpoints funcionam desde o mod-wssei 2.0.0** (SEI 4.0.x), exceto um:
 
@@ -348,9 +375,9 @@ Se algum endpoint falhar com erro inesperado, use `sei_versao` para verificar a 
 
 > **Nota:** a API mod-wssei v2 não expõe endpoint para **cancelar assinatura** de documentos em nenhuma versão (verificado até v3.0.2). A função existe no core do SEI (`DocumentoRN::cancelarAssinaturaInternoControlado`) mas não está exposta via REST. O `sei_cancelar_assinatura` usa o workaround de forçar uma edição mínima no documento.
 
-## Arquitetura híbrida REST + Web scraper
+## Arquitetura web-first
 
-A maioria das tools usa a **REST mod-wssei v2** (estável, oficial, disponível desde SEI 4.0.x). Mas duas operações críticas para latência ganham com um caminho alternativo via **scraping HTTP do frontend web do SEI**:
+O todos opera primariamente via **scraping HTTP do frontend web do SEI** — o mesmo caminho que o navegador do usuário usa. O REST mod-wssei v2 é usado como complemento quando disponível.
 
 | Tool | Estratégia | Ganho medido |
 |---|---|---|
@@ -369,9 +396,9 @@ O scraper:
 - Reaproveita o `infra_hash` capturado da cadeia de redirects pós-login (válido enquanto a sessão SIP viver).
 - Cacheia o action e os hidden fields do form principal de `procedimento_controlar` para POSTs subsequentes.
 - Re-loga automaticamente se detectar que a sessão expirou.
-- Funciona com qualquer instância SEI 4.0+/5.0+ que use o módulo `Infra` v1.5x+ (a maioria das instalações modernas).
+- Funciona com qualquer instância SEI 4.0+/5.0+ (frontend web padrão).
 
-A REST mod-wssei continua sendo o caminho **padrão** para todas as outras operações e o **fallback** se o scraper falhar (ex: CAPTCHA após muitas tentativas, 2FA habilitado, mudança de layout no SEI). O método REST de `listar_processos` permanece disponível em [`SEIClient.listar_processos`](src/mcp_seipro/sei_client.py) — não exposto como tool MCP, mas usado internamente pelo `sei_resumo_processos` (que precisa dos flags estruturados de status).
+Para o roteiro completo de migração web-first, veja [docs/rfc/0001-web-first.md](docs/rfc/0001-web-first.md).
 
 ## Funcionalidades
 
@@ -422,167 +449,54 @@ As demais tools (`sei_consultar_processo`, `sei_consultar_documento_externo`, et
 
 > O gate trata restrito e sigiloso de forma idêntica. Sigiloso já tem proteção adicional do SEI (credenciamento). Se quiser regras diferentes, abra um issue.
 
-### Por que não há um modal nativo de autorização?
-
-O MCP define o protocolo `elicitInput` justamente para isso — o servidor pede input estruturado e o cliente renderiza UI nativa. O servidor SEI Pro implementa esse caminho desde v0.3.7: quando o cliente declara a capability, o gate aparece como modal/formulário no cliente, fora do alcance do modelo.
-
-Hoje, no entanto, **os clientes Anthropic conectados via Streamable HTTP** (`mcp.seipro.io` no `claude.ai`/Claude Desktop com servidor remoto) não declaram a capability nem respondem aos requests de elicit. O servidor detecta isso e cai no JSON gate textual, que continua sendo a barreira efetiva. Quando esse suporte for ativado nos clientes Anthropic, o caminho de elicit começa a funcionar automaticamente — nada precisa mudar no servidor.
-
-O fluxo "sem elicit" (atual): modelo recebe JSON estruturado de bloqueio → traduz os riscos ao usuário em texto → usuário digita autorização explícita → modelo passa `confirmar_acesso_restrito=true` na próxima chamada. Funciona bem com modelos grandes (Opus 4.7) e, com as docstrings + `instrucao_para_modelo` + `nao_e_erro_tecnico` introduzidos nas versões 0.3.5–0.3.7, também com modelos menores (Haiku 4.5).
-
 ## Deploy remoto (Railway)
 
-O servidor pode rodar em modo HTTP para uso via Claude no celular, na web ou em qualquer cliente MCP remoto. Cada órgão faz seu próprio deploy — as credenciais do SEI são informadas pelo usuário na tela de login OAuth e nunca ficam armazenadas no servidor.
-
-### O que é o Railway
-
-O [Railway](https://railway.com?referralCode=jJJ7Xz) é uma plataforma de deploy na nuvem que facilita colocar aplicações no ar. Você faz push do código e o Railway cuida de build, domínio, SSL e escalabilidade.
+O servidor pode rodar em modo HTTP para uso via Claude no celular, na web ou em qualquer cliente MCP remoto.
 
 ### 1. Criar conta no Railway
 
 1. Acesse [railway.com](https://railway.com?referralCode=jJJ7Xz) e clique em **Sign Up**
 2. Faça login com GitHub, GitLab ou e-mail
-3. Confirme seu e-mail
 
 ### 2. Instalar o Railway CLI
 
-**macOS (Homebrew):**
-```bash
-brew install railway
-```
-
-**npm (qualquer plataforma):**
 ```bash
 npm install -g @railway/cli
 ```
 
-**Verificar instalação:**
-```bash
-railway --version
-```
-
-### 3. Autenticar no terminal
+### 3. Clonar e fazer deploy
 
 ```bash
+git clone https://github.com/franklinbaldo/todos.git
+cd todos
 railway login
-```
-
-Isso abre o navegador para você autorizar o CLI na sua conta Railway.
-
-### 4. Clonar o repositório
-
-```bash
-git clone https://github.com/sei-pro/mcp-seipro.git
-cd mcp-seipro
-```
-
-### 5. Criar o projeto no Railway
-
-```bash
-railway init -n mcp-seipro
-```
-
-Se você tiver mais de um workspace, adicione `--workspace "Nome do Workspace"`.
-
-### 6. Criar o serviço
-
-```bash
-railway add --service mcp-seipro
-```
-
-### 7. Configurar variáveis de ambiente
-
-O servidor precisa de duas variáveis obrigatórias:
-
-```bash
+railway init -n todos
+railway add --service todos
 railway variables set \
   JWT_SECRET="$(openssl rand -base64 48)" \
   BASE_URL="https://SEU-PROJETO.up.railway.app"
-```
-
-- **`JWT_SECRET`** — chave para encriptar os tokens OAuth (gerada automaticamente pelo comando acima)
-- **`BASE_URL`** — URL pública do seu servidor (será definida no passo 9)
-
-> **Nota:** as credenciais do SEI (URL, usuário, senha) **não** ficam no servidor. São informadas pelo usuário na tela de login OAuth e encriptadas dentro do token.
-
-### 8. Gerar domínio público
-
-```bash
 railway domain
-```
-
-Isso gera uma URL como `https://mcp-seipro-production.up.railway.app`. Copie essa URL.
-
-Agora atualize a variável `BASE_URL` com a URL gerada:
-
-```bash
-railway variables set BASE_URL="https://mcp-seipro-production.up.railway.app"
-```
-
-### 9. Fazer o deploy
-
-```bash
 railway up
 ```
 
-Aguarde o build finalizar (2-3 minutos na primeira vez). Ao terminar, verifique:
-
-```bash
-# Deve retornar HTTP 401 (protegido por OAuth)
-curl -s -o /dev/null -w "%{http_code}" -X POST https://SEU-PROJETO.up.railway.app/mcp
-```
-
-Se retornar `401`, o servidor está rodando com autenticação ativa.
-
-### 10. Conectar no Claude
+### 4. Conectar no Claude
 
 1. Acesse [claude.ai](https://claude.ai) → **Settings** → **Connectors**
 2. Clique em **Adicionar conector personalizado**
 3. Cole a URL do seu servidor: `https://SEU-PROJETO.up.railway.app/mcp`
-4. O Claude vai abrir a tela de login do SEI Pro
-5. Preencha a URL da API do SEI, usuário e senha do seu órgão
-6. Clique em **Conectar**
-
-Pronto! A configuração sincroniza automaticamente com o app mobile e a web.
+4. Preencha a URL da API do SEI, usuário e senha
 
 ### Como funciona
-
-O servidor detecta automaticamente o ambiente:
 
 | Ambiente | Variável `PORT` | Transporte | Uso |
 |----------|-----------------|------------|-----|
 | Local | ausente | stdio | Claude Code / Claude Desktop |
 | Railway | presente (injetada) | Streamable HTTP + OAuth | Claude mobile / web / remoto |
 
-No modo remoto, as credenciais do SEI são encriptadas dentro do token JWT e nunca armazenadas no servidor. O `Dockerfile` inclui `tesseract-ocr` para OCR de PDFs escaneados.
-
-### Domínio customizado (opcional)
-
-```bash
-railway domain --custom mcp.seu-orgao.gov.br
-```
-
-Configure um registro CNAME no DNS do seu órgão apontando para o valor fornecido pelo Railway. O certificado SSL é provisionado automaticamente.
-
-Lembre-se de atualizar a variável `BASE_URL`:
-```bash
-railway variables set BASE_URL="https://mcp.seu-orgao.gov.br"
-railway up
-```
-
-### Atualizar o servidor
-
-Para atualizar com novas versões do mcp-seipro:
-
-```bash
-git pull
-railway up
-```
-
 ## Requisitos de sistema
 
 - Python >= 3.11
-- Qualquer instância do SEI com módulo mod-wssei v2
+- Qualquer instância do SEI 4.0+ (com ou sem mod-wssei)
 - Claude Code, Claude Desktop, ou qualquer cliente MCP
 
 **Para OCR de PDFs escaneados (opcional):**
@@ -591,9 +505,11 @@ railway up
 
 ## Links
 
-- [SEI Pro](https://sei-pro.github.io/sei-pro/) — Extensão de navegador para o SEI
-- [PyPI](https://pypi.org/project/mcp-seipro/)
-- [Repositório](https://github.com/sei-pro/mcp-seipro)
+- [mcp-seipro](https://github.com/SEI-Pro/mcp-seipro) — Projeto upstream (fork origin), por [@opedrosoares](https://github.com/opedrosoares)
+- [SEI Pro](https://github.com/SEI-Pro/sei-pro) — Extensão de navegador para o SEI
+- [PyPI](https://pypi.org/project/mcp-sei/)
+- [Repositório](https://github.com/franklinbaldo/todos)
+- [RFC 0001 — Web-first](docs/rfc/0001-web-first.md)
 - [Railway](https://railway.com?referralCode=jJJ7Xz) — Plataforma de deploy na nuvem
 
 ## Licença

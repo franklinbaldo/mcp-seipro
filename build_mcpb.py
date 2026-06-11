@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-build_mcpb.py - Gera o arquivo seipro.mcpb (Desktop Extension para Claude).
+build_mcpb.py - Gera o arquivo todos.mcpb (Desktop Extension para Claude).
 
 Uso:
     python3 build_mcpb.py
 
-Produz: dist/seipro.mcpb
+Produz: dist/todos.mcpb
 """
 
 import json
@@ -16,9 +16,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DIST_DIR = PROJECT_ROOT / "dist"
-OUTPUT_NAME = "seipro.mcpb"
+OUTPUT_NAME = "todos.mcpb"
 
-# Icone do SEI Pro (ajuste o caminho se necessario)
+# Icone do projeto (ajuste o caminho se necessario)
 ICON_SOURCES = [
     PROJECT_ROOT / "icon.png",
     Path.home() / "Documents/Git/Lab2Code/SEI Pro/sei-pro/dist/icons/sei_pro.png",
@@ -31,7 +31,7 @@ INCLUDE = [
     "bootstrap.py",
     "README.md",
     "icon.png",
-    "src/mcp_seipro/",
+    "src/todos/",
 ]
 
 # Padroes a ignorar
@@ -69,7 +69,7 @@ def ensure_icon():
 def build():
     print()
     print("=" * 50)
-    print("  Build: seipro.mcpb")
+    print("  Build: todos.mcpb")
     print("=" * 50)
     print()
 

@@ -28,12 +28,12 @@ SEI_STYLES = {
     },
     "Texto_Alinhado_Esquerda": {
         "descricao": "Texto alinhado à esquerda. "
-                     "Para destinatário de Despachos, usar com âncora SEI para vincular à unidade.",
+        "Para destinatário de Despachos, usar com âncora SEI para vincular à unidade.",
         "exemplo": (
             '<p class="Texto_Alinhado_Esquerda">'
             '&Agrave; <span contenteditable="false" style="text-indent:0px;" '
             'class="ancoraSei interessadoSeiPro" data-id="ID_UNIDADE">'
-            'SIGLA - Nome da Unidade</span></p>'
+            "SIGLA - Nome da Unidade</span></p>"
         ),
         "exemplo_simples": '<p class="Texto_Alinhado_Esquerda">Texto à esquerda.</p>',
         "alinhamento": "left",
@@ -87,7 +87,6 @@ SEI_STYLES = {
         "alinhamento": "center",
         "recuo": False,
     },
-
     # === DESTAQUES ===
     "Texto_Fundo_Cinza_Negrito": {
         "descricao": "Texto com fundo cinza e negrito (destaque de seção)",
@@ -109,8 +108,8 @@ SEI_STYLES = {
     },
     "Citacao": {
         "descricao": "Citação recuada (10pt, margem esquerda 160px). "
-                     "Usar para reproduzir trechos de leis, normas, acórdãos, "
-                     "pareceres ou outros documentos citados no texto.",
+        "Usar para reproduzir trechos de leis, normas, acórdãos, "
+        "pareceres ou outros documentos citados no texto.",
         "exemplo": '<p class="Citacao">"Art. 5º Todos são iguais perante a lei..."</p>',
         "alinhamento": "justify",
         "recuo": True,
@@ -122,7 +121,6 @@ SEI_STYLES = {
         "alinhamento": "justify",
         "recuo": True,
     },
-
     # === PARÁGRAFOS NUMERADOS (autonumeração) ===
     "Paragrafo_Numerado_Nivel1": {
         "descricao": "Parágrafo numerado nível 1 (1. 2. 3.)",
@@ -148,7 +146,6 @@ SEI_STYLES = {
         "alinhamento": "justify",
         "autonumeracao": "1.1.1.1.",
     },
-
     # === TÍTULOS DE SEÇÃO / HEADINGS (autonumeração hierárquica) ===
     # Equivalentes a H1, H2, H3, H4 no HTML ou #, ##, ###, #### no Markdown.
     # Usados em Notas Técnicas, Pareceres e documentos estruturados para
@@ -156,7 +153,7 @@ SEI_STYLES = {
     # para isso usar Paragrafo_Numerado_Nivel*.
     "Item_Nivel1": {
         "descricao": "Título de seção nível 1 (≈ H1 / #) — maiúsculas, negrito, fundo cinza. "
-                     "Ex: '1. INTRODUÇÃO', '2. FUNDAMENTAÇÃO'",
+        "Ex: '1. INTRODUÇÃO', '2. FUNDAMENTAÇÃO'",
         "exemplo": '<p class="Item_Nivel1">Introdução</p>',
         "alinhamento": "justify",
         "autonumeracao": "1.",
@@ -191,43 +188,39 @@ SEI_STYLES = {
         "equivalente_html": "h4",
         "uso": "Notas Técnicas, Pareceres — detalhamento",
     },
-
     # === ALÍNEAS E INCISOS (autonumeração) ===
     # IMPORTANTE: a numeração (a, b, c / I, II, III) é gerada automaticamente
     # pelo CSS via counter. NUNCA escrever "a)", "b)", "I -", "II -" no texto.
     # Basta colocar o conteúdo — o SEI insere a letra/número automaticamente.
     "Item_Alinea_Letra": {
         "descricao": "Alínea com letra minúscula — autonumera a) b) c). "
-                     "NÃO escrever a letra no texto, o SEI gera automaticamente.",
+        "NÃO escrever a letra no texto, o SEI gera automaticamente.",
         "exemplo": '<p class="Item_Alinea_Letra">conteúdo da primeira alínea;</p>\n'
-                   '<p class="Item_Alinea_Letra">conteúdo da segunda alínea.</p>',
+        '<p class="Item_Alinea_Letra">conteúdo da segunda alínea.</p>',
         "alinhamento": "justify",
         "autonumeracao": "a) b) c)",
     },
     "Item_Inciso_Romano": {
         "descricao": "Inciso com numeral romano — autonumera I - II - III -. "
-                     "NÃO escrever o numeral no texto, o SEI gera automaticamente. "
-                     "Recuo 120px.",
+        "NÃO escrever o numeral no texto, o SEI gera automaticamente. "
+        "Recuo 120px.",
         "exemplo": '<p class="Item_Inciso_Romano">conteúdo do primeiro inciso;</p>\n'
-                   '<p class="Item_Inciso_Romano">conteúdo do segundo inciso.</p>',
+        '<p class="Item_Inciso_Romano">conteúdo do segundo inciso.</p>',
         "alinhamento": "justify",
         "autonumeracao": "I - II - III -",
     },
     "Item_Inciso_Romano_Recuo": {
-        "descricao": "Inciso romano com recuo menor (margem 6pt). "
-                     "Autonumera I - II - III -.",
+        "descricao": "Inciso romano com recuo menor (margem 6pt). Autonumera I - II - III -.",
         "exemplo": '<p class="Item_Inciso_Romano_Recuo">conteúdo do inciso.</p>',
         "alinhamento": "justify",
         "autonumeracao": "I - II - III -",
     },
     "Item_Inciso_Romano_Esquerda_Recuo_Justif": {
-        "descricao": "Inciso romano justificado com recuo à esquerda. "
-                     "Autonumera I - II - III -.",
+        "descricao": "Inciso romano justificado com recuo à esquerda. Autonumera I - II - III -.",
         "exemplo": '<p class="Item_Inciso_Romano_Esquerda_Recuo_Justif">conteúdo.</p>',
         "alinhamento": "justify",
         "autonumeracao": "I - II - III -",
     },
-
     # === TABELAS ===
     "Tabela_Texto_Justificado": {
         "descricao": "Texto justificado dentro de tabela (11pt)",
@@ -237,7 +230,7 @@ SEI_STYLES = {
     },
     "Tabela_Texto_Centralizado": {
         "descricao": "Texto centralizado dentro de tabela (11pt). "
-                     "Também usado para legendas de tabela em tamanho normal.",
+        "Também usado para legendas de tabela em tamanho normal.",
         "exemplo": '<p class="Tabela_Texto_Centralizado">Tabela 1 - Valores apurados</p>',
         "alinhamento": "center",
         "contexto": "tabela",
@@ -269,7 +262,7 @@ SEI_STYLES = {
     },
     "Tabela_Fonte_9_Centralizado": {
         "descricao": "Texto menor (9pt) centralizado em tabela. "
-                     "Usado para legendas de tabela em fonte reduzida.",
+        "Usado para legendas de tabela em fonte reduzida.",
         "exemplo": '<p class="Tabela_Fonte_9_Centralizado">Tabela 1 - Valores apurados (em R$ mil)</p>',
         "alinhamento": "center",
         "contexto": "tabela",
@@ -281,7 +274,6 @@ SEI_STYLES = {
         "alinhamento": "justify",
         "contexto": "tabela",
     },
-
     # === ESPECIAL ===
     "Texto_Mono_Espacado": {
         "descricao": "Texto monoespaçado (8pt, pré-formatado, código/dados)",
@@ -295,25 +287,20 @@ SEI_STYLES = {
 # Mapeamento rápido: intenção → classe CSS recomendada
 STYLE_SHORTCUTS = {
     # Destinatário com âncora SEI
-    "destinatario_ancora": "Texto_Alinhado_Esquerda",  # usar com html_destinatario()
-
+    "destinatario_ancora": "Texto_Alinhado_Esquerda",  # usar com html_destinatario() de todos.sei_styles
     # Corpo do texto
     "paragrafo": "Texto_Justificado",
     "paragrafo_recuo": "Texto_Justificado_Recuo_Primeira_Linha",
     "texto": "Texto_Justificado",
-
     # Destinatário
     "destinatario": "Texto_Alinhado_Esquerda",
-
     # Assinatura
     "nome_signatario": "Texto_Centralizado_Maiusculas",
     "cargo_signatario": "Texto_Centralizado",
     "fecho": "Texto_Justificado_Recuo_Primeira_Linha",
-
     # Títulos de documento (Despacho, Ofício)
     "titulo": "Texto_Centralizado_Maiusculas_Negrito",
     "subtitulo": "Texto_Fundo_Cinza_Negrito",
-
     # Headings de seção (Nota Técnica, Parecer) — equivalentes a # ## ### ####
     "h1": "Item_Nivel1",
     "h2": "Item_Nivel2",
@@ -322,21 +309,17 @@ STYLE_SHORTCUTS = {
     "capitulo": "Item_Nivel1",
     "secao": "Item_Nivel2",
     "subsecao": "Item_Nivel3",
-
     # Citação de legislação/norma/documento
     "citacao": "Citacao",
-
     # Listas
     "item_1": "Paragrafo_Numerado_Nivel1",
     "item_2": "Paragrafo_Numerado_Nivel2",
     "item_3": "Paragrafo_Numerado_Nivel3",
     "alinea": "Item_Alinea_Letra",
     "inciso": "Item_Inciso_Romano",
-
     # Local e data
     "local_data": "Texto_Alinhado_Direita",
     "data": "Texto_Alinhado_Direita",
-
     # Tabela
     "celula": "Tabela_Texto_Justificado",
     "celula_centro": "Tabela_Texto_Centralizado",
@@ -384,5 +367,5 @@ def html_destinatario(id_unidade: str, sigla: str, nome: str) -> str:
         f'<p class="Texto_Alinhado_Esquerda">'
         f'&Agrave; <span contenteditable="false" style="text-indent:0px;" '
         f'class="ancoraSei interessadoSeiPro" data-id="{id_unidade}">'
-        f'{sigla} - {nome}</span></p>'
+        f"{sigla} - {nome}</span></p>"
     )

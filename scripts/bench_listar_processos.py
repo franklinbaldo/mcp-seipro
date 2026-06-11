@@ -113,7 +113,7 @@ def stats(values: list[float]) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 
 async def bench_method_a(unit_id: str, n_warm: int, limit: int) -> RunResult:
-    from mcp_seipro.sei_client import SEIClient
+    from todos.sei_client import SEIClient
 
     result = RunResult(method="A")
     client = SEIClient()

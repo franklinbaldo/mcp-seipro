@@ -27,8 +27,8 @@ ROTULOS = {
 Decisao = Literal["liberar", "bloquear"]
 
 
-def normalizar_nivel(valor) -> str | None:
-    """Converte o valor cru de nivelAcesso para uma string '0'/'1'/'2' ou None."""
+def normalizar_nivel(valor) -> str | None:  # noqa: ANN001
+    """Converte o valor cru de nivelAcesso para uma string '0'/'1'/'2' ou None."""  # noqa: D401
     if valor is None:
         return None
     s = str(valor).strip()
@@ -37,8 +37,8 @@ def normalizar_nivel(valor) -> str | None:
     return None
 
 
-def precisa_disclaimer(nivel_acesso) -> bool:
-    """True quando o nível de acesso é restrito ou sigiloso."""
+def precisa_disclaimer(nivel_acesso) -> bool:  # noqa: ANN001
+    """True quando o nível de acesso é restrito ou sigiloso."""  # noqa: D401
     return normalizar_nivel(nivel_acesso) in (RESTRITO, SIGILOSO)
 
 
@@ -117,7 +117,7 @@ _INSTRUCAO_MODELO_METADATA = (
 )
 
 
-def _bloco_base(nivel: str, hipotese_legal: str | None, alvo: dict) -> dict:
+def _bloco_base(nivel: str | None, hipotese_legal: str | None, alvo: dict) -> dict:
     return {
         "nivel_acesso": nivel,
         "rotulo_nivel": ROTULOS.get(nivel, "Desconhecido"),
@@ -128,7 +128,7 @@ def _bloco_base(nivel: str, hipotese_legal: str | None, alvo: dict) -> dict:
 
 
 def construir_aviso_bloqueio(
-    nivel: str,
+    nivel: str | None,
     hipotese_legal: str | None,
     alvo: dict,
 ) -> dict:
@@ -137,7 +137,7 @@ def construir_aviso_bloqueio(
     # Ordem é deliberada: campos de framing (não-erro / instrução ao modelo)
     # vêm ANTES dos riscos para que modelos que param de ler cedo já
     # entendam o tipo de resposta antes de pensar em "consertar".
-    aviso = {
+    return {
         "tipo_resposta": "consentimento_pendente",
         "nao_e_erro_tecnico": _NAO_E_ERRO_TECNICO,
         "instrucao_para_modelo": _INSTRUCAO_MODELO,
@@ -151,11 +151,10 @@ def construir_aviso_bloqueio(
         **base,
         "como_liberar": list(_COMO_LIBERAR),
     }
-    return aviso
 
 
 def construir_disclaimer_acompanhante(
-    nivel: str,
+    nivel: str | None,
     hipotese_legal: str | None,
     alvo: dict,
 ) -> dict:
@@ -166,7 +165,7 @@ def construir_disclaimer_acompanhante(
     sei_consultar_documento_externo, etc).
     """
     base = _bloco_base(nivel, hipotese_legal, alvo)
-    aviso = {
+    return {
         "tipo_resposta": "aviso_classificacao_informativo",
         "instrucao_para_modelo": _INSTRUCAO_MODELO_METADATA,
         "mensagem": (
@@ -178,11 +177,10 @@ def construir_disclaimer_acompanhante(
         **base,
         "consentimento_necessario": False,
     }
-    return aviso
 
 
 def avaliar_acesso(
-    nivel_acesso,
+    nivel_acesso,  # noqa: ANN001
     hipotese_legal: str | None = None,
     *,
     confirmou: bool,
@@ -217,7 +215,7 @@ def prefixar_markdown(disclaimer: dict, conteudo: str) -> str:
     linhas.append(">")
     linhas.append("> Riscos:")
     for r in disclaimer["riscos"]:
-        linhas.append(f"> - {r}")
+        linhas.append(f"> - {r}")  # noqa: PERF401
     return "\n".join(linhas) + "\n\n" + conteudo
 
 
@@ -232,7 +230,7 @@ def prefixar_texto(disclaimer: dict, conteudo: str) -> str:
         linhas.append(f"Hipótese legal: {disclaimer['hipotese_legal']}")
     linhas.append("Riscos:")
     for r in disclaimer["riscos"]:
-        linhas.append(f"  - {r}")
+        linhas.append(f"  - {r}")  # noqa: PERF401
     linhas.append("=" * 70)
     return "\n".join(linhas) + "\n\n" + conteudo
 
@@ -245,12 +243,12 @@ def envelopar_html(disclaimer: dict, conteudo: str) -> str:
     aside = (
         '<aside style="border:2px solid #c00;padding:12px;margin-bottom:12px;'
         'background:#fff8f8;font-family:sans-serif">'
-        f'<p><strong>{disclaimer["mensagem"]}</strong></p>'
-        f'<p>Nível: {disclaimer["rotulo_nivel"]} '
-        f'(nivelAcesso={disclaimer["nivel_acesso"]})</p>'
-        f'{hl_html}'
-        f'<p><strong>Riscos:</strong></p><ul>{riscos_html}</ul>'
-        '</aside>'
+        f"<p><strong>{disclaimer['mensagem']}</strong></p>"
+        f"<p>Nível: {disclaimer['rotulo_nivel']} "
+        f"(nivelAcesso={disclaimer['nivel_acesso']})</p>"
+        f"{hl_html}"
+        f"<p><strong>Riscos:</strong></p><ul>{riscos_html}</ul>"
+        "</aside>"
     )
     return aside + conteudo
 

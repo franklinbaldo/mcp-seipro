@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write  # create GitHub Release + upload assets
+  id-token: write  # OIDC token for PyPI trusted publishing
+
+jobs:
+  build-mcpb:
+    name: Build todos.mcpb
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - name: Build .mcpb
+        run: uv run python build_mcpb.py
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mcpb
+          path: dist/todos.mcpb
+
+  build-wheel:
+    name: Build Python wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+
+  github-release:
+    name: Create GitHub Release
+    needs: [build-mcpb, build-wheel]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: mcpb
+          path: dist/
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: "todos v${{ needs.build-mcpb.outputs.version }}"
+          body: |
+            ## Instalação rápida
+
+            **Claude Desktop (.mcpb — duplo-clique para instalar):**
+            Baixe `todos.mcpb` abaixo e abra com duplo-clique. O Claude Desktop instala automaticamente e pede suas credenciais.
+
+            **PyPI:**
+            ```bash
+            pip install mcp-sei==${{ needs.build-mcpb.outputs.version }}
+            ```
+          files: |
+            dist/todos.mcpb
+            dist/*.whl
+            dist/*.tar.gz
+          fail_on_unmatched_files: false
+
+  pypi-publish:
+    name: Publish to PyPI
+    needs: [build-wheel]
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/mcp-sei/
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: wheel
+          path: dist/
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

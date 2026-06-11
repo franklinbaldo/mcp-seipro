@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mcp-seipro"
-version = "0.3.8"
-description = "MCP server for SEI (Sistema Eletronico de Informacoes) - 116 tools for mod-wssei v2 REST API"
+name = "mcp-sei"
+version = "0.4.0"
+description = "TOdos Domina O Sei — MCP server para o SEI com paridade web-first: 116 tools, scraper HTTP + REST híbrido, funciona em instâncias sem mod-wssei"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -22,7 +22,49 @@ dependencies = [
 ]
 
 [project.scripts]
-mcp-seipro = "mcp_seipro.server:main"
+todos = "todos.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/todos"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/mcp_seipro/", "pyproject.toml", "README.md"]
+include = ["src/todos/", "pyproject.toml", "README.md"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    # ── Formatter conflicts (ruff format owns these) ──────────────────────
+    "W191", "E101",                  # tabs
+    "E111", "E114", "E117",          # indentation width
+    "D206", "D300",                  # docstring formatting
+    "Q000", "Q001", "Q002", "Q003",  # quote style
+    "COM812", "COM819",              # trailing commas
+    "ISC001", "ISC002",              # implicit string concat
+    "E501",                          # line length (formatter handles it)
+    # ── Mutually exclusive D pairs — pick one of each ─────────────────────
+    "D203",   # keep D211 (no blank line before class)
+    "D213",   # keep D212 (summary on first line)
+    # ── Intentional project-wide decisions ────────────────────────────────
+    "RUF001", "RUF002", "RUF003",    # ambiguous unicode — Portuguese text is intentional
+    "CPY001",                        # no copyright headers
+    "FIX001", "FIX002", "FIX003", "FIX004",  # FIXME/HACK markers ok
+    "TD001", "TD002", "TD003", "TD004", "TD005", "TD006", "TD007",  # TODO tracking
+    "S104",   # 0.0.0.0 intentional — Railway/container deploy (same as bandit skip)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"setup_claude.py" = ["T201"]  # print() ok in installer
+
+[tool.vulture]
+min_confidence = 80
+paths = ["src/"]
+
+[tool.bandit]
+skips = [
+    "B101",  # assert ok in non-test code here
+    "B104",  # 0.0.0.0 intencional — deploy Railway/container
+]
