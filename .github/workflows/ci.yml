@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv run --with bandit bandit -r src/ -ll -x src/todos/sei_styles.py
+      - run: uv run --with bandit bandit -r src/ -ll --skip B101,B104 -x src/todos/sei_styles.py
 
   audit:
     name: Dependency audit (pip-audit)

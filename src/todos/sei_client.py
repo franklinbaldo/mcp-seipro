@@ -1579,7 +1579,7 @@ class SEIClient:
 
         if resp.status_code in (401, 403):
             await self.autenticar()
-            headers = {"token": self._token}
+            headers = {"token": self._token or ""}
             with open(arquivo_path, "rb") as f:
                 resp = await self._client.post(
                     f"{self.base_url}/documento/{id_procedimento}/externo/criar",

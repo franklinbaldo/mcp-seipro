@@ -90,7 +90,8 @@ class SEIProOAuthProvider:
         return _clients.get(client_id)
 
     async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        _clients[client_info.client_id] = client_info
+        if client_info.client_id:
+            _clients[client_info.client_id] = client_info
 
     # -- Authorization --
 

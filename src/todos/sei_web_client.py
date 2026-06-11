@@ -25,9 +25,19 @@ from typing import Any
 from urllib.parse import parse_qsl, urljoin
 
 import httpx
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 
 logger = logging.getLogger(__name__)
+
+
+def _tag_str(tag: Tag, attr: str, default: str = "") -> str:
+    """Return a BS4 tag attribute as plain str (Tag.get returns str|list|None)."""
+    v = tag.get(attr, default)
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):
+        return v[0] if v else default
+    return default
 
 
 class SEIWebClient:
@@ -161,9 +171,9 @@ class SEIWebClient:
             "selOrgao": sel_orgao,
         }
         for h in login_form.find_all("input", type="hidden"):
-            name = h.get("name")
+            name = _tag_str(h, "name")
             if name and h.get("value") is not None:
-                form[name] = h["value"]
+                form[name] = _tag_str(h, "value")
 
         # O PHP exige o par name=value do botão submit; sem ele ignora o POST.
         # Detecta o botão real do formulário (varia por instância:
@@ -171,10 +181,12 @@ class SEIWebClient:
         submit_btn = login_form.find("button", type="submit") or login_form.find(
             "input", type="submit"
         )
-        if submit_btn:
-            btn_name = submit_btn.get("name")
+        if submit_btn and isinstance(submit_btn, Tag):
+            btn_name = _tag_str(submit_btn, "name")
             if btn_name:
-                btn_value = submit_btn.get("value") or submit_btn.get_text(strip=True) or "Acessar"
+                btn_value = (
+                    _tag_str(submit_btn, "value") or submit_btn.get_text(strip=True) or "Acessar"
+                )
                 form[btn_name] = btn_value
         else:
             # fallback para instâncias mais antigas
@@ -183,20 +195,20 @@ class SEIWebClient:
         # Corrige hdnAcao: o JS seta o valor correto antes de submeter via
         # acaoLogin(N) no onsubmit. Ex: onsubmit="return acaoLogin(2);"
         # O HTML tem value="1" (padrão), mas ação=2 é o login com usuário/senha.
-        onsubmit = login_form.get("onsubmit", "")
+        onsubmit = _tag_str(login_form, "onsubmit")
         m_acao = re.search(r"acaoLogin\((\d+)\)", onsubmit)
         if m_acao and "hdnAcao" in form:
             form["hdnAcao"] = m_acao.group(1)
         sel_ctx = login_form.find("select", attrs={"name": "selContexto"})
-        if sel_ctx is not None:
+        if sel_ctx is not None and isinstance(sel_ctx, Tag):
             ctx_val = ""
             for opt in sel_ctx.find_all("option"):
-                if opt.get("selected") is not None:
-                    ctx_val = opt.get("value") or ""
+                if isinstance(opt, Tag) and opt.get("selected") is not None:
+                    ctx_val = _tag_str(opt, "value")
                     break
             form["selContexto"] = ctx_val
 
-        action = login_form.get("action") or self.login_url
+        action = _tag_str(login_form, "action") or self.login_url
         post_url = urljoin(self.login_url, action)
         post_resp = await self._http.post(
             post_url,
@@ -267,7 +279,9 @@ class SEIWebClient:
         """Captura a action do form de pesquisa rápida (protocolo_pesquisa_rapida)."""
         soup = BeautifulSoup(html, "html.parser")
         for f in soup.find_all("form"):
-            action = f.get("action") or ""
+            if not isinstance(f, Tag):
+                continue
+            action = _tag_str(f, "action")
             if "protocolo_pesquisa_rapida" in action:
                 self._pesquisa_rapida_action = action.replace("&amp;", "&")
                 return
@@ -280,14 +294,18 @@ class SEIWebClient:
         """
         soup = BeautifulSoup(html, "html.parser")
         for f in soup.find_all("form"):
-            action = f.get("action") or ""
+            if not isinstance(f, Tag):
+                continue
+            action = _tag_str(f, "action")
             if "procedimento_controlar" in action:
                 self._form_action = action.replace("&amp;", "&")
                 self._form_hidden = {}
                 for h in f.find_all("input", type="hidden"):
-                    name = h.get("name")
+                    if not isinstance(h, Tag):
+                        continue
+                    name = _tag_str(h, "name")
                     if name:
-                        self._form_hidden[name] = h.get("value", "") or ""
+                        self._form_hidden[name] = _tag_str(h, "value")
                 return
 
     def _populate_trabalhar_links(self, inbox_html: str) -> None:
@@ -298,8 +316,10 @@ class SEIWebClient:
         """
         soup = BeautifulSoup(inbox_html, "html.parser")
         for a in soup.find_all("a", href=re.compile(r"acao=procedimento_trabalhar")):
+            if not isinstance(a, Tag):
+                continue
             txt = a.get_text(strip=True)
-            href = a.get("href", "").replace("&amp;", "&")
+            href = _tag_str(a, "href").replace("&amp;", "&")
             if txt and href:
                 self._trabalhar_links.setdefault(txt, href)
 
@@ -434,13 +454,13 @@ class SEIWebClient:
         for a in soup.find_all("a", href=re.compile(r"procedimento_trabalhar")):
             txt = a.get_text(strip=True).replace(" ", "")
             if proto_norm in txt:
-                href = a.get("href", "").replace("&amp;", "&")
+                href = _tag_str(a, "href").replace("&amp;", "&")
                 self._trabalhar_links[protocolo] = href
                 return
 
         # Tenta também via links com id_procedimento (tooltip ou linha da tabela)
         for a in soup.find_all("a", href=re.compile(r"procedimento_trabalhar")):
-            href = a.get("href", "").replace("&amp;", "&")
+            href = _tag_str(a, "href").replace("&amp;", "&")
             self._trabalhar_links[protocolo] = href
             return
 
@@ -506,7 +526,7 @@ class SEIWebClient:
         ifr = soup_fs.find("iframe", id="ifrArvore")
         if ifr is None:
             raise RuntimeError("ifrArvore não encontrado no frameset")
-        arvore_src = ifr.get("src", "").replace("&amp;", "&")
+        arvore_src = _tag_str(ifr, "src").replace("&amp;", "&")
         arvore_url = urljoin(str(r1.url), arvore_src)
 
         # extrai id_procedimento da URL do trabalhar
@@ -657,7 +677,7 @@ class SEIWebClient:
         ifr = soup_fs.find("iframe", id="ifrArvore")
         if not ifr:
             raise RuntimeError("ifrArvore não encontrado no frameset")
-        arvore_url = urljoin(str(r1.url), ifr.get("src", "").replace("&amp;", "&"))
+        arvore_url = urljoin(str(r1.url), _tag_str(ifr, "src").replace("&amp;", "&"))
 
         r2 = await self._http.get(arvore_url, headers={"Referer": trab_url})
         if r2.status_code != 200:
@@ -681,14 +701,16 @@ class SEIWebClient:
         form = soup3.find("form", id=re.compile(r"frmProcedimento(Pdf|Zip)", re.I))
         if not form:
             raise RuntimeError("Formulário frmProcedimento(Pdf|Zip) não encontrado")
-        form_action = form.get("action", "").replace("&amp;", "&")
+        form_action = _tag_str(form, "action").replace("&amp;", "&")
         post_url = urljoin(str(r3.url), form_action)
 
         post_data: dict[str, str] = {}
         for inp in form.find_all("input"):
-            name = inp.get("name", "")
+            if not isinstance(inp, Tag):
+                continue
+            name = _tag_str(inp, "name")
             if name:
-                post_data[name] = inp.get("value", "") or ""
+                post_data[name] = _tag_str(inp, "value")
         post_data["rdoTipo"] = "T"
         post_data["hdnFlagGerar"] = "1"
 
@@ -778,7 +800,7 @@ class SEIWebClient:
         ifr = soup_fs.find("iframe", id="ifrArvore")
         if not ifr:
             raise RuntimeError("ifrArvore não encontrado")
-        arvore_url = urljoin(str(r1.url), ifr.get("src", "").replace("&amp;", "&"))
+        arvore_url = urljoin(str(r1.url), _tag_str(ifr, "src").replace("&amp;", "&"))
 
         m_id = re.search(r"id_procedimento=(\d+)", str(r1.url))
         id_proc = m_id.group(1) if m_id else ""
@@ -891,7 +913,7 @@ class SEIWebClient:
         ifr = soup_fs.find("iframe", id="ifrArvore")
         if not ifr:
             raise RuntimeError("ifrArvore não encontrado no frameset")
-        arvore_url = urljoin(str(r1.url), ifr.get("src", "").replace("&amp;", "&"))
+        arvore_url = urljoin(str(r1.url), _tag_str(ifr, "src").replace("&amp;", "&"))
 
         # --- Step 2: arvore_montar → Nos[0].acoes ---
         r2 = await self._http.get(arvore_url, headers={"Referer": str(r1.url)})
@@ -920,7 +942,7 @@ class SEIWebClient:
         soup_acoes = BeautifulSoup(acoes_html, "html.parser")
         incluir_href: str | None = None
         for a in soup_acoes.find_all("a", href=re.compile(r"documento_escolher_tipo")):
-            incluir_href = a.get("href", "").replace("&amp;", "&")
+            incluir_href = _tag_str(a, "href").replace("&amp;", "&")
             break
         if not incluir_href:
             for img in soup_acoes.find_all("img"):
@@ -929,7 +951,7 @@ class SEIWebClient:
                 ):
                     pa = img.find_parent("a")
                     if pa:
-                        incluir_href = pa.get("href", "").replace("&amp;", "&")
+                        incluir_href = _tag_str(a, "href").replace("&amp;", "&")
                         break
 
         if not incluir_href:
@@ -950,15 +972,17 @@ class SEIWebClient:
         form3 = soup3.find("form", id="frmDocumentoEscolherTipo")
         if not form3:
             raise RuntimeError("frmDocumentoEscolherTipo não encontrado")
-        form3_action = form3.get("action", "").replace("&amp;", "&")
+        form3_action = _tag_str(form3, "action").replace("&amp;", "&")
         post3_url = urljoin(str(r3.url), form3_action)
 
         # --- Step 4: POST escolher com hdnIdSerie=-1 → documento_receber ---
         post3_data: dict[str, str] = {}
         for inp in form3.find_all("input", type="hidden"):
-            n = inp.get("name")
+            if not isinstance(inp, Tag):
+                continue
+            n = _tag_str(inp, "name")
             if n:
-                post3_data[n] = inp.get("value", "") or ""
+                post3_data[n] = _tag_str(inp, "value")
         post3_data["hdnIdSerie"] = "-1"
 
         r4 = await self._http.post(post3_url, data=post3_data, headers={"Referer": str(r3.url)})
@@ -979,14 +1003,16 @@ class SEIWebClient:
         form4 = soup4.find("form", id="frmDocumentoCadastro")
         if not form4:
             raise RuntimeError("frmDocumentoCadastro não encontrado em documento_receber")
-        form4_action = form4.get("action", "").replace("&amp;", "&")
+        form4_action = _tag_str(form4, "action").replace("&amp;", "&")
         post4_url = urljoin(str(r4.url), form4_action)
 
         form4_data: dict[str, str] = {}
         for inp in form4.find_all("input", type="hidden"):
-            n = inp.get("name")
+            if not isinstance(inp, Tag):
+                continue
+            n = _tag_str(inp, "name")
             if n:
-                form4_data[n] = inp.get("value", "") or ""
+                form4_data[n] = _tag_str(inp, "value")
 
         # selSerie options
         sel_serie = form4.find("select", attrs={"name": "selSerie"})
@@ -1416,7 +1442,9 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:
             if len(tds) >= 2:
                 icones = []
                 for img in tds[1].find_all("img"):
-                    title = img.get("title") or img.get("alt") or ""
+                    if not isinstance(img, Tag):
+                        continue
+                    title = _tag_str(img, "title") or _tag_str(img, "alt")
                     if title:
                         icones.append(title.strip())
                 if icones:
@@ -1456,7 +1484,9 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:
             if len(tds) >= 2:
                 icones = []
                 for img in tds[1].find_all("img"):
-                    title = img.get("title") or img.get("alt") or ""
+                    if not isinstance(img, Tag):
+                        continue
+                    title = _tag_str(img, "title") or _tag_str(img, "alt")
                     if title:
                         icones.append(title.strip())
                 if icones:

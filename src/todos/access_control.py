@@ -117,7 +117,7 @@ _INSTRUCAO_MODELO_METADATA = (
 )
 
 
-def _bloco_base(nivel: str, hipotese_legal: str | None, alvo: dict) -> dict:
+def _bloco_base(nivel: str | None, hipotese_legal: str | None, alvo: dict) -> dict:
     return {
         "nivel_acesso": nivel,
         "rotulo_nivel": ROTULOS.get(nivel, "Desconhecido"),
@@ -128,7 +128,7 @@ def _bloco_base(nivel: str, hipotese_legal: str | None, alvo: dict) -> dict:
 
 
 def construir_aviso_bloqueio(
-    nivel: str,
+    nivel: str | None,
     hipotese_legal: str | None,
     alvo: dict,
 ) -> dict:
@@ -154,7 +154,7 @@ def construir_aviso_bloqueio(
 
 
 def construir_disclaimer_acompanhante(
-    nivel: str,
+    nivel: str | None,
     hipotese_legal: str | None,
     alvo: dict,
 ) -> dict:

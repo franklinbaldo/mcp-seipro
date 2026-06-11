@@ -5,8 +5,9 @@ import base64
 import json
 import logging
 import os
+from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
-from typing import Literal
+from typing import Any, Literal, cast
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -53,8 +54,10 @@ async def lifespan(_server: FastMCP):
             await web_client.close()
 
 
-def _get_client(ctx: Context) -> SEIClient:
+def _get_client(ctx: Context | None) -> SEIClient:
     """Obtém o SEIClient REST, criando sob demanda em modo HTTP."""
+    if ctx is None:
+        raise ValueError("Contexto MCP nao disponivel.")
     client = ctx.request_context.lifespan_context.get("sei")
     if client is not None:
         return client
@@ -80,12 +83,14 @@ def _get_client(ctx: Context) -> SEIClient:
     raise ValueError("SEIClient nao configurado. Verifique as variaveis de ambiente.")
 
 
-def _get_web_client(ctx: Context) -> SEIWebClient:
+def _get_web_client(ctx: Context | None) -> SEIWebClient:
     """Obtém o SEIWebClient (scraper), criando sob demanda em modo HTTP.
 
     O scraper mantém estado de sessão (cookies + infra_hash) e por isso é
     instanciado uma vez por contexto, não por chamada.
     """
+    if ctx is None:
+        raise ValueError("Contexto MCP nao disponivel.")
     client = ctx.request_context.lifespan_context.get("sei_web")
     if client is not None:
         return client
@@ -108,7 +113,7 @@ def _get_web_client(ctx: Context) -> SEIWebClient:
     raise ValueError("SEIWebClient nao configurado.")
 
 
-_http_kwargs = {}
+_http_kwargs: dict[str, Any] = {}
 if _http_mode:
     from mcp.server.auth.settings import (
         AuthSettings,
@@ -208,7 +213,7 @@ class _ConsentimentoRestrito(BaseModel):
 _ELICIT_TIMEOUT_S = float(os.environ.get("SEI_ELICIT_TIMEOUT_S", "30"))
 
 
-def _cliente_suporta_elicit(ctx: Context) -> bool:
+def _cliente_suporta_elicit(ctx: Context | None) -> bool:
     """Verifica via MCP capabilities se o cliente declarou suporte a elicit."""
     if ctx is None:
         return False
@@ -220,8 +225,8 @@ def _cliente_suporta_elicit(ctx: Context) -> bool:
 
 
 async def _solicitar_consentimento_via_elicit(
-    ctx: Context,
-    nivel: str,
+    ctx: Context | None,
+    nivel: str | None,
     rotulo: str,
     hipotese: str | None,
     alvo: dict,
@@ -252,6 +257,8 @@ async def _solicitar_consentimento_via_elicit(
         "Se não autorizar, o MCP retornará apenas um aviso ao modelo."
     )
 
+    if ctx is None:
+        return "nao_suportado"
     try:
         result = await asyncio.wait_for(
             ctx.elicit(message=message, schema=_ConsentimentoRestrito),
@@ -273,7 +280,7 @@ async def _solicitar_consentimento_via_elicit(
 
 
 async def _aplicar_gate_documento(
-    ctx: Context,
+    ctx: Context | None,
     client: SEIClient,
     id_documento: str,
     tipo_documento: str,
@@ -430,7 +437,7 @@ async def sei_pesquisar_unidades(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa unidades disponíveis no SEI por nome ou sigla.
 
@@ -449,7 +456,7 @@ async def sei_pesquisar_unidades(
 async def sei_listar_usuarios(
     filtro: str = "",
     apenas_unidade: bool = True,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista usuários no SEI, com filtro por nome ou sigla.
 
@@ -518,12 +525,12 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
 
         if isinstance(rest_result, Exception):
             warnings.append(f"REST falhou: {rest_result}")
-        else:
+        elif isinstance(rest_result, dict):
             merged.update(rest_result)
 
         if isinstance(web_result, Exception):
             warnings.append(f"Web scraper falhou: {web_result}")
-        else:
+        elif isinstance(web_result, dict):
             # Web traz documentos[], relacionados[] e id_procedimento (snake_case).
             # Não sobrescreve campos da REST que tenham nomes parecidos —
             # REST é a fonte canônica para metadata; web complementa com docs.
@@ -553,7 +560,7 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
 @mcp.tool()
 async def sei_arvore_processo(
     protocolo_formatado: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Mostra a árvore completa de documentos de um processo SEI.
 
@@ -578,7 +585,7 @@ async def sei_arvore_processo(
 @mcp.tool()
 async def sei_listar_documentos(
     protocolo_formatado: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista todos os documentos de um processo SEI.
 
@@ -602,7 +609,7 @@ async def sei_listar_documentos(
 async def sei_buscar_documento(
     numero_sei: str,
     processo: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Busca um documento pelo número SEI (ex: SEI 2843449, SEI nº 2843449).
 
@@ -752,7 +759,7 @@ async def sei_ler_documento(
     tipo_documento: Literal["auto", "I", "X"] = "auto",
     formato: Literal["markdown", "texto", "html"] = "markdown",
     confirmar_acesso_restrito: bool = False,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lê o conteúdo de um documento do SEI e retorna texto legível.
 
@@ -781,11 +788,12 @@ async def sei_ler_documento(
         client = _get_client(ctx)
 
         # Resolver referência → id interno + tipo
+        tipo_doc: str = tipo_documento
         if tipo_documento == "auto":
             try:
                 doc_id, detected_tipo = await _resolver_documento(client, id_documento)
                 id_documento = doc_id
-                tipo_documento = detected_tipo
+                tipo_doc = detected_tipo
             except Exception as e:
                 return _json(
                     {
@@ -799,7 +807,7 @@ async def sei_ler_documento(
             ctx,
             client,
             str(id_documento),
-            tipo_documento,
+            tipo_doc,
             confirmou=confirmar_acesso_restrito,
         )
         if acao == "erro":
@@ -808,7 +816,7 @@ async def sei_ler_documento(
             return _json(payload)
         disclaimer = payload  # liberar (None se público, dict se restrito autorizado)
 
-        if tipo_documento == "X":
+        if tipo_doc == "X":
             content = await client.baixar_anexo(id_documento)
             if len(content) > MAX_BINARY_SIZE:
                 return _error(
@@ -861,7 +869,7 @@ async def sei_ler_documento(
 async def sei_baixar_anexo(
     id_documento: str,
     confirmar_acesso_restrito: bool = False,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Baixa um documento externo (anexo) do SEI em base64.
 
@@ -915,7 +923,7 @@ async def sei_baixar_anexo(
                 f"Documento muito grande ({len(content)} bytes, limite {MAX_BINARY_SIZE}). "
                 "Baixe manualmente pelo SEI."
             )
-        resposta = {
+        resposta: dict = {
             "base64": base64.b64encode(content).decode(),
             "size_bytes": len(content),
         }
@@ -938,7 +946,7 @@ async def sei_criar_documento(
     descricao: str = "",
     nivel_acesso: str = "0",
     id_unidade: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um novo documento interno (nativo) em um processo SEI.
 
@@ -968,7 +976,7 @@ async def sei_criar_documento(
 
 
 @mcp.tool()
-async def sei_listar_secoes(id_documento: str, ctx: Context = None) -> str:
+async def sei_listar_secoes(id_documento: str, ctx: Context | None = None) -> str:
     """Lista as seções editáveis de um documento interno SEI.
 
     Retorna as seções com seus IDs, conteúdo atual (HTML),
@@ -986,7 +994,7 @@ async def sei_listar_secoes(id_documento: str, ctx: Context = None) -> str:
 @mcp.tool()
 async def sei_gerar_referencia(
     numero_sei: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Gera o HTML de referência (hiperlink dinâmico) para um documento SEI.
 
@@ -1015,7 +1023,7 @@ async def sei_gerar_referencia(
 
 
 @mcp.tool()
-async def sei_estilos(categoria: str = "", ctx: Context = None) -> str:
+async def sei_estilos(categoria: str = "", ctx: Context | None = None) -> str:
     """Lista os estilos CSS disponíveis para formatação de documentos no SEI.
 
     O SEI usa classes CSS padronizadas em todos os documentos governamentais.
@@ -1080,7 +1088,7 @@ async def sei_editar_secao(
     id_documento: str,
     secoes: list[dict],
     versao: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera o conteúdo de seções editáveis de um documento interno SEI.
 
@@ -1162,7 +1170,7 @@ async def sei_listar_processos(
     apenas_meus: str = "",
     tipo: str = "",
     filtro: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista processos da caixa da unidade atual no SEI (Controle de Processos).
 
@@ -1312,7 +1320,7 @@ async def sei_resumo_processos(
     agrupar_por_2: str = "",
     apenas_meus: str = "",
     filtro: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Gera um resumo agrupado dos processos da caixa da unidade atual.
 
@@ -1377,10 +1385,10 @@ async def sei_resumo_processos(
         for p in todos:
             a = p.get("atributos", {})
             s = a.get("status", {})
-            chave1 = campo1["extract"](a, s)
+            chave1 = cast(Callable[..., str], campo1["extract"])(a, s)
 
             if campo2:
-                chave2 = campo2["extract"](a, s)
+                chave2 = cast(Callable[..., str], campo2["extract"])(a, s)
                 chave = f"{chave1} | {chave2}"
             else:
                 chave = chave1
@@ -1400,9 +1408,9 @@ async def sei_resumo_processos(
                 item["processos"] = g["processos"]
             resumo.append(item)
 
-        header = campo1["desc"]
+        header = cast(str, campo1["desc"])
         if campo2:
-            header += f" × {campo2['desc']}"
+            header += f" × {cast(str, campo2['desc'])}"
 
         return _json(
             {
@@ -1429,7 +1437,7 @@ async def sei_pesquisar_processos(
     grupo: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa processos no SEI por texto, descrição, datas, unidade ou assunto.
 
@@ -1470,7 +1478,7 @@ async def sei_pesquisar_hipoteses_legais(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa hipóteses legais disponíveis no SEI.
 
@@ -1498,7 +1506,7 @@ async def sei_pesquisar_tipos_processo(
     favoritos: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa tipos de processo disponíveis no SEI.
 
@@ -1529,7 +1537,7 @@ async def sei_alterar_processo(
     nivel_acesso: str = "",
     hipotese_legal: str = "",
     observacao: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera metadados de um processo no SEI.
 
@@ -1567,7 +1575,7 @@ async def sei_criar_processo(
     observacoes: str = "",
     nivel_acesso: str = "0",
     hipotese_legal: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um novo processo no SEI.
 
@@ -1611,7 +1619,7 @@ async def sei_enviar_processo(
     enviar_email: str = "N",
     data_retorno: str = "",
     dias_retorno: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Envia (tramita) um processo para outra(s) unidade(s) no SEI.
 
@@ -1675,7 +1683,7 @@ async def sei_enviar_processo(
 @mcp.tool()
 async def sei_marcar_nao_lido(
     numero_processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Marca um processo como não lido na unidade atual.
 
@@ -1707,7 +1715,7 @@ async def sei_marcar_nao_lido(
 
 
 @mcp.tool()
-async def sei_concluir_processo(numero_processo: str, ctx: Context = None) -> str:
+async def sei_concluir_processo(numero_processo: str, ctx: Context | None = None) -> str:
     """Conclui um processo na unidade atual do SEI.
 
     O processo é removido da caixa da unidade mas permanece acessível.
@@ -1722,7 +1730,7 @@ async def sei_concluir_processo(numero_processo: str, ctx: Context = None) -> st
 
 
 @mcp.tool()
-async def sei_reabrir_processo(processo: str, ctx: Context = None) -> str:
+async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str:
     """Reabre um processo que foi concluído na unidade.
 
     - processo: protocolo formatado (ex: 50300.018905/2018-67) ou IdProcedimento
@@ -1742,7 +1750,7 @@ async def sei_reabrir_processo(processo: str, ctx: Context = None) -> str:
 async def sei_atribuir_processo(
     numero_processo: str,
     usuario: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Atribui um processo a um usuário da unidade.
 
@@ -1811,7 +1819,7 @@ async def sei_atribuir_processo(
 @mcp.tool()
 async def sei_cancelar_assinatura(
     id_documento: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Tenta cancelar (derrubar) a assinatura de um documento no SEI.
 
@@ -1882,7 +1890,7 @@ async def sei_assinar_documento(
     id_documento: str,
     cargo: str = "",
     orgao: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Assina eletronicamente um documento no SEI.
 
@@ -1968,7 +1976,7 @@ async def sei_pesquisar_tipos_documento(
     aplicabilidade: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa tipos de documento (séries) disponíveis no SEI.
 
@@ -2005,7 +2013,7 @@ async def sei_sobrestar_processo(
     processo: str,
     motivo: str,
     processo_vinculado: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Sobresta um processo no SEI.
 
@@ -2056,7 +2064,7 @@ async def sei_sobrestar_processo(
 @mcp.tool()
 async def sei_remover_sobrestamento(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Remove o sobrestamento de um processo no SEI.
 
@@ -2075,7 +2083,7 @@ async def sei_remover_sobrestamento(
 async def sei_dar_ciencia(
     referencia: str,
     tipo: Literal["documento", "processo"] = "documento",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Dá ciência em um documento ou processo no SEI.
 
@@ -2107,7 +2115,7 @@ async def sei_dar_ciencia(
 async def sei_listar_ciencias(
     referencia: str,
     tipo: Literal["documento", "processo"] = "documento",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista as ciências registradas em um documento ou processo.
 
@@ -2137,7 +2145,7 @@ async def sei_listar_ciencias(
 @mcp.tool()
 async def sei_remover_atribuicao(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Remove a atribuição de um processo (desatribui de qualquer usuário).
 
@@ -2155,7 +2163,7 @@ async def sei_remover_atribuicao(
 @mcp.tool()
 async def sei_receber_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Confirma o recebimento de um processo na unidade atual.
 
@@ -2173,7 +2181,7 @@ async def sei_receber_processo(
 @mcp.tool()
 async def sei_listar_unidades_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista as unidades onde o processo está aberto."""
     try:
@@ -2188,7 +2196,7 @@ async def sei_listar_unidades_processo(
 @mcp.tool()
 async def sei_listar_interessados(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista os interessados de um processo."""
     try:
@@ -2203,7 +2211,7 @@ async def sei_listar_interessados(
 @mcp.tool()
 async def sei_listar_sobrestamentos(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista o histórico de sobrestamentos de um processo."""
     try:
@@ -2218,7 +2226,7 @@ async def sei_listar_sobrestamentos(
 @mcp.tool()
 async def sei_listar_assinaturas(
     id_documento: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista as assinaturas de um documento."""
     try:
@@ -2233,7 +2241,7 @@ async def sei_listar_assinaturas(
 async def sei_registrar_andamento(
     processo: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Registra um andamento (atividade) no processo.
 
@@ -2253,7 +2261,7 @@ async def sei_registrar_andamento(
 async def sei_pesquisar_contatos(
     filtro: str = "",
     limit: int = 50,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa contatos cadastrados no SEI."""
     try:
@@ -2271,7 +2279,7 @@ async def sei_criar_documento_externo(
     arquivo_path: str,
     descricao: str = "",
     nivel_acesso: str = "0",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um documento externo (upload de arquivo) em um processo SEI.
 
@@ -2300,7 +2308,7 @@ async def sei_criar_documento_externo(
 async def sei_assinar_bloco(
     id_bloco: str,
     cargo: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Assina TODOS os documentos de um bloco de assinatura.
 
@@ -2348,7 +2356,7 @@ async def sei_assinar_bloco(
 async def sei_assinar_documentos_bloco(
     documentos: str,
     cargo: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Assina documentos específicos de um bloco de assinatura.
 
@@ -2401,7 +2409,7 @@ async def sei_assinar_documentos_bloco(
 async def sei_criar_marcador(
     nome: str,
     id_cor: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um marcador na unidade atual.
 
@@ -2428,7 +2436,7 @@ async def sei_criar_marcador(
 @mcp.tool()
 async def sei_excluir_marcador(
     ids_marcadores: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Exclui marcador(es). IDs separados por vírgula."""
     try:
@@ -2444,7 +2452,7 @@ async def sei_marcar_processo(
     processo: str,
     marcador: str,
     texto: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Adiciona ou altera marcador (etiqueta colorida) em um processo.
 
@@ -2468,7 +2476,7 @@ async def sei_marcar_processo(
 async def sei_pesquisar_marcadores(
     filtro: str = "",
     limit: int = 50,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista marcadores disponíveis na unidade atual.
 
@@ -2485,7 +2493,7 @@ async def sei_pesquisar_marcadores(
 @mcp.tool()
 async def sei_consultar_marcador_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Consulta os marcadores ativos de um processo."""
     try:
@@ -2507,7 +2515,7 @@ async def sei_acompanhar_processo(
     processo: str,
     grupo: str = "",
     observacao: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Adiciona acompanhamento especial em um processo.
 
@@ -2528,7 +2536,7 @@ async def sei_acompanhar_processo(
 @mcp.tool()
 async def sei_remover_acompanhamento(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Remove acompanhamento especial de um processo.
 
@@ -2552,7 +2560,7 @@ async def sei_remover_acompanhamento(
 @mcp.tool()
 async def sei_criar_grupo_acompanhamento(
     nome: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um grupo de acompanhamento especial no SEI."""
     try:
@@ -2566,7 +2574,7 @@ async def sei_criar_grupo_acompanhamento(
 @mcp.tool()
 async def sei_excluir_grupo_acompanhamento(
     ids_grupos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Exclui grupo(s) de acompanhamento especial. IDs separados por vírgula."""
     try:
@@ -2580,7 +2588,7 @@ async def sei_excluir_grupo_acompanhamento(
 @mcp.tool()
 async def sei_listar_grupos_acompanhamento(
     filtro: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista grupos de acompanhamento disponíveis."""
     try:
@@ -2599,7 +2607,7 @@ async def sei_listar_grupos_acompanhamento(
 @mcp.tool()
 async def sei_criar_bloco_interno(
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um bloco interno no SEI.
 
@@ -2617,7 +2625,7 @@ async def sei_criar_bloco_interno(
 async def sei_incluir_processo_bloco_interno(
     id_bloco: str,
     processos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Inclui processo(s) em um bloco interno.
 
@@ -2636,7 +2644,7 @@ async def sei_incluir_processo_bloco_interno(
 async def sei_retirar_processo_bloco_interno(
     id_bloco: str,
     processos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Remove processo(s) de um bloco interno.
 
@@ -2660,7 +2668,7 @@ async def sei_retirar_processo_bloco_interno(
 async def sei_criar_bloco_assinatura(
     descricao: str,
     unidades: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um bloco de assinatura no SEI.
 
@@ -2701,7 +2709,7 @@ async def sei_criar_bloco_assinatura(
 async def sei_incluir_documento_bloco_assinatura(
     id_bloco: str,
     documentos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Inclui documento(s) em um bloco de assinatura.
 
@@ -2719,7 +2727,7 @@ async def sei_incluir_documento_bloco_assinatura(
 @mcp.tool()
 async def sei_disponibilizar_bloco_assinatura(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Disponibiliza um bloco de assinatura para as unidades configuradas.
 
@@ -2736,7 +2744,7 @@ async def sei_disponibilizar_bloco_assinatura(
 @mcp.tool()
 async def sei_cancelar_disponibilizacao_bloco(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cancela a disponibilização de um bloco de assinatura.
 
@@ -2754,7 +2762,7 @@ async def sei_cancelar_disponibilizacao_bloco(
 async def sei_pesquisar_blocos_assinatura(
     filtro: str = "",
     limit: int = 50,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa blocos de assinatura existentes."""
     try:
@@ -2770,7 +2778,7 @@ async def sei_criar_anotacao(
     processo: str,
     descricao: str,
     prioridade: str = "1",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria uma anotação (post-it) em um processo no SEI.
 
@@ -2859,7 +2867,7 @@ async def sei_pesquisar_usuarios(
     id_orgao: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa usuários por palavra-chave no órgão.
 
@@ -2886,7 +2894,7 @@ async def sei_pesquisar_outras_unidades(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa unidades excluindo a unidade atual.
 
@@ -2907,7 +2915,7 @@ async def sei_pesquisar_textos_padrao(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa textos padrão internos disponíveis na unidade.
 
@@ -2930,7 +2938,7 @@ async def sei_pesquisar_textos_padrao(
 @mcp.tool()
 async def sei_consultar_documento_externo(
     id_documento: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Consulta metadados de um documento externo pelo ID.
 
@@ -3002,7 +3010,7 @@ async def sei_alterar_documento_interno(
     descricao: str = "",
     nivel_acesso: str = "",
     hipotese_legal: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera metadados de um documento interno (não o conteúdo HTML).
 
@@ -3035,7 +3043,7 @@ async def sei_alterar_documento_externo(
     nivel_acesso: str = "",
     hipotese_legal: str = "",
     arquivo_path: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera metadados de um documento externo (e opcionalmente substitui o arquivo).
 
@@ -3067,7 +3075,7 @@ async def sei_pesquisar_tipos_conferencia(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa tipos de conferência para documentos externos.
 
@@ -3087,7 +3095,7 @@ async def sei_pesquisar_tipos_conferencia(
 @mcp.tool()
 async def sei_sugestao_assuntos_documento(
     id_serie: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista sugestões de assuntos para um tipo de documento (série).
 
@@ -3106,7 +3114,7 @@ async def sei_sugestao_assuntos_documento(
 @mcp.tool()
 async def sei_listar_blocos_documento(
     id_documento: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista blocos de assinatura em que um documento está incluído.
 
@@ -3126,7 +3134,7 @@ async def sei_pesquisar_tipos_documento_externo(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa tipos de documento para documentos externos (séries externas).
 
@@ -3169,7 +3177,7 @@ async def sei_pesquisar_assuntos(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa assuntos disponíveis para processos.
 
@@ -3188,7 +3196,7 @@ async def sei_pesquisar_assuntos(
 @mcp.tool()
 async def sei_sugestao_assuntos_processo(
     id_tipo_processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista sugestões de assuntos para um tipo de processo.
 
@@ -3207,7 +3215,7 @@ async def sei_sugestao_assuntos_processo(
 @mcp.tool()
 async def sei_consultar_atribuicao(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Consulta a atribuição atual de um processo (quem está responsável).
 
@@ -3226,7 +3234,7 @@ async def sei_consultar_atribuicao(
 @mcp.tool()
 async def sei_verificar_acesso(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Verifica se o usuário tem acesso a um processo.
 
@@ -3246,7 +3254,7 @@ async def sei_verificar_acesso(
 @mcp.tool()
 async def sei_listar_relacionamentos(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista processos relacionados a um processo.
 
@@ -3265,7 +3273,7 @@ async def sei_listar_relacionamentos(
 @mcp.tool()
 async def sei_listar_atividades(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista o histórico de atividades/andamentos de um processo.
 
@@ -3288,7 +3296,7 @@ async def sei_listar_atividades(
 @mcp.tool()
 async def sei_gerar_pdf_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Gera e baixa o PDF consolidado de um processo SEI.
 
@@ -3338,7 +3346,7 @@ async def sei_gerar_pdf_processo(
 @mcp.tool()
 async def sei_gerar_zip_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Gera e baixa o ZIP com todos os documentos de um processo SEI.
 
@@ -3392,7 +3400,7 @@ async def sei_incluir_documento_externo(
     data_elaboracao: str = "",
     nivel_acesso: str = "0",
     hipotese_legal: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Inclui documento externo (PDF, imagem, etc.) em um processo SEI via web scraper.
 
@@ -3465,7 +3473,7 @@ async def sei_incluir_documento_externo(
 async def sei_listar_meus_acompanhamentos(
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista processos que o usuário está acompanhando (acompanhamento especial).
 
@@ -3484,7 +3492,7 @@ async def sei_listar_meus_acompanhamentos(
 async def sei_listar_acompanhamentos_unidade(
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista processos com acompanhamento especial na unidade atual.
 
@@ -3504,7 +3512,7 @@ async def sei_alterar_acompanhamento(
     processo: str,
     grupo: str = "",
     observacao: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera acompanhamento especial de um processo.
 
@@ -3530,7 +3538,7 @@ async def sei_alterar_acompanhamento(
 @mcp.tool()
 async def sei_listar_credenciamentos(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista credenciamentos de acesso a um processo sigiloso.
 
@@ -3550,7 +3558,7 @@ async def sei_listar_credenciamentos(
 async def sei_conceder_credenciamento(
     processo: str,
     id_usuario: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Concede credenciamento de acesso a um processo sigiloso para um usuário.
 
@@ -3569,7 +3577,7 @@ async def sei_conceder_credenciamento(
 @mcp.tool()
 async def sei_renunciar_credenciamento(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Renuncia ao credenciamento de acesso a um processo sigiloso.
 
@@ -3590,7 +3598,7 @@ async def sei_renunciar_credenciamento(
 async def sei_cassar_credenciamento(
     processo: str,
     id_usuario: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cassa (revoga) credenciamento de acesso de um usuário a processo sigiloso.
 
@@ -3644,7 +3652,7 @@ async def sei_listar_orgaos_assinante(ctx: Context) -> str:
 async def sei_criar_observacao(
     processo: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria observação da unidade em um processo.
 
@@ -3668,7 +3676,7 @@ async def sei_criar_contato(
     tipo: str = "",
     email: str = "",
     telefone: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria novo contato no SEI.
 
@@ -3690,7 +3698,7 @@ async def sei_criar_contato(
 async def sei_listar_grupos_modelos(
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista grupos de modelos de documento disponíveis.
 
@@ -3711,7 +3719,7 @@ async def sei_listar_modelos(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista modelos de documento disponíveis.
 
@@ -3737,7 +3745,7 @@ async def sei_listar_modelos(
 @mcp.tool()
 async def sei_desativar_marcador(
     ids_marcadores: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Desativa marcador(es) sem excluir. IDs separados por vírgula.
 
@@ -3755,7 +3763,7 @@ async def sei_desativar_marcador(
 @mcp.tool()
 async def sei_reativar_marcador(
     ids_marcadores: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Reativa marcador(es) desativados. IDs separados por vírgula."""
     try:
@@ -3769,7 +3777,7 @@ async def sei_reativar_marcador(
 @mcp.tool()
 async def sei_historico_marcador_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista histórico de marcadores de um processo.
 
@@ -3792,7 +3800,7 @@ async def sei_historico_marcador_processo(
 @mcp.tool()
 async def sei_listar_processos_bloco_interno(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista processos de um bloco interno.
 
@@ -3811,7 +3819,7 @@ async def sei_listar_processos_bloco_interno(
 async def sei_alterar_bloco_interno(
     id_bloco: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera descrição de um bloco interno.
 
@@ -3829,7 +3837,7 @@ async def sei_alterar_bloco_interno(
 @mcp.tool()
 async def sei_excluir_bloco_interno(
     ids_blocos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Exclui bloco(s) interno(s). IDs separados por vírgula.
 
@@ -3847,7 +3855,7 @@ async def sei_excluir_bloco_interno(
 @mcp.tool()
 async def sei_concluir_bloco_interno(
     ids_blocos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Conclui bloco(s) interno(s). IDs separados por vírgula.
 
@@ -3865,7 +3873,7 @@ async def sei_concluir_bloco_interno(
 @mcp.tool()
 async def sei_reabrir_bloco_interno(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Reabre bloco interno concluído.
 
@@ -3885,7 +3893,7 @@ async def sei_anotar_processo_bloco_interno(
     id_bloco: str,
     processo: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria anotação em processo dentro de um bloco interno.
 
@@ -3906,7 +3914,7 @@ async def sei_alterar_anotacao_bloco_interno(
     id_bloco: str,
     processo: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera anotação de processo em um bloco interno.
 
@@ -3928,7 +3936,7 @@ async def sei_alterar_anotacao_bloco_interno(
 @mcp.tool()
 async def sei_listar_documentos_bloco_assinatura(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista documentos de um bloco de assinatura."""
     try:
@@ -3943,7 +3951,7 @@ async def sei_listar_documentos_bloco_assinatura(
 async def sei_retirar_documentos_bloco_assinatura(
     id_bloco: str,
     documentos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Retira documento(s) de um bloco de assinatura.
 
@@ -3961,7 +3969,7 @@ async def sei_retirar_documentos_bloco_assinatura(
 async def sei_alterar_bloco_assinatura(
     id_bloco: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera descrição de um bloco de assinatura.
 
@@ -3979,7 +3987,7 @@ async def sei_alterar_bloco_assinatura(
 @mcp.tool()
 async def sei_excluir_bloco_assinatura(
     ids_blocos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Exclui bloco(s) de assinatura. IDs separados por vírgula.
 
@@ -3997,7 +4005,7 @@ async def sei_excluir_bloco_assinatura(
 @mcp.tool()
 async def sei_concluir_bloco_assinatura(
     ids_blocos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Conclui bloco(s) de assinatura. IDs separados por vírgula.
 
@@ -4015,7 +4023,7 @@ async def sei_concluir_bloco_assinatura(
 @mcp.tool()
 async def sei_reabrir_bloco_assinatura(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Reabre bloco de assinatura concluído.
 
@@ -4033,7 +4041,7 @@ async def sei_reabrir_bloco_assinatura(
 @mcp.tool()
 async def sei_retornar_bloco_assinatura(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Retorna bloco de assinatura para a unidade de origem.
 
@@ -4053,7 +4061,7 @@ async def sei_anotar_documento_bloco_assinatura(
     id_bloco: str,
     documento: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria anotação em documento dentro de um bloco de assinatura.
 
@@ -4073,7 +4081,7 @@ async def sei_alterar_anotacao_bloco_assinatura(
     id_bloco: str,
     documento: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera anotação de documento em um bloco de assinatura.
 
