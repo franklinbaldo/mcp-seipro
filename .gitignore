@@ -26,6 +26,7 @@ env/
 # Docs e uploads internos (exceto RFCs que são documentação do projeto)
 docs/*
 !docs/rfc/
+!docs/adr/
 uploads/
 
 # Claude Code
