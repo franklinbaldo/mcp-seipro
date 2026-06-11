@@ -239,10 +239,19 @@ async def sei_status_resource(ctx: Context) -> str:
             )
         else:
             usuario_str = id_usuario
+        # Totais da caixa já populados pelo login eager — sem HTTP extra
+        recebidos = int(web._form_hidden.get("hdnRecebidosNroItens", "0") or "0")  # noqa: SLF001
+        gerados = int(web._form_hidden.get("hdnGeradosNroItens", "0") or "0")  # noqa: SLF001
+        total_caixa = recebidos + gerados or int(
+            web._form_hidden.get("hdnDetalhadoNroItens", "0") or "0"  # noqa: SLF001
+        )
+        caixa_str = f"{total_caixa} processos" if total_caixa else "caixa vazia (ou não carregada)"
+
         linhas = [
             f"Instância SEI: {web_url}",
             f"Usuário: {usuario_str}",
             f"Unidade ativa: {sigla} — {nome}",
+            f"Caixa de entrada: {caixa_str}",
             "",
             "Unidades disponíveis:",
         ]
