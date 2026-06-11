@@ -240,9 +240,15 @@ async def sei_status_resource(ctx: Context) -> str:
             )
         else:
             usuario_str = id_usuario
-        # Total real populado pelo login eager (detalhada=True) — sem HTTP extra
+        # hdnDetalhadoNroItens reflete o cap da página (500), não o total global.
+        # Se retornou 500, há múltiplas páginas — exibir como "500+".
         total = int(web._form_hidden.get("hdnDetalhadoNroItens", "0") or "0")  # noqa: SLF001
-        total_str = str(total) if total else "não disponível"
+        if total == 0:
+            total_str = "não disponível"
+        elif total >= 500:  # noqa: PLR2004
+            total_str = "500+ (múltiplas páginas — use sei_listar_processos para listar)"
+        else:
+            total_str = str(total)
 
         linhas = [
             f"Instância SEI: {web_url}",
