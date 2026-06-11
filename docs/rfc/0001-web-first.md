@@ -1,6 +1,6 @@
 # RFC 0001 — Web-first: paridade funcional para instâncias SEI sem mod-wssei
 
-**Status**: Proposta
+**Status**: Aceita
 **Data**: 2026-06-11
 **Autores**: Franklin Baldo (com Claude Code)
 
@@ -141,43 +141,91 @@ no web — mas **também aparecem como `<select>` em forms** (ex.: `selSerie` co
 - `sei_pesquisar_tipos_documento` etc. consultam o cache; se vazio, fazem um
   GET do form que contém o select e populam.
 
-### 4.4 Fases de implementação
+### 4.4 Sequência de PRs
 
-**Fase 1 — fundações + ações simples** (1 semana)
-- `scripts/smoke_web.py` (pré-requisito: é o critério de aceite de tudo abaixo)
-- `SEIBackend` com detecção de capacidade no startup
-- `executar_acao_processo` genérico
-- Migrar: `concluir_processo`, `reabrir_processo`, `receber_processo`,
-  `remover_atribuicao`, `dar_ciencia`
-- Critério de aceite: as 5 tools funcionam em SEI-RO (via smoke test)
+Cada PR depende da anterior. O critério de aceite de cada uma é o
+`scripts/smoke_web.py` passar contra SEI-RO (e não regredir na ANTAQ).
 
-**Fase 2 — forms com campos** (1–2 semanas)
-- `registrar_andamento` (txtDescricao)
-- `criar_anotacao` (txaDescricao, selPrioridade)
-- `marcar_processo` (selMarcador + texto)
-- `sobrestar_processo` / `remover_sobrestamento`
-- `atribuir_processo` (selUsuario — select simples no form, não autocomplete)
-- `acompanhar_processo` / `remover_acompanhamento`
+---
 
-**Fase 3 — read scrapers** (1 semana)
-- `consultar_documento_externo` (página documento_consultar)
-- `listar_assinaturas`, `listar_ciencias` (tabelas na mesma página)
-- `listar_unidades_processo`, `listar_interessados`, `listar_sobrestamentos`
-- `baixar_anexo` / `ler_documento` via link `documento_download_anexo` da arvore
+**PR #1 — RFC + renaming + SEI_WEB_URL** ✅ *merged*
+Renomear mcp-seipro → todos, criar este RFC, adicionar suporte a
+`SEI_WEB_URL` no `SEIWebClient`, `auth.py` e `setup_claude.py`.
 
-**Fase 4 — forms complexos** (2–4 semanas, sob demanda)
-- `enviar_processo`: autocomplete de unidades via endpoint AJAX
-  (`controlador_ajax.php?acao_ajax=unidade_auto_completar`)
-- `criar_processo`: tipo via select, interessados via mesmo padrão AJAX
-- `criar_documento` (interno): POST direto ao `documento_gerar`,
-  pulando o CKEditor (o editor é só UI; o submit é um form normal com
-  `txaEditor_*`). Requer engenharia reversa do form de `editor_montar`.
+---
+
+**PR #2 — Fundações: `smoke_web.py`, `SEIBackend`, `executar_acao_processo` + 5 ações simples**
+
+*Depende de: PR #1*
+
+- `scripts/smoke_web.py` — login + 1 ação de cada categoria; é o critério
+  de aceite de tudo que vier depois
+- `SEIBackend` em `sei_backend.py` com `detect()` no startup
+- `executar_acao_processo` em `SEIWebClient`:
+  `trabalhar → arvore → Nos[0].acoes → link → GET form → POST`
+- `_extrair_erro_sei` extraído de `incluir_documento_externo` como helper
+  compartilhado
+- Tools migradas para web via `executar_acao_processo`:
+  `sei_concluir_processo`, `sei_reabrir_processo`, `sei_receber_processo`,
+  `sei_remover_atribuicao`, `sei_dar_ciencia`
+- Tool MCP genérica `sei_executar_acao` com `confirmar=False` por padrão
+  (dry-run — ver Decisão 1)
+
+Critério: as 5 tools + smoke test funcionam em SEI-RO sem mod-wssei.
+
+---
+
+**PR #3 — Forms com campos**
+
+*Depende de: PR #2 (`executar_acao_processo` disponível)*
+
+- `sei_registrar_andamento` (campo `txtDescricao`)
+- `sei_criar_anotacao` (campos `txaDescricao`, `selPrioridade`)
+- `sei_marcar_processo` (campos `selMarcador` + texto)
+- `sei_sobrestar_processo` / `sei_remover_sobrestamento`
+- `sei_atribuir_processo` (campo `selUsuario` — select no form, não autocomplete)
+- `sei_acompanhar_processo` / `sei_remover_acompanhamento`
+
+Critério: todas as 7 tools funcionam em SEI-RO; smoke test passa.
+
+---
+
+**PR #4 — Read scrapers**
+
+*Depende de: PR #2 (sessão web e helpers de parse disponíveis)*
+
+- `sei_consultar_documento_externo` (page `documento_consultar`)
+- `sei_listar_assinaturas`, `sei_listar_ciencias` (tabelas na mesma página)
+- `sei_listar_unidades_processo`, `sei_listar_interessados`,
+  `sei_listar_sobrestamentos`
+- `sei_baixar_anexo` / `sei_ler_documento` via link
+  `documento_download_anexo` da árvore
+- Cache de catálogos em disco (`~/.cache/todos/`, TTL 24h) — ver Decisão 2
+
+Critério: todas as tools retornam dados corretos em SEI-RO; smoke test passa.
+
+---
+
+**PR #5 — Forms complexos (sob demanda)**
+
+*Depende de: PR #3 + PR #4*
+
+- `sei_enviar_processo`: autocomplete de unidades via
+  `controlador_ajax.php?acao_ajax=unidade_auto_completar`
+- `sei_criar_processo`: tipo via `<select>`, interessados via AJAX
+- `sei_criar_documento` (interno): POST direto ao `documento_gerar`
+  pulando o CKEditor (editor é só UI; submit é form normal com `txaEditor_*`);
+  requer engenharia reversa do form `editor_montar`
+
+Critério: as 3 tools funcionam em SEI-RO; smoke test passa.
+
+---
 
 **Permanente — não migrar**
-- Assinatura (PKI), cancelar assinatura, Solr (`pesquisar_processos`),
-  admin (órgãos/contextos), sugestões de assunto.
-- Em instância sem REST essas tools retornam erro explicativo com alternativa
-  quando houver.
+
+Assinatura (PKI), cancelar assinatura, Solr (`sei_pesquisar_processos`),
+admin (órgãos/contextos), sugestões de assunto. Em instância sem REST,
+essas tools retornam erro explicativo com alternativa quando houver.
 
 ### 4.5 Robustez
 
