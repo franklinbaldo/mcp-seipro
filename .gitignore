@@ -23,8 +23,10 @@ env/
 *.swo
 .DS_Store
 
-# Docs e uploads internos
-docs/
+# Docs e uploads internos (exceto RFCs que são documentação do projeto)
+docs/*
+!docs/rfc/
+!docs/adr/
 uploads/
 
 # Claude Code

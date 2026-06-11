@@ -1,4 +1,4 @@
-"""OAuth 2.1 provider para MCP SEI Pro.
+"""OAuth 2.1 provider para todos (MCP SEI).
 
 As credenciais do SEI (url, usuario, senha, orgao) são informadas pelo
 usuário na tela de login OAuth. O servidor encripta essas credenciais
@@ -16,21 +16,17 @@ import json
 import os
 import secrets
 import time
-from urllib.parse import urlencode
-
-from starlette.requests import Request
-from starlette.responses import HTMLResponse, RedirectResponse
 
 from mcp.server.auth.provider import (
     AccessToken,
     AuthorizationCode,
     AuthorizationParams,
-    AuthorizeError,
-    OAuthAuthorizationServerProvider,
     RefreshToken,
     construct_redirect_uri,
 )
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
+from starlette.requests import Request
+from starlette.responses import HTMLResponse
 
 # ---------------------------------------------------------------------------
 # Crypto helpers (HMAC-SHA256 para assinatura, sem dep externa)
@@ -44,7 +40,8 @@ TOKEN_TTL = 86400 * 30  # 30 dias
 
 def _sign(payload: dict) -> str:
     """Cria um token JWT-like: base64(payload).base64(signature)."""
-    import base64
+    import base64  # noqa: PLC0415
+
     raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     sig = hmac.new(_JWT_SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
     return f"{raw}.{sig}"
@@ -52,9 +49,10 @@ def _sign(payload: dict) -> str:
 
 def _verify(token: str) -> dict | None:
     """Verifica e decodifica um token. Retorna None se invalido."""
-    import base64
+    import base64  # noqa: PLC0415
+
     parts = token.split(".")
-    if len(parts) != 2:
+    if len(parts) != 2:  # noqa: PLR2004
         return None
     raw, sig = parts
     expected = hmac.new(_JWT_SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
@@ -63,7 +61,7 @@ def _verify(token: str) -> dict | None:
     try:
         padded = raw + "=" * (-len(raw) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded))
-    except Exception:
+    except Exception:  # noqa: BLE001
         return None
     if payload.get("exp", 0) < time.time():
         return None
@@ -82,20 +80,22 @@ _auth_codes: dict[str, dict] = {}  # code -> {params, sei_creds, ...}
 # OAuth Provider
 # ---------------------------------------------------------------------------
 
+
 class SEIProOAuthProvider:
     """OAuth 2.1 provider que encripta credenciais SEI no access token."""
 
     # -- Client registration (Dynamic Client Registration) --
 
-    async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+    async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:  # noqa: D102
         return _clients.get(client_id)
 
-    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
-        _clients[client_info.client_id] = client_info
+    async def register_client(self, client_info: OAuthClientInformationFull) -> None:  # noqa: D102
+        if client_info.client_id:
+            _clients[client_info.client_id] = client_info
 
     # -- Authorization --
 
-    async def authorize(
+    async def authorize(  # noqa: D102
         self,
         client: OAuthClientInformationFull,
         params: AuthorizationParams,
@@ -108,7 +108,7 @@ class SEIProOAuthProvider:
         }
         return f"{_BASE_URL}/login?session={temp_id}"
 
-    async def load_authorization_code(
+    async def load_authorization_code(  # noqa: D102
         self,
         client: OAuthClientInformationFull,
         authorization_code: str,
@@ -128,14 +128,15 @@ class SEIProOAuthProvider:
             resource=p.get("resource"),
         )
 
-    async def exchange_authorization_code(
+    async def exchange_authorization_code(  # noqa: D102
         self,
         client: OAuthClientInformationFull,
         authorization_code: AuthorizationCode,
     ) -> OAuthToken:
         data = _auth_codes.pop(f"code:{authorization_code.code}", None)
         if not data:
-            from mcp.server.auth.provider import TokenError
+            from mcp.server.auth.provider import TokenError  # noqa: PLC0415
+
             raise TokenError(error="invalid_grant", error_description="Code not found")
 
         sei_creds = data["sei_creds"]
@@ -166,13 +167,13 @@ class SEIProOAuthProvider:
         return OAuthToken(
             access_token=access_token,
             refresh_token=refresh_token,
-            token_type="Bearer",
+            token_type="Bearer",  # noqa: S106
             expires_in=int(TOKEN_TTL),
         )
 
     # -- Refresh --
 
-    async def load_refresh_token(
+    async def load_refresh_token(  # noqa: D102
         self,
         client: OAuthClientInformationFull,
         refresh_token: str,
@@ -189,7 +190,7 @@ class SEIProOAuthProvider:
             expires_at=int(payload.get("exp", 0)),
         )
 
-    async def exchange_refresh_token(
+    async def exchange_refresh_token(  # noqa: D102
         self,
         client: OAuthClientInformationFull,
         refresh_token: RefreshToken,
@@ -197,7 +198,8 @@ class SEIProOAuthProvider:
     ) -> OAuthToken:
         payload = _verify(refresh_token.token)
         if not payload:
-            from mcp.server.auth.provider import TokenError
+            from mcp.server.auth.provider import TokenError  # noqa: PLC0415
+
             raise TokenError(error="invalid_grant", error_description="Invalid refresh token")
 
         sei_creds = payload["sei"]
@@ -228,13 +230,13 @@ class SEIProOAuthProvider:
         return OAuthToken(
             access_token=new_access,
             refresh_token=new_refresh,
-            token_type="Bearer",
+            token_type="Bearer",  # noqa: S106
             expires_in=int(TOKEN_TTL),
         )
 
     # -- Token verification --
 
-    async def load_access_token(self, token: str) -> AccessToken | None:
+    async def load_access_token(self, token: str) -> AccessToken | None:  # noqa: D102
         payload = _verify(token)
         if not payload or payload.get("type") != "access":
             return None
@@ -247,7 +249,7 @@ class SEIProOAuthProvider:
 
     # -- Revocation (no-op, tokens são stateless) --
 
-    async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+    async def revoke_token(self, token: AccessToken | RefreshToken) -> None:  # noqa: D102
         pass  # Tokens stateless — expiram naturalmente
 
 
@@ -260,7 +262,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SEI Pro — Login</title>
+<title>todos — Login</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, system-ui, sans-serif; background: #0f172a;
@@ -287,12 +289,14 @@ _LOGIN_HTML = """<!DOCTYPE html>
 <body>
 <form class="card" method="POST" action="/login">
   <input type="hidden" name="session" value="{session}">
-  <div class="logo"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAKHSURBVFhH7ZY9aBRBFMf/M3t3uYuJIoIWFjYiCIKNnYWgIIggKIiF2FgIFhYKgp2NjWBhI1iIiI2FhQiCIBZW" alt="SEI Pro"></div>
-  <h1>SEI Pro</h1>
+  <h1>todos</h1>
   <p class="sub">Conecte sua conta do SEI ao Claude</p>
-  <label for="sei_url">URL da API do SEI</label>
-  <input id="sei_url" name="sei_url" type="url" required
+  <label for="sei_url">URL da API do SEI (opcional &#8212; deixe em branco se sem mod-wssei)</label>
+  <input id="sei_url" name="sei_url" type="url"
          placeholder="https://sei.orgao.gov.br/sei/modulos/wssei/controlador_ws.php/api/v2">
+  <label for="sei_web_url">URL base do SEI (obrigat&#243;ria se a URL da API ficar em branco)</label>
+  <input id="sei_web_url" name="sei_web_url" type="url"
+         placeholder="https://sei.orgao.gov.br">
   <label for="sei_usuario">Usu&#225;rio</label>
   <input id="sei_usuario" name="sei_usuario" required placeholder="seu.usuario">
   <label for="sei_senha">Senha</label>
@@ -316,18 +320,30 @@ async def login_page(request: Request) -> HTMLResponse:
     return HTMLResponse(_LOGIN_HTML.replace("{session}", session))
 
 
-async def login_submit(request: Request):
+async def login_submit(request: Request):  # noqa: ANN201
     """POST /login — recebe credenciais, gera auth code, redireciona de volta ao Claude."""
     form = await request.form()
     session_id = str(form.get("session", ""))
-    pending = _auth_codes.pop(f"pending:{session_id}", None)
+    pending = _auth_codes.get(f"pending:{session_id}")
     if not pending:
         return HTMLResponse("<h1>Sessao expirada. Tente novamente.</h1>", status_code=400)
 
     # Checkbox marcado envia "false"; desmarcado não envia nada (= "true")
     verify_ssl = "false" if form.get("sei_verify_ssl") == "false" else "true"
+    sei_url = str(form.get("sei_url", "")).strip()
+    sei_web_url = str(form.get("sei_web_url", "")).strip()
+    if not sei_url and not sei_web_url:
+        # Não consome a sessão pendente: o usuário pode voltar e corrigir
+        return HTMLResponse(
+            "<h1>Informe a URL da API do SEI ou a URL base do SEI (web).</h1>",
+            status_code=400,
+        )
+
+    # Validação ok — consome a sessão pendente (uso único)
+    _auth_codes.pop(f"pending:{session_id}", None)
     sei_creds = {
-        "sei_url": str(form.get("sei_url", "")),
+        "sei_url": sei_url,
+        "sei_web_url": sei_web_url,
         "sei_usuario": str(form.get("sei_usuario", "")),
         "sei_senha": str(form.get("sei_senha", "")),
         "sei_orgao": str(form.get("sei_orgao", "0")),
@@ -359,7 +375,7 @@ _SUCCESS_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>SEI Pro &#8212; Configurado!</title>
+<title>todos &#8212; Configurado!</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, system-ui, sans-serif; background: #0f172a;
@@ -392,7 +408,7 @@ _SUCCESS_HTML = """<!DOCTYPE html>
 <div class="card">
   <a class="back" href="javascript:history.back()">&larr; Voltar</a>
   <div class="check">&#10003;</div>
-  <h1>SEI Pro configurado!</h1>
+  <h1>todos configurado!</h1>
   <p>Credenciais de <span class="user">{usuario}</span> salvas com seguran&#231;a.</p>
   <ul class="steps">
     <li data-n="1">Clique em <strong>Continuar</strong> para voltar ao Claude</li>

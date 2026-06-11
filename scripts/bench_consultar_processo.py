@@ -157,7 +157,7 @@ async def _consultar_completo(client, protocolo: str) -> tuple[dict, int]:
 
 
 async def bench_method_a(protocolo: str, n_warm: int, unit_id: str) -> RunResult:
-    from mcp_seipro.sei_client import SEIClient
+    from todos.sei_client import SEIClient
 
     result = RunResult(method="A")
     client = SEIClient()

@@ -5,25 +5,29 @@ import base64
 import json
 import logging
 import os
-from contextlib import asynccontextmanager
-from typing import Literal
+from collections.abc import Callable
+from contextlib import asynccontextmanager, suppress
+from typing import Any, Literal, cast
 
-from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.fastmcp import Context, FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 
-from mcp_seipro.sei_client import SEIClient
-from mcp_seipro.sei_web_client import SEIWebClient
-from mcp_seipro.html_utils import (
-    html_to_text, html_to_markdown,
-    pdf_to_text, pdf_to_markdown,
+from todos import access_control
+from todos.html_utils import (
+    html_to_markdown,
+    html_to_text,
+    pdf_to_markdown,
+    pdf_to_text,
     sanitize_iso8859,
 )
-from mcp_seipro.sei_styles import (
-    SEI_STYLES, STYLE_SHORTCUTS,
-    html_referencia_sei, html_destinatario,
+from todos.sei_client import SEIClient
+from todos.sei_styles import (
+    SEI_STYLES,
+    STYLE_SHORTCUTS,
+    html_referencia_sei,
 )
-from mcp_seipro import access_control
+from todos.sei_web_client import SEIWebClient
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +35,11 @@ MAX_BINARY_SIZE = 10 * 1024 * 1024  # 10 MB
 
 # Detecta modo HTTP (Railway injeta PORT)
 _http_mode = bool(os.environ.get("PORT"))
-_http_port = int(os.environ.get("PORT", 8000))
+_http_port = int(os.environ.get("PORT", 8000))  # noqa: PLW1508
 
 
 @asynccontextmanager
-async def lifespan(server: FastMCP):
+async def lifespan(_server: FastMCP):  # noqa: ANN201, D103
     if _http_mode:
         # Modo HTTP: clients criados por request com credenciais do token OAuth
         yield {"sei": None, "sei_web": None}
@@ -50,64 +54,75 @@ async def lifespan(server: FastMCP):
             await web_client.close()
 
 
-def _get_client(ctx: Context) -> SEIClient:
+def _get_client(ctx: Context | None) -> SEIClient:
     """Obtém o SEIClient REST, criando sob demanda em modo HTTP."""
+    if ctx is None:
+        raise ValueError("Contexto MCP nao disponivel.")  # noqa: EM101, TRY003
     client = ctx.request_context.lifespan_context.get("sei")
     if client is not None:
         return client
 
     # Modo HTTP: extrai credenciais do token OAuth
     if _http_mode:
-        from mcp.server.auth.middleware.auth_context import get_access_token
-        from mcp_seipro.auth import get_sei_credentials_from_token
+        from mcp.server.auth.middleware.auth_context import get_access_token  # noqa: PLC0415
+
+        from todos.auth import get_sei_credentials_from_token  # noqa: PLC0415
 
         access_token = get_access_token()
         if not access_token:
-            raise ValueError("Autenticacao necessaria. Reconecte o MCP.")
+            raise ValueError("Autenticacao necessaria. Reconecte o MCP.")  # noqa: EM101, TRY003
 
         creds = get_sei_credentials_from_token(access_token.token)
         if not creds:
-            raise ValueError("Token invalido ou expirado. Reconecte o MCP.")
+            raise ValueError("Token invalido ou expirado. Reconecte o MCP.")  # noqa: EM101, TRY003
 
         client = SEIClient(**creds)
         ctx.request_context.lifespan_context["sei"] = client
         return client
 
-    raise ValueError("SEIClient nao configurado. Verifique as variaveis de ambiente.")
+    raise ValueError("SEIClient nao configurado. Verifique as variaveis de ambiente.")  # noqa: EM101, TRY003
 
 
-def _get_web_client(ctx: Context) -> SEIWebClient:
+def _get_web_client(ctx: Context | None) -> SEIWebClient:
     """Obtém o SEIWebClient (scraper), criando sob demanda em modo HTTP.
 
     O scraper mantém estado de sessão (cookies + infra_hash) e por isso é
     instanciado uma vez por contexto, não por chamada.
     """
+    if ctx is None:
+        raise ValueError("Contexto MCP nao disponivel.")  # noqa: EM101, TRY003
     client = ctx.request_context.lifespan_context.get("sei_web")
     if client is not None:
         return client
 
     if _http_mode:
-        from mcp.server.auth.middleware.auth_context import get_access_token
-        from mcp_seipro.auth import get_sei_credentials_from_token
+        from mcp.server.auth.middleware.auth_context import get_access_token  # noqa: PLC0415
+
+        from todos.auth import get_sei_credentials_from_token  # noqa: PLC0415
 
         access_token = get_access_token()
         if not access_token:
-            raise ValueError("Autenticacao necessaria. Reconecte o MCP.")
+            raise ValueError("Autenticacao necessaria. Reconecte o MCP.")  # noqa: EM101, TRY003
         creds = get_sei_credentials_from_token(access_token.token)
         if not creds:
-            raise ValueError("Token invalido ou expirado. Reconecte o MCP.")
+            raise ValueError("Token invalido ou expirado. Reconecte o MCP.")  # noqa: EM101, TRY003
         client = SEIWebClient(**creds)
         ctx.request_context.lifespan_context["sei_web"] = client
         return client
 
-    raise ValueError("SEIWebClient nao configurado.")
+    raise ValueError("SEIWebClient nao configurado.")  # noqa: EM101, TRY003
 
 
-_http_kwargs = {}
+_http_kwargs: dict[str, Any] = {}
 if _http_mode:
+    from mcp.server.auth.settings import (
+        AuthSettings,
+        ClientRegistrationOptions,
+        RevocationOptions,
+    )
     from pydantic import AnyHttpUrl
-    from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
-    from mcp_seipro.auth import SEIProOAuthProvider
+
+    from todos.auth import SEIProOAuthProvider
 
     _base_url = os.environ.get("BASE_URL", f"http://localhost:{_http_port}")
     _provider = SEIProOAuthProvider()
@@ -184,6 +199,7 @@ mcp = FastMCP(
 
 class _ConsentimentoRestrito(BaseModel):
     """Schema de elicitInput para consentimento de acesso a documento restrito."""
+
     autorizo_acesso: bool = Field(
         default=False,
         description=(
@@ -197,20 +213,20 @@ class _ConsentimentoRestrito(BaseModel):
 _ELICIT_TIMEOUT_S = float(os.environ.get("SEI_ELICIT_TIMEOUT_S", "30"))
 
 
-def _cliente_suporta_elicit(ctx: Context) -> bool:
+def _cliente_suporta_elicit(ctx: Context | None) -> bool:
     """Verifica via MCP capabilities se o cliente declarou suporte a elicit."""
     if ctx is None:
         return False
     try:
         caps = ctx.request_context.session.client_params.capabilities  # type: ignore[attr-defined]
-    except Exception:
+    except Exception:  # noqa: BLE001
         return False
     return getattr(caps, "elicitation", None) is not None
 
 
 async def _solicitar_consentimento_via_elicit(
-    ctx: Context,
-    nivel: str,
+    ctx: Context | None,
+    nivel: str | None,  # noqa: ARG001
     rotulo: str,
     hipotese: str | None,
     alvo: dict,
@@ -230,7 +246,7 @@ async def _solicitar_consentimento_via_elicit(
     hl_txt = f"\nHipótese legal: {hipotese}" if hipotese else ""
     alvo_txt = ""
     if alvo.get("tipo") == "documento":
-        alvo_txt = f"\nDocumento: id {alvo.get('id')} (tipo {alvo.get('tipo_documento','?')})"
+        alvo_txt = f"\nDocumento: id {alvo.get('id')} (tipo {alvo.get('tipo_documento', '?')})"
     elif alvo.get("tipo") == "processo":
         alvo_txt = f"\nProcesso: {alvo.get('protocolo')}"
 
@@ -241,19 +257,21 @@ async def _solicitar_consentimento_via_elicit(
         "Se não autorizar, o MCP retornará apenas um aviso ao modelo."
     )
 
+    if ctx is None:
+        return "nao_suportado"
     try:
         result = await asyncio.wait_for(
             ctx.elicit(message=message, schema=_ConsentimentoRestrito),
             timeout=_ELICIT_TIMEOUT_S,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
-            f"elicit timeout após {_ELICIT_TIMEOUT_S}s — cliente não respondeu, "
+            f"elicit timeout após {_ELICIT_TIMEOUT_S}s — cliente não respondeu, "  # noqa: G004
             "caindo no fallback JSON"
         )
         return "nao_suportado"
-    except Exception as e:
-        logger.debug(f"elicit falhou ({type(e).__name__}: {e}) — fallback JSON")
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"elicit falhou ({type(e).__name__}: {e}) — fallback JSON")  # noqa: G004
         return "nao_suportado"
 
     if result.action == "accept" and result.data and result.data.autorizo_acesso:
@@ -261,12 +279,12 @@ async def _solicitar_consentimento_via_elicit(
     return "recusou"
 
 
-async def _aplicar_gate_documento(
-    ctx: Context,
+async def _aplicar_gate_documento(  # noqa: PLR0911
+    ctx: Context | None,
     client: SEIClient,
     id_documento: str,
     tipo_documento: str,
-    confirmou: bool,
+    confirmou: bool,  # noqa: FBT001
 ) -> tuple[str, dict | None, str]:
     """Resolve metadados e aplica o gate de acesso para um documento.
 
@@ -282,21 +300,29 @@ async def _aplicar_gate_documento(
             meta = await client.consultar_documento_externo(id_documento)
         else:
             meta = await client.consultar_documento_interno(id_documento)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         msg = str(e)
         low = msg.lower()
         if "não autorizado" in low or "nao autorizado" in low:
-            return ("erro", None, (
-                f"SEI retornou 'não autorizado' para o id {id_documento!r}. "
-                "Verifique se você passou o id INTERNO do documento (ex.: 3149544) "
-                "e não o número SEI / protocoloFormatado (ex.: 2867926). "
-                "Se tiver apenas o número SEI, use sei_buscar_documento ou "
-                "sei_ler_documento (que faz auto-resolução)."
-            ))
+            return (
+                "erro",
+                None,
+                (
+                    f"SEI retornou 'não autorizado' para o id {id_documento!r}. "
+                    "Verifique se você passou o id INTERNO do documento (ex.: 3149544) "
+                    "e não o número SEI / protocoloFormatado (ex.: 2867926). "
+                    "Se tiver apenas o número SEI, use sei_buscar_documento ou "
+                    "sei_ler_documento (que faz auto-resolução)."
+                ),
+            )
         return ("erro", None, f"Falha ao consultar metadados: {msg}")
 
     nivel, hipotese = access_control.extrair_nivel(meta)
-    alvo = {"tipo": "documento", "id": str(id_documento), "tipo_documento": tipo_documento}
+    alvo = {
+        "tipo": "documento",
+        "id": str(id_documento),
+        "tipo_documento": tipo_documento,
+    }
 
     if not access_control.precisa_disclaimer(nivel):
         return ("liberar", None, "")
@@ -362,7 +388,7 @@ async def _resolver_processo(client: SEIClient, referencia: str) -> str:
     return referencia
 
 
-def _json(data) -> str:
+def _json(data) -> str:  # noqa: ANN001
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -386,7 +412,7 @@ async def sei_listar_unidades(ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.listar_unidades_usuario()
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -402,7 +428,7 @@ async def sei_trocar_unidade(id_unidade: str, ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.trocar_unidade(id_unidade)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -411,7 +437,7 @@ async def sei_pesquisar_unidades(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa unidades disponíveis no SEI por nome ou sigla.
 
@@ -422,15 +448,15 @@ async def sei_pesquisar_unidades(
         client = _get_client(ctx)
         result = await client.pesquisar_unidades(filtro=filtro, limit=limit, start=pagina)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_listar_usuarios(
     filtro: str = "",
-    apenas_unidade: bool = True,
-    ctx: Context = None,
+    apenas_unidade: bool = True,  # noqa: FBT001, FBT002
+    ctx: Context | None = None,
 ) -> str:
     """Lista usuários no SEI, com filtro por nome ou sigla.
 
@@ -444,7 +470,7 @@ async def sei_listar_usuarios(
         client = _get_client(ctx)
         result = await client.listar_usuarios(filtro=filtro, apenas_unidade=apenas_unidade)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -454,7 +480,7 @@ async def sei_listar_usuarios(
 
 
 @mcp.tool()
-async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
+async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:  # noqa: C901
     """Consulta um processo SEI pelo número de protocolo formatado.
 
     Exemplo de protocolo: 50300.000123/2025-00
@@ -483,30 +509,28 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
     try:
         client = _get_client(ctx)
         web = _get_web_client(ctx)
-        if web._inbox_url is None:
+        if web._inbox_url is None:  # noqa: SLF001
             try:
                 await web.login()
-            except Exception as e:
-                logger.warning(f"web login falhou, seguindo só com REST: {e}")
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"web login falhou, seguindo só com REST: {e}")  # noqa: G004
 
         # roda REST completo e web em paralelo; suporta falha individual
         rest_task = asyncio.create_task(client.consultar_processo_completo(protocolo_formatado))
         web_task = asyncio.create_task(web.consultar_processo(protocolo_formatado))
-        rest_result, web_result = await asyncio.gather(
-            rest_task, web_task, return_exceptions=True
-        )
+        rest_result, web_result = await asyncio.gather(rest_task, web_task, return_exceptions=True)
 
         merged: dict = {}
         warnings: list[str] = []
 
         if isinstance(rest_result, Exception):
             warnings.append(f"REST falhou: {rest_result}")
-        else:
+        elif isinstance(rest_result, dict):
             merged.update(rest_result)
 
         if isinstance(web_result, Exception):
             warnings.append(f"Web scraper falhou: {web_result}")
-        else:
+        elif isinstance(web_result, dict):
             # Web traz documentos[], relacionados[] e id_procedimento (snake_case).
             # Não sobrescreve campos da REST que tenham nomes parecidos —
             # REST é a fonte canônica para metadata; web complementa com docs.
@@ -523,19 +547,20 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
         nivel, hipotese = access_control.extrair_nivel(merged)
         if access_control.precisa_disclaimer(nivel):
             merged["_aviso_acesso"] = access_control.construir_disclaimer_acompanhante(
-                nivel, hipotese,
+                nivel,
+                hipotese,
                 alvo={"tipo": "processo", "protocolo": protocolo_formatado},
             )
 
         return _json(merged)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_arvore_processo(
     protocolo_formatado: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Mostra a árvore completa de documentos de um processo SEI.
 
@@ -549,18 +574,18 @@ async def sei_arvore_processo(
     """
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:
+        if web._inbox_url is None:  # noqa: SLF001
             await web.login()
         result = await web.listar_documentos(protocolo_formatado)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_listar_documentos(
     protocolo_formatado: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista todos os documentos de um processo SEI.
 
@@ -572,19 +597,19 @@ async def sei_listar_documentos(
     """
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:
+        if web._inbox_url is None:  # noqa: SLF001
             await web.login()
         result = await web.listar_documentos(protocolo_formatado)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_buscar_documento(
+async def sei_buscar_documento(  # noqa: C901
     numero_sei: str,
     processo: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Busca um documento pelo número SEI (ex: SEI 2843449, SEI nº 2843449).
 
@@ -614,15 +639,19 @@ async def sei_buscar_documento(
             for d in docs:
                 proto = d.get("atributos", {}).get("protocoloFormatado", "")
                 if _match(proto):
-                    return _json({
-                        "encontrado": True,
-                        "id_procedimento": id_procedimento,
-                        "documento": d,
-                    })
-            return _json({
-                "encontrado": False,
-                "mensagem": f"SEI {numero_sei} não encontrado no processo {id_procedimento}",
-            })
+                    return _json(
+                        {
+                            "encontrado": True,
+                            "id_procedimento": id_procedimento,
+                            "documento": d,
+                        }
+                    )
+            return _json(
+                {
+                    "encontrado": False,
+                    "mensagem": f"SEI {numero_sei} não encontrado no processo {id_procedimento}",
+                }
+            )
 
         # Estratégia 2: pesquisa textual (Solr) para achar o processo
         result = await client.pesquisar_processos(palavras_chave=numero_sei, limit=20)
@@ -637,24 +666,28 @@ async def sei_buscar_documento(
                 for d in docs:
                     proto = d.get("atributos", {}).get("protocoloFormatado", "")
                     if _match(proto):
-                        return _json({
-                            "encontrado": True,
-                            "processo": p.get("protocoloFormatadoProcedimento", ""),
-                            "id_procedimento": id_proc,
-                            "documento": d,
-                        })
-            except Exception:
+                        return _json(
+                            {
+                                "encontrado": True,
+                                "processo": p.get("protocoloFormatadoProcedimento", ""),
+                                "id_procedimento": id_proc,
+                                "documento": d,
+                            }
+                        )
+            except Exception:  # noqa: BLE001, S112
                 continue
 
-        return _json({
-            "encontrado": False,
-            "processos_pesquisados": len(processos_candidatos),
-            "mensagem": f"SEI {numero_sei} não encontrado via pesquisa textual",
-            "dica": "A pesquisa Solr pode não indexar esse documento. "
-                    "Informe o número do processo (id_procedimento) para busca direta, "
-                    "ou use sei_arvore_processo com o protocolo do processo.",
-        })
-    except Exception as e:
+        return _json(
+            {
+                "encontrado": False,
+                "processos_pesquisados": len(processos_candidatos),
+                "mensagem": f"SEI {numero_sei} não encontrado via pesquisa textual",
+                "dica": "A pesquisa Solr pode não indexar esse documento. "
+                "Informe o número do processo (id_procedimento) para busca direta, "
+                "ou use sei_arvore_processo com o protocolo do processo.",
+            }
+        )
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -690,9 +723,9 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
                         doc_id = str(d["id"])
                         tipo = d.get("atributos", {}).get("tipoDocumento", "I")
                         return doc_id, tipo
-            except Exception:
+            except Exception:  # noqa: BLE001, S112
                 continue
-    except Exception:
+    except Exception:  # noqa: BLE001, S110
         pass
 
     # Estratégia 2: Tentar como id direto (para quando o usuário informa o id interno)
@@ -701,9 +734,9 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
     try:
         raw = await client.visualizar_documento_interno(referencia)
         # Validar que realmente retornou conteúdo (não erro mascarado)
-        if raw and len(raw) > 10:
+        if raw and len(raw) > 10:  # noqa: PLR2004
             return referencia, "I"
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         msg = str(e)
         # "não autorizado" pode significar que o id existe mas sem permissão
         # OU que o protocoloFormatado coincidiu com outro id — não confiável
@@ -713,20 +746,20 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
     # Não tentar como externo automaticamente — risco alto de confusão id/proto
     # O fallback para externo só deve ser usado com id_procedimento conhecido
 
-    raise Exception(
-        f"Documento '{referencia}' não encontrado via pesquisa. "
+    raise Exception(  # noqa: TRY002, TRY003
+        f"Documento '{referencia}' não encontrado via pesquisa. "  # noqa: EM102
         "Se é um documento recém-criado, o Solr pode não ter indexado ainda. "
         "Use sei_arvore_processo com o protocolo do processo para encontrá-lo."
     )
 
 
 @mcp.tool()
-async def sei_ler_documento(
+async def sei_ler_documento(  # noqa: C901, PLR0911, PLR0912
     id_documento: str,
     tipo_documento: Literal["auto", "I", "X"] = "auto",
     formato: Literal["markdown", "texto", "html"] = "markdown",
-    confirmar_acesso_restrito: bool = False,
-    ctx: Context = None,
+    confirmar_acesso_restrito: bool = False,  # noqa: FBT001, FBT002
+    ctx: Context | None = None,
 ) -> str:
     """Lê o conteúdo de um documento do SEI e retorna texto legível.
 
@@ -755,20 +788,26 @@ async def sei_ler_documento(
         client = _get_client(ctx)
 
         # Resolver referência → id interno + tipo
+        tipo_doc: str = tipo_documento
         if tipo_documento == "auto":
             try:
                 doc_id, detected_tipo = await _resolver_documento(client, id_documento)
                 id_documento = doc_id
-                tipo_documento = detected_tipo
-            except Exception as e:
-                return _json({
-                    "error": str(e),
-                    "dica": "Use sei_arvore_processo para ver os documentos "
-                            "do processo e seus IDs.",
-                })
+                tipo_doc = detected_tipo
+            except Exception as e:  # noqa: BLE001
+                return _json(
+                    {
+                        "error": str(e),
+                        "dica": "Use sei_arvore_processo para ver os documentos "
+                        "do processo e seus IDs.",
+                    }
+                )
 
         acao, payload, erro = await _aplicar_gate_documento(
-            ctx, client, str(id_documento), tipo_documento,
+            ctx,
+            client,
+            str(id_documento),
+            tipo_doc,
             confirmou=confirmar_acesso_restrito,
         )
         if acao == "erro":
@@ -777,7 +816,7 @@ async def sei_ler_documento(
             return _json(payload)
         disclaimer = payload  # liberar (None se público, dict se restrito autorizado)
 
-        if tipo_documento == "X":
+        if tipo_doc == "X":
             content = await client.baixar_anexo(id_documento)
             if len(content) > MAX_BINARY_SIZE:
                 return _error(
@@ -813,23 +852,24 @@ async def sei_ler_documento(
             return resultado
         if disclaimer:
             return access_control.envelopar_html(disclaimer, raw)
-        return raw
-    except Exception as e:
+        return raw  # noqa: TRY300
+    except Exception as e:  # noqa: BLE001
         msg = str(e)
         if "não autorizado" in msg.lower() or "nao autorizado" in msg.lower():
-            return _json({
-                "error": msg,
-                "dica": "Acesso negado. Troque para a unidade geradora "
-                        "com sei_trocar_unidade.",
-            })
+            return _json(
+                {
+                    "error": msg,
+                    "dica": "Acesso negado. Troque para a unidade geradora com sei_trocar_unidade.",
+                }
+            )
         return _error(msg)
 
 
 @mcp.tool()
 async def sei_baixar_anexo(
     id_documento: str,
-    confirmar_acesso_restrito: bool = False,
-    ctx: Context = None,
+    confirmar_acesso_restrito: bool = False,  # noqa: FBT001, FBT002
+    ctx: Context | None = None,
 ) -> str:
     """Baixa um documento externo (anexo) do SEI em base64.
 
@@ -855,15 +895,20 @@ async def sei_baixar_anexo(
         try:
             doc_id, _ = await _resolver_documento(client, id_documento)
             id_documento = doc_id
-        except Exception as e:
-            return _json({
-                "error": str(e),
-                "dica": "Use sei_arvore_processo ou sei_buscar_documento para "
-                        "encontrar o id correto do documento.",
-            })
+        except Exception as e:  # noqa: BLE001
+            return _json(
+                {
+                    "error": str(e),
+                    "dica": "Use sei_arvore_processo ou sei_buscar_documento para "
+                    "encontrar o id correto do documento.",
+                }
+            )
 
         acao, payload, erro = await _aplicar_gate_documento(
-            ctx, client, str(id_documento), "X",
+            ctx,
+            client,
+            str(id_documento),
+            "X",
             confirmou=confirmar_acesso_restrito,
         )
         if acao == "erro":
@@ -878,14 +923,14 @@ async def sei_baixar_anexo(
                 f"Documento muito grande ({len(content)} bytes, limite {MAX_BINARY_SIZE}). "
                 "Baixe manualmente pelo SEI."
             )
-        resposta = {
+        resposta: dict = {
             "base64": base64.b64encode(content).decode(),
             "size_bytes": len(content),
         }
         if disclaimer:
             resposta["aviso_acesso"] = disclaimer
         return _json(resposta)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -895,13 +940,13 @@ async def sei_baixar_anexo(
 
 
 @mcp.tool()
-async def sei_criar_documento(
+async def sei_criar_documento(  # noqa: PLR0913
     processo: str,
     id_serie: str,
     descricao: str = "",
     nivel_acesso: str = "0",
     id_unidade: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um novo documento interno (nativo) em um processo SEI.
 
@@ -926,12 +971,12 @@ async def sei_criar_documento(
             id_unidade=id_unidade,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_listar_secoes(id_documento: str, ctx: Context = None) -> str:
+async def sei_listar_secoes(id_documento: str, ctx: Context | None = None) -> str:
     """Lista as seções editáveis de um documento interno SEI.
 
     Retorna as seções com seus IDs, conteúdo atual (HTML),
@@ -942,14 +987,14 @@ async def sei_listar_secoes(id_documento: str, ctx: Context = None) -> str:
         client = _get_client(ctx)
         result = await client.listar_secao_documento(id_documento)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_gerar_referencia(
     numero_sei: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Gera o HTML de referência (hiperlink dinâmico) para um documento SEI.
 
@@ -965,18 +1010,20 @@ async def sei_gerar_referencia(
         client = _get_client(ctx)
         doc_id, _ = await _resolver_documento(client, numero_sei)
         snippet = html_referencia_sei(doc_id, numero_sei)
-        return _json({
-            "numero_sei": numero_sei,
-            "id_documento": doc_id,
-            "html": snippet,
-            "uso": f'...SEI n&ordm; {snippet}...',
-        })
-    except Exception as e:
+        return _json(
+            {
+                "numero_sei": numero_sei,
+                "id_documento": doc_id,
+                "html": snippet,
+                "uso": f"...SEI n&ordm; {snippet}...",
+            }
+        )
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_estilos(categoria: str = "", ctx: Context = None) -> str:
+async def sei_estilos(categoria: str = "", ctx: Context | None = None) -> str:  # noqa: ARG001
     """Lista os estilos CSS disponíveis para formatação de documentos no SEI.
 
     O SEI usa classes CSS padronizadas em todos os documentos governamentais.
@@ -995,17 +1042,23 @@ async def sei_estilos(categoria: str = "", ctx: Context = None) -> str:
     """
     try:
         if not categoria or categoria == "atalhos":
-            return _json({
-                "atalhos": STYLE_SHORTCUTS,
-                "dica": "Use sei_estilos('todos') para ver todos os estilos com exemplos.",
-            })
+            return _json(
+                {
+                    "atalhos": STYLE_SHORTCUTS,
+                    "dica": "Use sei_estilos('todos') para ver todos os estilos com exemplos.",
+                }
+            )
 
         if categoria == "todos":
             return _json(SEI_STYLES)
 
         filtros = {
             "texto": ["Texto_"],
-            "titulo": ["Texto_Centralizado_Maiusculas", "Texto_Fundo_Cinza", "Texto_Espaco_Duplo"],
+            "titulo": [
+                "Texto_Centralizado_Maiusculas",
+                "Texto_Fundo_Cinza",
+                "Texto_Espaco_Duplo",
+            ],
             "lista": ["Paragrafo_Numerado", "Item_Nivel", "Item_Alinea", "Item_Inciso"],
             "tabela": ["Tabela_"],
             "destaque": ["Citacao", "Tachado", "Texto_Fundo_Cinza", "Texto_Mono"],
@@ -1013,18 +1066,20 @@ async def sei_estilos(categoria: str = "", ctx: Context = None) -> str:
 
         prefixos = filtros.get(categoria, [])
         if not prefixos:
-            return _json({
-                "error": f"Categoria '{categoria}' não encontrada",
-                "categorias": list(filtros.keys()) + ["todos", "atalhos"],
-            })
+            return _json(
+                {
+                    "error": f"Categoria '{categoria}' não encontrada",
+                    "categorias": list(filtros.keys()) + ["todos", "atalhos"],  # noqa: RUF005
+                }
+            )
 
         resultado = {}
         for nome, info in SEI_STYLES.items():
             if any(nome.startswith(p) for p in prefixos):
-                resultado[nome] = info
+                resultado[nome] = info  # noqa: PERF403
 
         return _json(resultado)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -1033,7 +1088,7 @@ async def sei_editar_secao(
     id_documento: str,
     secoes: list[dict],
     versao: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera o conteúdo de seções editáveis de um documento interno SEI.
 
@@ -1054,7 +1109,7 @@ async def sei_editar_secao(
     """
     try:
         client = _get_client(ctx)
-        import html as html_module
+        import html as html_module  # noqa: PLC0415
 
         # Buscar todas as seções atuais do documento
         secoes_data = await client.listar_secao_documento(id_documento)
@@ -1086,11 +1141,13 @@ async def sei_editar_secao(
                 # Seção original — fazer unescape do HTML-escaped
                 conteudo = html_module.unescape(s.get("conteudo", "") or "")
 
-            secoes_enviar.append({
-                "id": str(sid),
-                "idSecaoModelo": str(modelo),
-                "conteudo": sanitize_iso8859(conteudo),
-            })
+            secoes_enviar.append(
+                {
+                    "id": str(sid),
+                    "idSecaoModelo": str(modelo),
+                    "conteudo": sanitize_iso8859(conteudo),
+                }
+            )
 
         result = await client.alterar_secao_documento(
             id_documento=id_documento,
@@ -1098,7 +1155,7 @@ async def sei_editar_secao(
             versao=versao,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -1113,7 +1170,7 @@ async def sei_listar_processos(
     apenas_meus: str = "",
     tipo: str = "",
     filtro: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista processos da caixa da unidade atual no SEI (Controle de Processos).
 
@@ -1148,7 +1205,7 @@ async def sei_listar_processos(
     """
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:
+        if web._inbox_url is None:  # noqa: SLF001
             await web.login()
         result = await web.listar_processos(
             detalhada=True,
@@ -1158,99 +1215,112 @@ async def sei_listar_processos(
             filtro=filtro,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 _CAMPOS_AGRUPAMENTO = {
     "tipo": {
         "desc": "Tipo processual",
-        "extract": lambda a, s: a.get("tipoProcesso", "Sem tipo"),
+        "extract": lambda a, s: a.get("tipoProcesso", "Sem tipo"),  # noqa: ARG005
     },
     "atribuido": {
         "desc": "Usuário atribuído",
-        "extract": lambda a, s: a.get("usuarioAtribuido") or "Sem atribuição",
+        "extract": lambda a, s: a.get("usuarioAtribuido") or "Sem atribuição",  # noqa: ARG005
     },
     "acesso": {
         "desc": "Nível de acesso",
-        "extract": lambda a, s: {"0": "Público", "1": "Restrito", "2": "Sigiloso"}.get(
+        "extract": lambda a, s: {"0": "Público", "1": "Restrito", "2": "Sigiloso"}.get(  # noqa: ARG005
             s.get("nivelAcessoGlobal", "0"), "Desconhecido"
         ),
     },
     "tramitacao": {
         "desc": "Em tramitação",
-        "extract": lambda a, s: "Em tramitação" if s.get("processoEmTramitacao") == "S" else "Fora de tramitação",
+        "extract": lambda a, s: (  # noqa: ARG005
+            "Em tramitação" if s.get("processoEmTramitacao") == "S" else "Fora de tramitação"
+        ),
     },
     "sobrestado": {
         "desc": "Sobrestamento",
-        "extract": lambda a, s: "Sobrestado" if s.get("processoSobrestado") == "S" else "Ativo",
+        "extract": lambda a, s: "Sobrestado" if s.get("processoSobrestado") == "S" else "Ativo",  # noqa: ARG005
     },
     "bloqueado": {
         "desc": "Bloqueio",
-        "extract": lambda a, s: "Bloqueado" if s.get("processoBloqueado") == "S" else "Desbloqueado",
+        "extract": lambda a, s: (  # noqa: ARG005
+            "Bloqueado" if s.get("processoBloqueado") == "S" else "Desbloqueado"
+        ),
     },
     "novo": {
         "desc": "Documento novo",
-        "extract": lambda a, s: "Com documentos novos" if s.get("documentoNovo") == "S" else "Sem documentos novos",
+        "extract": lambda a, s: (  # noqa: ARG005
+            "Com documentos novos" if s.get("documentoNovo") == "S" else "Sem documentos novos"
+        ),
     },
     "anotacao": {
         "desc": "Anotação",
-        "extract": lambda a, s: (
-            "Anotação prioritária" if s.get("anotacaoPrioridade") == "S"
-            else "Com anotação" if s.get("anotacao") == "S"
+        "extract": lambda a, s: (  # noqa: ARG005
+            "Anotação prioritária"
+            if s.get("anotacaoPrioridade") == "S"
+            else "Com anotação"
+            if s.get("anotacao") == "S"
             else "Sem anotação"
         ),
     },
     "retorno": {
         "desc": "Retorno programado",
-        "extract": lambda a, s: (
-            f"Atrasado ({s.get('retornoData', '')})" if s.get("retornoAtrasado") == "S"
-            else f"Programado ({s.get('retornoData', '')})" if s.get("retornoProgramado") == "S"
+        "extract": lambda a, s: (  # noqa: ARG005
+            f"Atrasado ({s.get('retornoData', '')})"
+            if s.get("retornoAtrasado") == "S"
+            else f"Programado ({s.get('retornoData', '')})"
+            if s.get("retornoProgramado") == "S"
             else "Sem retorno"
         ),
     },
     "lido_usuario": {
         "desc": "Acessado pelo usuário",
-        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUsuario") == "S" else "Não lido",
+        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUsuario") == "S" else "Não lido",  # noqa: ARG005
     },
     "lido_unidade": {
         "desc": "Acessado pela unidade",
-        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUnidade") == "S" else "Não lido",
+        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUnidade") == "S" else "Não lido",  # noqa: ARG005
     },
     "origem": {
         "desc": "Gerado/Recebido",
-        "extract": lambda a, s: "Gerado na unidade" if s.get("processoGeradoRecebido") == "G" else "Recebido",
+        "extract": lambda a, s: (  # noqa: ARG005
+            "Gerado na unidade" if s.get("processoGeradoRecebido") == "G" else "Recebido"
+        ),
     },
     "anexado": {
         "desc": "Anexado",
-        "extract": lambda a, s: "Anexado" if s.get("processoAnexado") == "S" else "Independente",
+        "extract": lambda a, s: "Anexado" if s.get("processoAnexado") == "S" else "Independente",  # noqa: ARG005
     },
     "unidades": {
         "desc": "Unidades de abertura",
-        "extract": lambda a, s: ", ".join(
-            u.get("sigla", "") for u in a.get("dadosAbertura", {}).get("lista", [])
-        ) or "N/A",
+        "extract": lambda a, s: (  # noqa: ARG005
+            ", ".join(u.get("sigla", "") for u in a.get("dadosAbertura", {}).get("lista", []))
+            or "N/A"
+        ),
     },
     "marcador": {
         "desc": "Marcador",
-        "extract": lambda a, s: ", ".join(
-            m.get("nome", "") for m in a.get("marcador", [])
-        ) or "Sem marcador",
+        "extract": lambda a, s: (  # noqa: ARG005
+            ", ".join(m.get("nome", "") for m in a.get("marcador", [])) or "Sem marcador"
+        ),
     },
     "ciencia": {
         "desc": "Ciência",
-        "extract": lambda a, s: "Com ciência" if s.get("ciencia") == "S" else "Sem ciência",
+        "extract": lambda a, s: "Com ciência" if s.get("ciencia") == "S" else "Sem ciência",  # noqa: ARG005
     },
 }
 
 
 @mcp.tool()
-async def sei_resumo_processos(
+async def sei_resumo_processos(  # noqa: C901, PLR0912
     agrupar_por: str = "tipo",
     agrupar_por_2: str = "",
     apenas_meus: str = "",
     filtro: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Gera um resumo agrupado dos processos da caixa da unidade atual.
 
@@ -1300,7 +1370,10 @@ async def sei_resumo_processos(
         pg = 0
         while True:
             result = await client.listar_processos(
-                limit=200, start=pg, apenas_meus=apenas_meus, filtro=filtro,
+                limit=200,
+                start=pg,
+                apenas_meus=apenas_meus,
+                filtro=filtro,
             )
             todos.extend(result["processos"])
             if not result.get("tem_proxima"):
@@ -1312,10 +1385,10 @@ async def sei_resumo_processos(
         for p in todos:
             a = p.get("atributos", {})
             s = a.get("status", {})
-            chave1 = campo1["extract"](a, s)
+            chave1 = cast(Callable[..., str], campo1["extract"])(a, s)  # noqa: TC006
 
             if campo2:
-                chave2 = campo2["extract"](a, s)
+                chave2 = cast(Callable[..., str], campo2["extract"])(a, s)  # noqa: TC006
                 chave = f"{chave1} | {chave2}"
             else:
                 chave = chave1
@@ -1331,26 +1404,28 @@ async def sei_resumo_processos(
             g = grupos[chave]
             item = {"grupo": chave, "quantidade": g["quantidade"]}
             # Incluir lista de processos se grupo pequeno (≤ 20)
-            if g["quantidade"] <= 20:
+            if g["quantidade"] <= 20:  # noqa: PLR2004
                 item["processos"] = g["processos"]
             resumo.append(item)
 
-        header = campo1["desc"]
+        header = cast(str, campo1["desc"])  # noqa: TC006
         if campo2:
-            header += f" × {campo2['desc']}"
+            header += f" × {cast(str, campo2['desc'])}"  # noqa: TC006
 
-        return _json({
-            "agrupamento": header,
-            "total_processos": len(todos),
-            "total_grupos": len(resumo),
-            "grupos": resumo,
-        })
-    except Exception as e:
+        return _json(
+            {
+                "agrupamento": header,
+                "total_processos": len(todos),
+                "total_grupos": len(resumo),
+                "grupos": resumo,
+            }
+        )
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_pesquisar_processos(
+async def sei_pesquisar_processos(  # noqa: PLR0913
     palavras_chave: str = "",
     descricao: str = "",
     busca_rapida: str = "",
@@ -1362,7 +1437,7 @@ async def sei_pesquisar_processos(
     grupo: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa processos no SEI por texto, descrição, datas, unidade ou assunto.
 
@@ -1394,7 +1469,7 @@ async def sei_pesquisar_processos(
             start=pagina,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -1403,7 +1478,7 @@ async def sei_pesquisar_hipoteses_legais(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa hipóteses legais disponíveis no SEI.
 
@@ -1416,10 +1491,12 @@ async def sei_pesquisar_hipoteses_legais(
     try:
         client = _get_client(ctx)
         result = await client.pesquisar_hipoteses_legais(
-            filtro=filtro, limit=limit, start=pagina,
+            filtro=filtro,
+            limit=limit,
+            start=pagina,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -1429,7 +1506,7 @@ async def sei_pesquisar_tipos_processo(
     favoritos: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa tipos de processo disponíveis no SEI.
 
@@ -1443,21 +1520,24 @@ async def sei_pesquisar_tipos_processo(
     try:
         client = _get_client(ctx)
         result = await client.pesquisar_tipos_processo(
-            filtro=filtro, favoritos=favoritos, limit=limit, start=pagina,
+            filtro=filtro,
+            favoritos=favoritos,
+            limit=limit,
+            start=pagina,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_alterar_processo(
+async def sei_alterar_processo(  # noqa: PLR0913
     processo: str,
     especificacao: str = "",
     nivel_acesso: str = "",
     hipotese_legal: str = "",
     observacao: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera metadados de um processo no SEI.
 
@@ -1482,12 +1562,12 @@ async def sei_alterar_processo(
             observacao=observacao,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_criar_processo(
+async def sei_criar_processo(  # noqa: PLR0913
     tipo_processo: str,
     especificacao: str = "",
     assuntos: str = "",
@@ -1495,7 +1575,7 @@ async def sei_criar_processo(
     observacoes: str = "",
     nivel_acesso: str = "0",
     hipotese_legal: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um novo processo no SEI.
 
@@ -1526,12 +1606,12 @@ async def sei_criar_processo(
             hipotese_legal=hipotese_legal,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_enviar_processo(
+async def sei_enviar_processo(  # noqa: PLR0913
     numero_processo: str,
     unidades_destino: str,
     manter_aberto: str = "N",
@@ -1539,7 +1619,7 @@ async def sei_enviar_processo(
     enviar_email: str = "N",
     data_retorno: str = "",
     dias_retorno: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Envia (tramita) um processo para outra(s) unidade(s) no SEI.
 
@@ -1579,10 +1659,12 @@ async def sei_enviar_processo(
                         # Usar a primeira que contém o texto
                         ids_resolvidos.append(str(unidades[0].get("id", "")))
                     else:
-                        return _json({
-                            "error": f"Unidade '{destino}' não encontrada",
-                            "dica": "Use sei_pesquisar_unidades para buscar.",
-                        })
+                        return _json(
+                            {
+                                "error": f"Unidade '{destino}' não encontrada",
+                                "dica": "Use sei_pesquisar_unidades para buscar.",
+                            }
+                        )
 
         result = await client.enviar_processo(
             numero_processo=numero_processo,
@@ -1594,14 +1676,14 @@ async def sei_enviar_processo(
             dias_retorno=dias_retorno,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_marcar_nao_lido(
     numero_processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Marca um processo como não lido na unidade atual.
 
@@ -1613,27 +1695,27 @@ async def sei_marcar_nao_lido(
     """
     try:
         client = _get_client(ctx)
-        if not client._unidade_ativa:
-            return _error(
-                "Unidade ativa não definida. Use sei_trocar_unidade primeiro."
-            )
+        if not client._unidade_ativa:  # noqa: SLF001
+            return _error("Unidade ativa não definida. Use sei_trocar_unidade primeiro.")
         result = await client.enviar_processo(
             numero_processo=numero_processo,
-            unidades_destino=client._unidade_ativa,
+            unidades_destino=client._unidade_ativa,  # noqa: SLF001
             manter_aberto="S",
             remover_anotacao="N",
             enviar_email="N",
         )
-        return _json({
-            "mensagem": "Processo marcado como não lido.",
-            "detalhe": result.get("mensagem", ""),
-        })
-    except Exception as e:
+        return _json(
+            {
+                "mensagem": "Processo marcado como não lido.",
+                "detalhe": result.get("mensagem", ""),
+            }
+        )
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_concluir_processo(numero_processo: str, ctx: Context = None) -> str:
+async def sei_concluir_processo(numero_processo: str, ctx: Context | None = None) -> str:
     """Conclui um processo na unidade atual do SEI.
 
     O processo é removido da caixa da unidade mas permanece acessível.
@@ -1643,12 +1725,12 @@ async def sei_concluir_processo(numero_processo: str, ctx: Context = None) -> st
         client = _get_client(ctx)
         result = await client.concluir_processo(numero_processo)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_reabrir_processo(processo: str, ctx: Context = None) -> str:
+async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str:
     """Reabre um processo que foi concluído na unidade.
 
     - processo: protocolo formatado (ex: 50300.018905/2018-67) ou IdProcedimento
@@ -1660,7 +1742,7 @@ async def sei_reabrir_processo(processo: str, ctx: Context = None) -> str:
         id_proc = await _resolver_processo(client, processo)
         result = await client.reabrir_processo(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -1668,7 +1750,7 @@ async def sei_reabrir_processo(processo: str, ctx: Context = None) -> str:
 async def sei_atribuir_processo(
     numero_processo: str,
     usuario: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Atribui um processo a um usuário da unidade.
 
@@ -1693,10 +1775,12 @@ async def sei_atribuir_processo(
         result = await client.listar_usuarios(filtro=usuario)
         candidatos = result.get("usuarios", [])
         if not candidatos:
-            return _json({
-                "error": f"Nenhum usuário encontrado com '{usuario}'",
-                "dica": "Use sei_listar_usuarios para ver os usuários disponíveis.",
-            })
+            return _json(
+                {
+                    "error": f"Nenhum usuário encontrado com '{usuario}'",
+                    "dica": "Use sei_listar_usuarios para ver os usuários disponíveis.",
+                }
+            )
 
         # Tentar cada candidato até um funcionar
         erros = []
@@ -1706,20 +1790,24 @@ async def sei_atribuir_processo(
             sigla = u.get("sigla", "")
             try:
                 result = await client.atribuir_processo(numero_processo, id_u)
-                return _json({
-                    "mensagem": result.get("mensagem", "Processo atribuído com sucesso!"),
-                    "usuario": {"id": id_u, "nome": nome, "sigla": sigla},
-                })
-            except Exception as e:
+                return _json(
+                    {
+                        "mensagem": result.get("mensagem", "Processo atribuído com sucesso!"),
+                        "usuario": {"id": id_u, "nome": nome, "sigla": sigla},
+                    }
+                )
+            except Exception as e:  # noqa: BLE001
                 erros.append(f"{nome} ({sigla}): {e}")
                 continue
 
-        return _json({
-            "error": f"Nenhum dos {len(candidatos)} usuários com '{usuario}' tem permissão na unidade atual",
-            "tentativas": erros,
-            "dica": "Verifique se está na unidade correta com sei_trocar_unidade.",
-        })
-    except Exception as e:
+        return _json(
+            {
+                "error": f"Nenhum dos {len(candidatos)} usuários com '{usuario}' tem permissão na unidade atual",
+                "tentativas": erros,
+                "dica": "Verifique se está na unidade correta com sei_trocar_unidade.",
+            }
+        )
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -1731,7 +1819,7 @@ async def sei_atribuir_processo(
 @mcp.tool()
 async def sei_cancelar_assinatura(
     id_documento: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Tenta cancelar (derrubar) a assinatura de um documento no SEI.
 
@@ -1747,14 +1835,12 @@ async def sei_cancelar_assinatura(
     """
     try:
         client = _get_client(ctx)
-        import html as html_module
+        import html as html_module  # noqa: PLC0415
 
         # Resolver número SEI → id interno
         doc_id = id_documento.strip()
-        try:
+        with suppress(Exception):
             doc_id, _ = await _resolver_documento(client, doc_id)
-        except Exception:
-            pass
 
         # Verificar se está assinado
         secoes_data = await client.listar_secao_documento(doc_id)
@@ -1768,28 +1854,34 @@ async def sei_cancelar_assinatura(
             sid = s.get("id")
             modelo = s.get("idSecaoModelo")
             conteudo = html_module.unescape(s.get("conteudo", "") or "")
-            secoes_enviar.append({
-                "id": str(sid),
-                "idSecaoModelo": str(modelo),
-                "conteudo": sanitize_iso8859(conteudo),
-            })
+            secoes_enviar.append(
+                {
+                    "id": str(sid),
+                    "idSecaoModelo": str(modelo),
+                    "conteudo": sanitize_iso8859(conteudo),
+                }
+            )
 
         # Tentar editar (derruba assinatura se permitido)
         result = await client.alterar_secao_documento(doc_id, secoes_enviar, versao)
-        return _json({
-            "mensagem": "Assinatura cancelada com sucesso. O documento foi editado (nova versão).",
-            "versao": result,
-        })
-    except Exception as e:
+        return _json(
+            {
+                "mensagem": "Assinatura cancelada com sucesso. O documento foi editado (nova versão).",
+                "versao": result,
+            }
+        )
+    except Exception as e:  # noqa: BLE001
         msg = str(e)
         if "assinado" in msg.lower():
-            return _json({
-                "error": "Não foi possível cancelar a assinatura via API.",
-                "motivo": msg,
-                "dica": "O processo pode ter sido enviado ou lido por outra unidade. "
-                        "Cancele a assinatura pela interface web do SEI: "
-                        "abra o documento → clique em 'Editar Conteúdo'.",
-            })
+            return _json(
+                {
+                    "error": "Não foi possível cancelar a assinatura via API.",
+                    "motivo": msg,
+                    "dica": "O processo pode ter sido enviado ou lido por outra unidade. "
+                    "Cancele a assinatura pela interface web do SEI: "
+                    "abra o documento → clique em 'Editar Conteúdo'.",
+                }
+            )
         return _error(msg)
 
 
@@ -1798,7 +1890,7 @@ async def sei_assinar_documento(
     id_documento: str,
     cargo: str = "",
     orgao: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Assina eletronicamente um documento no SEI.
 
@@ -1818,8 +1910,8 @@ async def sei_assinar_documento(
     """
     try:
         client = _get_client(ctx)
-        login = client._usuario
-        senha = client._senha
+        login = client._usuario  # noqa: SLF001
+        senha = client._senha  # noqa: SLF001
 
         # Resolver número SEI → id interno (sempre, pois ambos são numéricos
         # e indistinguíveis pelo formato; o resolver tenta Solr primeiro
@@ -1827,29 +1919,31 @@ async def sei_assinar_documento(
         doc_id = id_documento.strip()
         try:
             doc_id, _ = await _resolver_documento(client, doc_id)
-        except Exception:
+        except Exception:  # noqa: BLE001
             doc_id = id_documento.strip()  # Manter original se resolver falhar
 
         # Se cargo não informado, listar opções e pedir ao usuário
         if not cargo:
             try:
-                resp = await client._request("GET", "/assinante/listar")
+                resp = await client._request("GET", "/assinante/listar")  # noqa: SLF001
                 data = resp.json()
                 cargos = data.get("data", [])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 cargos = []
-            return _json({
-                "error": "Cargo/Função não informado — é obrigatório para assinatura.",
-                "cargos_disponiveis": cargos,
-                "dica": "Pergunte ao usuário qual cargo/função usar para assinar. "
-                        "Os cargos disponíveis estão listados acima. "
-                        "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
-                        "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
-            })
+            return _json(
+                {
+                    "error": "Cargo/Função não informado — é obrigatório para assinatura.",
+                    "cargos_disponiveis": cargos,
+                    "dica": "Pergunte ao usuário qual cargo/função usar para assinar. "
+                    "Os cargos disponíveis estão listados acima. "
+                    "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
+                    "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
+                }
+            )
 
         # Garante que a autenticação rodou e captura IdUsuario da sessão
-        await client._get_headers()
-        id_usuario = client._id_usuario or ""
+        await client._get_headers()  # noqa: SLF001
+        id_usuario = client._id_usuario or ""  # noqa: SLF001
 
         # Fallback: procurar via /usuario/listar caso loginData não traga o id
         if not id_usuario:
@@ -1859,7 +1953,7 @@ async def sei_assinar_documento(
                     if u.get("sigla", "").lower() == login.lower():
                         id_usuario = str(u.get("id_usuario") or "")
                         break
-            except Exception:
+            except Exception:  # noqa: BLE001, S110
                 pass
 
         result = await client.assinar_documento(
@@ -1871,18 +1965,18 @@ async def sei_assinar_documento(
             id_usuario=id_usuario,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_pesquisar_tipos_documento(
+async def sei_pesquisar_tipos_documento(  # noqa: PLR0913
     filtro: str = "",
     favoritos: str = "",
     aplicabilidade: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa tipos de documento (séries) disponíveis no SEI.
 
@@ -1905,7 +1999,7 @@ async def sei_pesquisar_tipos_documento(
             start=pagina,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -1919,7 +2013,7 @@ async def sei_sobrestar_processo(
     processo: str,
     motivo: str,
     processo_vinculado: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Sobresta um processo no SEI.
 
@@ -1943,27 +2037,24 @@ async def sei_sobrestar_processo(
             protocolo_vinculado=proto_vinculado,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         msg = str(e)
         # Erro comum: processo aberto em outras unidades
         if "aberto" in msg.lower() or "unidade" in msg.lower() or "sobrestar" in msg.lower():
             # Tentar listar unidades onde o processo está aberto
             try:
-                proc = await client.consultar_processo(processo)
-                resp = await client._request(
-                    "GET", f"/processo/listar/unidades/{id_proc}"
-                )
-                data = resp.json()
-                unidades = data.get("data", [])
+                unidades = await client.listar_unidades_processo(id_proc)
                 nomes = [f"{u.get('sigla', '')} ({u.get('id', '')})" for u in unidades]
-                return _json({
-                    "error": msg,
-                    "unidades_abertas": nomes,
-                    "dica": "O processo precisa estar aberto somente na unidade atual "
-                            "para ser sobrestado. Conclua o processo nas unidades "
-                            "listadas acima antes de sobrestar.",
-                })
-            except Exception:
+                return _json(
+                    {
+                        "error": msg,
+                        "unidades_abertas": nomes,
+                        "dica": "O processo precisa estar aberto somente na unidade atual "
+                        "para ser sobrestado. Conclua o processo nas unidades "
+                        "listadas acima antes de sobrestar.",
+                    }
+                )
+            except Exception:  # noqa: BLE001, S110
                 pass
         return _error(msg)
 
@@ -1971,7 +2062,7 @@ async def sei_sobrestar_processo(
 @mcp.tool()
 async def sei_remover_sobrestamento(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Remove o sobrestamento de um processo no SEI.
 
@@ -1982,7 +2073,7 @@ async def sei_remover_sobrestamento(
         id_proc = await _resolver_processo(client, processo)
         result = await client.remover_sobrestamento(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -1990,7 +2081,7 @@ async def sei_remover_sobrestamento(
 async def sei_dar_ciencia(
     referencia: str,
     tipo: Literal["documento", "processo"] = "documento",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Dá ciência em um documento ou processo no SEI.
 
@@ -2010,12 +2101,11 @@ async def sei_dar_ciencia(
             doc_id, _ = await _resolver_documento(client, referencia)
             result = await client.dar_ciencia_documento(doc_id)
             return _json(result)
-        else:
-            # Resolver protocolo → IdProcedimento
-            id_proc = await _resolver_processo(client, referencia)
-            result = await client.dar_ciencia_processo(id_proc)
-            return _json(result)
-    except Exception as e:
+        # Resolver protocolo → IdProcedimento
+        id_proc = await _resolver_processo(client, referencia)
+        result = await client.dar_ciencia_processo(id_proc)
+        return _json(result)
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2023,7 +2113,7 @@ async def sei_dar_ciencia(
 async def sei_listar_ciencias(
     referencia: str,
     tipo: Literal["documento", "processo"] = "documento",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista as ciências registradas em um documento ou processo.
 
@@ -2041,7 +2131,7 @@ async def sei_listar_ciencias(
             id_proc = await _resolver_processo(client, referencia)
             result = await client.listar_ciencias_processo(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2053,7 +2143,7 @@ async def sei_listar_ciencias(
 @mcp.tool()
 async def sei_remover_atribuicao(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Remove a atribuição de um processo (desatribui de qualquer usuário).
 
@@ -2064,14 +2154,14 @@ async def sei_remover_atribuicao(
         id_proc = await _resolver_processo(client, processo)
         result = await client.remover_atribuicao(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_receber_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Confirma o recebimento de um processo na unidade atual.
 
@@ -2082,14 +2172,14 @@ async def sei_receber_processo(
         id_proc = await _resolver_processo(client, processo)
         result = await client.receber_processo(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_listar_unidades_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista as unidades onde o processo está aberto."""
     try:
@@ -2097,14 +2187,14 @@ async def sei_listar_unidades_processo(
         id_proc = await _resolver_processo(client, processo)
         result = await client.listar_unidades_processo(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_listar_interessados(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista os interessados de um processo."""
     try:
@@ -2112,14 +2202,14 @@ async def sei_listar_interessados(
         id_proc = await _resolver_processo(client, processo)
         result = await client.listar_interessados(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_listar_sobrestamentos(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista o histórico de sobrestamentos de um processo."""
     try:
@@ -2127,21 +2217,21 @@ async def sei_listar_sobrestamentos(
         id_proc = await _resolver_processo(client, processo)
         result = await client.listar_sobrestamentos(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_listar_assinaturas(
     id_documento: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista as assinaturas de um documento."""
     try:
         client = _get_client(ctx)
         result = await client.listar_assinaturas(id_documento)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2149,7 +2239,7 @@ async def sei_listar_assinaturas(
 async def sei_registrar_andamento(
     processo: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Registra um andamento (atividade) no processo.
 
@@ -2161,7 +2251,7 @@ async def sei_registrar_andamento(
         id_proc = await _resolver_processo(client, processo)
         result = await client.registrar_andamento(id_proc, descricao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2169,25 +2259,25 @@ async def sei_registrar_andamento(
 async def sei_pesquisar_contatos(
     filtro: str = "",
     limit: int = 50,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa contatos cadastrados no SEI."""
     try:
         client = _get_client(ctx)
         result = await client.pesquisar_contatos(filtro=filtro, limit=limit)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_criar_documento_externo(
+async def sei_criar_documento_externo(  # noqa: PLR0913
     processo: str,
     id_serie: str,
     arquivo_path: str,
     descricao: str = "",
     nivel_acesso: str = "0",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um documento externo (upload de arquivo) em um processo SEI.
 
@@ -2201,12 +2291,14 @@ async def sei_criar_documento_externo(
         client = _get_client(ctx)
         id_proc = await _resolver_processo(client, processo)
         result = await client.criar_documento_externo(
-            id_procedimento=id_proc, id_serie=id_serie,
-            arquivo_path=arquivo_path, descricao=descricao,
+            id_procedimento=id_proc,
+            id_serie=id_serie,
+            arquivo_path=arquivo_path,
+            descricao=descricao,
             nivel_acesso=nivel_acesso,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2214,7 +2306,7 @@ async def sei_criar_documento_externo(
 async def sei_assinar_bloco(
     id_bloco: str,
     cargo: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Assina TODOS os documentos de um bloco de assinatura.
 
@@ -2229,27 +2321,32 @@ async def sei_assinar_bloco(
     """
     try:
         client = _get_client(ctx)
-        login = client._usuario
-        senha = client._senha
+        login = client._usuario  # noqa: SLF001
+        senha = client._senha  # noqa: SLF001
         if not cargo:
             try:
-                resp = await client._request("GET", "/assinante/listar")
+                resp = await client._request("GET", "/assinante/listar")  # noqa: SLF001
                 data = resp.json()
                 cargos = data.get("data", [])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 cargos = []
-            return _json({
-                "error": "Cargo/Função não informado.",
-                "cargos_disponiveis": cargos,
-                "dica": "Pergunte ao usuário qual cargo usar. "
-                        "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
-                        "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
-            })
+            return _json(
+                {
+                    "error": "Cargo/Função não informado.",
+                    "cargos_disponiveis": cargos,
+                    "dica": "Pergunte ao usuário qual cargo usar. "
+                    "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
+                    "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
+                }
+            )
         result = await client.assinar_bloco(
-            id_bloco=id_bloco, login=login, senha=senha, cargo=cargo,
+            id_bloco=id_bloco,
+            login=login,
+            senha=senha,
+            cargo=cargo,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2257,7 +2354,7 @@ async def sei_assinar_bloco(
 async def sei_assinar_documentos_bloco(
     documentos: str,
     cargo: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Assina documentos específicos de um bloco de assinatura.
 
@@ -2272,27 +2369,32 @@ async def sei_assinar_documentos_bloco(
     """
     try:
         client = _get_client(ctx)
-        login = client._usuario
-        senha = client._senha
+        login = client._usuario  # noqa: SLF001
+        senha = client._senha  # noqa: SLF001
         if not cargo:
             try:
-                resp = await client._request("GET", "/assinante/listar")
+                resp = await client._request("GET", "/assinante/listar")  # noqa: SLF001
                 data = resp.json()
                 cargos = data.get("data", [])
-            except Exception:
+            except Exception:  # noqa: BLE001
                 cargos = []
-            return _json({
-                "error": "Cargo/Função não informado.",
-                "cargos_disponiveis": cargos,
-                "dica": "Pergunte ao usuário qual cargo usar. "
-                        "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
-                        "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
-            })
+            return _json(
+                {
+                    "error": "Cargo/Função não informado.",
+                    "cargos_disponiveis": cargos,
+                    "dica": "Pergunte ao usuário qual cargo usar. "
+                    "IMPORTANTE: após o usuário escolher, salve o cargo na memória da conversa "
+                    "para reutilizar em todas as próximas assinaturas sem perguntar novamente.",
+                }
+            )
         result = await client.assinar_documentos_bloco(
-            login=login, senha=senha, cargo=cargo, documentos=documentos,
+            login=login,
+            senha=senha,
+            cargo=cargo,
+            documentos=documentos,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2305,7 +2407,7 @@ async def sei_assinar_documentos_bloco(
 async def sei_criar_marcador(
     nome: str,
     id_cor: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um marcador na unidade atual.
 
@@ -2317,27 +2419,29 @@ async def sei_criar_marcador(
         client = _get_client(ctx)
         if not id_cor:
             cores = await client.listar_cores_marcador()
-            return _json({
-                "error": "Cor não informada — escolha uma das cores disponíveis.",
-                "cores": cores,
-            })
+            return _json(
+                {
+                    "error": "Cor não informada — escolha uma das cores disponíveis.",
+                    "cores": cores,
+                }
+            )
         result = await client.criar_marcador(nome, id_cor)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_excluir_marcador(
     ids_marcadores: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Exclui marcador(es). IDs separados por vírgula."""
     try:
         client = _get_client(ctx)
         result = await client.excluir_marcadores(ids_marcadores)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2346,7 +2450,7 @@ async def sei_marcar_processo(
     processo: str,
     marcador: str,
     texto: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Adiciona ou altera marcador (etiqueta colorida) em um processo.
 
@@ -2362,7 +2466,7 @@ async def sei_marcar_processo(
         id_proc = await _resolver_processo(client, processo)
         result = await client.marcar_processo(id_proc, marcador, texto)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2370,7 +2474,7 @@ async def sei_marcar_processo(
 async def sei_pesquisar_marcadores(
     filtro: str = "",
     limit: int = 50,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista marcadores disponíveis na unidade atual.
 
@@ -2380,14 +2484,14 @@ async def sei_pesquisar_marcadores(
         client = _get_client(ctx)
         result = await client.pesquisar_marcadores(filtro=filtro, limit=limit)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_consultar_marcador_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Consulta os marcadores ativos de um processo."""
     try:
@@ -2395,7 +2499,7 @@ async def sei_consultar_marcador_processo(
         id_proc = await _resolver_processo(client, processo)
         result = await client.consultar_marcador_processo(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2409,7 +2513,7 @@ async def sei_acompanhar_processo(
     processo: str,
     grupo: str = "",
     observacao: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Adiciona acompanhamento especial em um processo.
 
@@ -2423,14 +2527,14 @@ async def sei_acompanhar_processo(
         id_proc = await _resolver_processo(client, processo)
         result = await client.acompanhar_processo(id_proc, grupo, observacao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_remover_acompanhamento(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Remove acompanhamento especial de um processo.
 
@@ -2447,49 +2551,49 @@ async def sei_remover_acompanhamento(
             return _error("Não foi possível identificar o acompanhamento.")
         result = await client.excluir_acompanhamento(id_acomp)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_criar_grupo_acompanhamento(
     nome: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um grupo de acompanhamento especial no SEI."""
     try:
         client = _get_client(ctx)
         result = await client.criar_grupo_acompanhamento(nome)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_excluir_grupo_acompanhamento(
     ids_grupos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Exclui grupo(s) de acompanhamento especial. IDs separados por vírgula."""
     try:
         client = _get_client(ctx)
         result = await client.excluir_grupo_acompanhamento(ids_grupos)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_listar_grupos_acompanhamento(
     filtro: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista grupos de acompanhamento disponíveis."""
     try:
         client = _get_client(ctx)
         result = await client.listar_grupos_acompanhamento(filtro=filtro)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2501,7 +2605,7 @@ async def sei_listar_grupos_acompanhamento(
 @mcp.tool()
 async def sei_criar_bloco_interno(
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um bloco interno no SEI.
 
@@ -2511,7 +2615,7 @@ async def sei_criar_bloco_interno(
         client = _get_client(ctx)
         result = await client.criar_bloco_interno(descricao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2519,7 +2623,7 @@ async def sei_criar_bloco_interno(
 async def sei_incluir_processo_bloco_interno(
     id_bloco: str,
     processos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Inclui processo(s) em um bloco interno.
 
@@ -2530,7 +2634,7 @@ async def sei_incluir_processo_bloco_interno(
         client = _get_client(ctx)
         result = await client.incluir_processo_bloco_interno(id_bloco, processos)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2538,7 +2642,7 @@ async def sei_incluir_processo_bloco_interno(
 async def sei_retirar_processo_bloco_interno(
     id_bloco: str,
     processos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Remove processo(s) de um bloco interno.
 
@@ -2549,7 +2653,7 @@ async def sei_retirar_processo_bloco_interno(
         client = _get_client(ctx)
         result = await client.retirar_processo_bloco_interno(id_bloco, processos)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2562,7 +2666,7 @@ async def sei_retirar_processo_bloco_interno(
 async def sei_criar_bloco_assinatura(
     descricao: str,
     unidades: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria um bloco de assinatura no SEI.
 
@@ -2595,7 +2699,7 @@ async def sei_criar_bloco_assinatura(
 
         result = await client.criar_bloco_assinatura(descricao, unidades)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2603,7 +2707,7 @@ async def sei_criar_bloco_assinatura(
 async def sei_incluir_documento_bloco_assinatura(
     id_bloco: str,
     documentos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Inclui documento(s) em um bloco de assinatura.
 
@@ -2614,14 +2718,14 @@ async def sei_incluir_documento_bloco_assinatura(
         client = _get_client(ctx)
         result = await client.incluir_documento_bloco_assinatura(id_bloco, documentos)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_disponibilizar_bloco_assinatura(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Disponibiliza um bloco de assinatura para as unidades configuradas.
 
@@ -2631,14 +2735,14 @@ async def sei_disponibilizar_bloco_assinatura(
         client = _get_client(ctx)
         result = await client.disponibilizar_bloco_assinatura(id_bloco)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_cancelar_disponibilizacao_bloco(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cancela a disponibilização de um bloco de assinatura.
 
@@ -2648,7 +2752,7 @@ async def sei_cancelar_disponibilizacao_bloco(
         client = _get_client(ctx)
         result = await client.cancelar_disponibilizacao_bloco_assinatura(id_bloco)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2656,14 +2760,14 @@ async def sei_cancelar_disponibilizacao_bloco(
 async def sei_pesquisar_blocos_assinatura(
     filtro: str = "",
     limit: int = 50,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa blocos de assinatura existentes."""
     try:
         client = _get_client(ctx)
         result = await client.pesquisar_blocos_assinatura(filtro=filtro, limit=limit)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2672,7 +2776,7 @@ async def sei_criar_anotacao(
     processo: str,
     descricao: str,
     prioridade: str = "1",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria uma anotação (post-it) em um processo no SEI.
 
@@ -2690,7 +2794,7 @@ async def sei_criar_anotacao(
             prioridade=prioridade,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2718,7 +2822,7 @@ async def sei_versao(ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.versao()
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2733,7 +2837,7 @@ async def sei_listar_orgaos(ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.listar_orgaos()
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2748,7 +2852,7 @@ async def sei_listar_contextos(id_orgao: str, ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.listar_contextos(id_orgao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2761,7 +2865,7 @@ async def sei_pesquisar_usuarios(
     id_orgao: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa usuários por palavra-chave no órgão.
 
@@ -2776,7 +2880,7 @@ async def sei_pesquisar_usuarios(
             filtro=filtro, id_orgao=id_orgao, limit=limit, start=pagina
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2788,7 +2892,7 @@ async def sei_pesquisar_outras_unidades(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa unidades excluindo a unidade atual.
 
@@ -2798,11 +2902,9 @@ async def sei_pesquisar_outras_unidades(
     """
     try:
         client = _get_client(ctx)
-        result = await client.pesquisar_outras_unidades(
-            filtro=filtro, limit=limit, start=pagina
-        )
+        result = await client.pesquisar_outras_unidades(filtro=filtro, limit=limit, start=pagina)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2811,7 +2913,7 @@ async def sei_pesquisar_textos_padrao(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa textos padrão internos disponíveis na unidade.
 
@@ -2822,11 +2924,9 @@ async def sei_pesquisar_textos_padrao(
     """
     try:
         client = _get_client(ctx)
-        result = await client.pesquisar_textos_padrao(
-            filtro=filtro, limit=limit, start=pagina
-        )
+        result = await client.pesquisar_textos_padrao(filtro=filtro, limit=limit, start=pagina)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2836,7 +2936,7 @@ async def sei_pesquisar_textos_padrao(
 @mcp.tool()
 async def sei_consultar_documento_externo(
     id_documento: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Consulta metadados de um documento externo pelo ID.
 
@@ -2869,29 +2969,36 @@ async def sei_consultar_documento_externo(
                         id_documento = doc_id
                         result = await client.consultar_documento_externo(id_documento)
                     else:
-                        raise primeira
-                except Exception:
-                    return _json({
-                        "error": msg,
-                        "dica": (
-                            "SEI retornou 'não autorizado' para o id "
-                            f"{id_documento!r}. Verifique se você passou o id "
-                            "INTERNO do documento (ex.: 3149544) e não o número "
-                            "SEI / protocoloFormatado (ex.: 2867926). Use "
-                            "sei_buscar_documento para resolver número SEI → id."
-                        ),
-                    })
+                        raise primeira  # noqa: TRY201, TRY301
+                except Exception:  # noqa: BLE001
+                    return _json(
+                        {
+                            "error": msg,
+                            "dica": (
+                                "SEI retornou 'não autorizado' para o id "
+                                f"{id_documento!r}. Verifique se você passou o id "
+                                "INTERNO do documento (ex.: 3149544) e não o número "
+                                "SEI / protocoloFormatado (ex.: 2867926). Use "
+                                "sei_buscar_documento para resolver número SEI → id."
+                            ),
+                        }
+                    )
             else:
                 raise
 
         nivel, hipotese = access_control.extrair_nivel(result)
         if access_control.precisa_disclaimer(nivel):
             result["_aviso_acesso"] = access_control.construir_disclaimer_acompanhante(
-                nivel, hipotese,
-                alvo={"tipo": "documento", "id": str(id_documento), "tipo_documento": "X"},
+                nivel,
+                hipotese,
+                alvo={
+                    "tipo": "documento",
+                    "id": str(id_documento),
+                    "tipo_documento": "X",
+                },
             )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2901,7 +3008,7 @@ async def sei_alterar_documento_interno(
     descricao: str = "",
     nivel_acesso: str = "",
     hipotese_legal: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera metadados de um documento interno (não o conteúdo HTML).
 
@@ -2923,18 +3030,18 @@ async def sei_alterar_documento_interno(
             id_hipotese_legal=hipotese_legal,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
-async def sei_alterar_documento_externo(
+async def sei_alterar_documento_externo(  # noqa: PLR0913
     id_documento: str,
     descricao: str = "",
     nivel_acesso: str = "",
     hipotese_legal: str = "",
     arquivo_path: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera metadados de um documento externo (e opcionalmente substitui o arquivo).
 
@@ -2957,7 +3064,7 @@ async def sei_alterar_documento_externo(
             arquivo_path=arquivo_path,
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -2966,7 +3073,7 @@ async def sei_pesquisar_tipos_conferencia(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa tipos de conferência para documentos externos.
 
@@ -2977,18 +3084,16 @@ async def sei_pesquisar_tipos_conferencia(
     """
     try:
         client = _get_client(ctx)
-        result = await client.pesquisar_tipos_conferencia(
-            filtro=filtro, limit=limit, start=pagina
-        )
+        result = await client.pesquisar_tipos_conferencia(filtro=filtro, limit=limit, start=pagina)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_sugestao_assuntos_documento(
     id_serie: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista sugestões de assuntos para um tipo de documento (série).
 
@@ -3000,14 +3105,14 @@ async def sei_sugestao_assuntos_documento(
         client = _get_client(ctx)
         result = await client.sugestao_assuntos_documento(id_serie)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_listar_blocos_documento(
     id_documento: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista blocos de assinatura em que um documento está incluído.
 
@@ -3018,7 +3123,7 @@ async def sei_listar_blocos_documento(
         client = _get_client(ctx)
         result = await client.listar_blocos_documento(id_documento)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3027,7 +3132,7 @@ async def sei_pesquisar_tipos_documento_externo(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa tipos de documento para documentos externos (séries externas).
 
@@ -3042,7 +3147,7 @@ async def sei_pesquisar_tipos_documento_externo(
             filtro=filtro, limit=limit, start=pagina
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3058,7 +3163,7 @@ async def sei_parametros_upload(ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.parametros_upload()
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3070,7 +3175,7 @@ async def sei_pesquisar_assuntos(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Pesquisa assuntos disponíveis para processos.
 
@@ -3080,18 +3185,16 @@ async def sei_pesquisar_assuntos(
     """
     try:
         client = _get_client(ctx)
-        result = await client.pesquisar_assuntos(
-            filtro=filtro, limit=limit, start=pagina
-        )
+        result = await client.pesquisar_assuntos(filtro=filtro, limit=limit, start=pagina)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_sugestao_assuntos_processo(
     id_tipo_processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista sugestões de assuntos para um tipo de processo.
 
@@ -3103,14 +3206,14 @@ async def sei_sugestao_assuntos_processo(
         client = _get_client(ctx)
         result = await client.sugestao_assuntos_processo(id_tipo_processo)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_consultar_atribuicao(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Consulta a atribuição atual de um processo (quem está responsável).
 
@@ -3122,14 +3225,14 @@ async def sei_consultar_atribuicao(
         id_proc = await _resolver_processo(client, processo)
         result = await client.consultar_atribuicao(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_verificar_acesso(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Verifica se o usuário tem acesso a um processo.
 
@@ -3142,14 +3245,14 @@ async def sei_verificar_acesso(
         id_proc = await _resolver_processo(client, processo)
         result = await client.verificar_acesso(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_listar_relacionamentos(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista processos relacionados a um processo.
 
@@ -3161,14 +3264,14 @@ async def sei_listar_relacionamentos(
         id_proc = await _resolver_processo(client, processo)
         result = await client.listar_relacionamentos(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_listar_atividades(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista o histórico de atividades/andamentos de um processo.
 
@@ -3180,18 +3283,18 @@ async def sei_listar_atividades(
     """
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:
+        if web._inbox_url is None:  # noqa: SLF001
             await web.login()
         result = await web.listar_atividades(processo)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_gerar_pdf_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Gera e baixa o PDF consolidado de um processo SEI.
 
@@ -3208,41 +3311,40 @@ async def sei_gerar_pdf_processo(
     Nota: o processo precisa estar aberto na caixa da unidade atual.
     Para processos de outras unidades, use sei_trocar_unidade primeiro.
     """
-    import re as _re
-    import tempfile
+    import tempfile  # noqa: PLC0415
 
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:
+        if web._inbox_url is None:  # noqa: SLF001
             await web.login()
 
         pdf_bytes = await web.gerar_pdf_processo(processo)
 
         tamanho_mb = len(pdf_bytes) / 1024 / 1024
-        if tamanho_mb > 50:
-            return _error(
-                f"PDF muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI."
-            )
+        if tamanho_mb > 50:  # noqa: PLR2004
+            return _error(f"PDF muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI.")
 
         protocolo_safe = processo.replace("/", "-")
-        pdf_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.pdf")
-        with open(pdf_path, "wb") as f:
+        pdf_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.pdf")  # noqa: PTH118
+        with open(pdf_path, "wb") as f:  # noqa: ASYNC230, PTH123
             f.write(pdf_bytes)
 
-        return _json({
-            "arquivo": pdf_path,
-            "tamanho_mb": round(tamanho_mb, 2),
-            "tamanho_bytes": len(pdf_bytes),
-            "base64": base64.b64encode(pdf_bytes).decode(),
-        })
-    except Exception as e:
+        return _json(
+            {
+                "arquivo": pdf_path,
+                "tamanho_mb": round(tamanho_mb, 2),
+                "tamanho_bytes": len(pdf_bytes),
+                "base64": base64.b64encode(pdf_bytes).decode(),
+            }
+        )
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_gerar_zip_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Gera e baixa o ZIP com todos os documentos de um processo SEI.
 
@@ -3256,33 +3358,109 @@ async def sei_gerar_zip_processo(
 
     Retorna base64 do ZIP, tamanho e caminho do arquivo salvo em disco.
     """
-    import tempfile
+    import tempfile  # noqa: PLC0415
 
     try:
         web = _get_web_client(ctx)
-        if web._inbox_url is None:
+        if web._inbox_url is None:  # noqa: SLF001
             await web.login()
 
         zip_bytes = await web.gerar_zip_processo(processo)
 
         tamanho_mb = len(zip_bytes) / 1024 / 1024
-        if tamanho_mb > 200:
-            return _error(
-                f"ZIP muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI."
-            )
+        if tamanho_mb > 200:  # noqa: PLR2004
+            return _error(f"ZIP muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI.")
 
         protocolo_safe = processo.replace("/", "-")
-        zip_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.zip")
-        with open(zip_path, "wb") as f:
+        zip_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.zip")  # noqa: PTH118
+        with open(zip_path, "wb") as f:  # noqa: ASYNC230, PTH123
             f.write(zip_bytes)
 
-        return _json({
-            "arquivo": zip_path,
-            "tamanho_mb": round(tamanho_mb, 2),
-            "tamanho_bytes": len(zip_bytes),
-            "base64": base64.b64encode(zip_bytes).decode(),
-        })
-    except Exception as e:
+        return _json(
+            {
+                "arquivo": zip_path,
+                "tamanho_mb": round(tamanho_mb, 2),
+                "tamanho_bytes": len(zip_bytes),
+                "base64": base64.b64encode(zip_bytes).decode(),
+            }
+        )
+    except Exception as e:  # noqa: BLE001
+        return _error(str(e))
+
+
+@mcp.tool()
+async def sei_incluir_documento_externo(  # noqa: PLR0913
+    processo: str,
+    arquivo_path: str = "",
+    arquivo_base64: str = "",
+    nome_arquivo: str = "",
+    id_serie: str = "",
+    data_elaboracao: str = "",
+    nivel_acesso: str = "0",
+    hipotese_legal: str = "",
+    ctx: Context | None = None,
+) -> str:
+    """Inclui documento externo (PDF, imagem, etc.) em um processo SEI via web scraper.
+
+    Implementação via scraper web — funciona em instâncias sem mod-wssei REST.
+
+    Parâmetros:
+    - processo: protocolo formatado (ex: 0020.008886/2026-49)
+    - arquivo_path: caminho local do arquivo (apenas em modo stdio/local;
+      ex: C:/Users/frank/Downloads/NF52.pdf)
+    - arquivo_base64: conteúdo do arquivo em base64 (obrigatório em modo
+      remoto/HTTP; alternativa a arquivo_path)
+    - nome_arquivo: nome do arquivo com extensão (obrigatório com arquivo_base64;
+      ex: NF52.pdf)
+    - id_serie: ID do tipo de documento no SEI. Se vazio, retorna lista de tipos disponíveis.
+      Para Nota Fiscal, use sei_pesquisar_tipos_documento para descobrir o id.
+    - data_elaboracao: data de elaboração no formato dd/mm/aaaa (padrão: hoje)
+    - nivel_acesso: 0=público (padrão), 1=restrito, 2=sigiloso
+    - hipotese_legal: ID da hipótese legal (obrigatório se nivel_acesso=1 ou 2).
+      Use sei_listar_hipoteses_legais para descobrir os IDs disponíveis.
+
+    Se id_serie não for informado, retorna os tipos disponíveis para que você
+    possa escolher e chamar novamente com o id correto.
+
+    Nota: o processo deve estar aberto na caixa da unidade atual.
+    Se o processo estiver concluído, use sei_reabrir_processo primeiro.
+    """
+    try:
+        conteudo: bytes | None = None
+        if arquivo_base64:
+            if not nome_arquivo:
+                return _error("nome_arquivo é obrigatório quando arquivo_base64 é usado.")
+            try:
+                conteudo = base64.b64decode(arquivo_base64, validate=True)
+            except Exception:  # noqa: BLE001
+                return _error("arquivo_base64 inválido (não é base64 válido).")
+        elif arquivo_path:
+            # Em modo remoto o caminho apontaria para o filesystem do SERVIDOR,
+            # permitindo exfiltrar arquivos do host — exigir base64.
+            if _http_mode:
+                return _error(
+                    "Em modo remoto use arquivo_base64 + nome_arquivo "
+                    "(caminhos do servidor não são permitidos)."
+                )
+        elif id_serie:
+            return _error("Informe arquivo_path (local) ou arquivo_base64 (remoto).")
+
+        web = _get_web_client(ctx)
+        if web._inbox_url is None:  # noqa: SLF001
+            await web.login()
+
+        result = await web.incluir_documento_externo(
+            protocolo_formatado=processo,
+            arquivo_path=arquivo_path or None,
+            nome_arquivo=nome_arquivo or None,
+            id_serie=id_serie or None,
+            data_elaboracao=data_elaboracao,
+            nivel_acesso=nivel_acesso,
+            hipotese_legal=hipotese_legal,
+            conteudo=conteudo,
+        )
+        return _json(result)
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3293,7 +3471,7 @@ async def sei_gerar_zip_processo(
 async def sei_listar_meus_acompanhamentos(
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista processos que o usuário está acompanhando (acompanhamento especial).
 
@@ -3304,7 +3482,7 @@ async def sei_listar_meus_acompanhamentos(
         client = _get_client(ctx)
         result = await client.listar_meus_acompanhamentos(limit=limit, start=pagina)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3312,7 +3490,7 @@ async def sei_listar_meus_acompanhamentos(
 async def sei_listar_acompanhamentos_unidade(
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista processos com acompanhamento especial na unidade atual.
 
@@ -3323,7 +3501,7 @@ async def sei_listar_acompanhamentos_unidade(
         client = _get_client(ctx)
         result = await client.listar_acompanhamentos_unidade(limit=limit, start=pagina)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3332,7 +3510,7 @@ async def sei_alterar_acompanhamento(
     processo: str,
     grupo: str = "",
     observacao: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera acompanhamento especial de um processo.
 
@@ -3348,7 +3526,7 @@ async def sei_alterar_acompanhamento(
         id_proc = await _resolver_processo(client, processo)
         result = await client.alterar_acompanhamento(id_proc, grupo, observacao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3358,7 +3536,7 @@ async def sei_alterar_acompanhamento(
 @mcp.tool()
 async def sei_listar_credenciamentos(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista credenciamentos de acesso a um processo sigiloso.
 
@@ -3370,7 +3548,7 @@ async def sei_listar_credenciamentos(
         id_proc = await _resolver_processo(client, processo)
         result = await client.listar_credenciamentos(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3378,7 +3556,7 @@ async def sei_listar_credenciamentos(
 async def sei_conceder_credenciamento(
     processo: str,
     id_usuario: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Concede credenciamento de acesso a um processo sigiloso para um usuário.
 
@@ -3390,14 +3568,14 @@ async def sei_conceder_credenciamento(
         id_proc = await _resolver_processo(client, processo)
         result = await client.conceder_credenciamento(id_proc, id_usuario)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_renunciar_credenciamento(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Renuncia ao credenciamento de acesso a um processo sigiloso.
 
@@ -3410,7 +3588,7 @@ async def sei_renunciar_credenciamento(
         id_proc = await _resolver_processo(client, processo)
         result = await client.renunciar_credenciamento(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3418,7 +3596,7 @@ async def sei_renunciar_credenciamento(
 async def sei_cassar_credenciamento(
     processo: str,
     id_usuario: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cassa (revoga) credenciamento de acesso de um usuário a processo sigiloso.
 
@@ -3430,7 +3608,7 @@ async def sei_cassar_credenciamento(
         id_proc = await _resolver_processo(client, processo)
         result = await client.cassar_credenciamento(id_proc, id_usuario)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3449,7 +3627,7 @@ async def sei_listar_assinantes(ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.listar_assinantes()
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3464,7 +3642,7 @@ async def sei_listar_orgaos_assinante(ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.listar_orgaos_assinante()
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3472,7 +3650,7 @@ async def sei_listar_orgaos_assinante(ctx: Context) -> str:
 async def sei_criar_observacao(
     processo: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria observação da unidade em um processo.
 
@@ -3486,7 +3664,7 @@ async def sei_criar_observacao(
         id_proc = await _resolver_processo(client, processo)
         result = await client.criar_observacao(id_proc, descricao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3496,7 +3674,7 @@ async def sei_criar_contato(
     tipo: str = "",
     email: str = "",
     telefone: str = "",
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria novo contato no SEI.
 
@@ -3505,11 +3683,9 @@ async def sei_criar_contato(
     """
     try:
         client = _get_client(ctx)
-        result = await client.criar_contato(
-            nome=nome, tipo=tipo, email=email, telefone=telefone
-        )
+        result = await client.criar_contato(nome=nome, tipo=tipo, email=email, telefone=telefone)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3520,7 +3696,7 @@ async def sei_criar_contato(
 async def sei_listar_grupos_modelos(
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista grupos de modelos de documento disponíveis.
 
@@ -3531,7 +3707,7 @@ async def sei_listar_grupos_modelos(
         client = _get_client(ctx)
         result = await client.listar_grupos_modelos(limit=limit, start=pagina)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3541,7 +3717,7 @@ async def sei_listar_modelos(
     filtro: str = "",
     limit: int = 50,
     pagina: int = 0,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista modelos de documento disponíveis.
 
@@ -3557,7 +3733,7 @@ async def sei_listar_modelos(
             id_grupo=id_grupo, filtro=filtro, limit=limit, start=pagina
         )
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3567,7 +3743,7 @@ async def sei_listar_modelos(
 @mcp.tool()
 async def sei_desativar_marcador(
     ids_marcadores: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Desativa marcador(es) sem excluir. IDs separados por vírgula.
 
@@ -3578,28 +3754,28 @@ async def sei_desativar_marcador(
         client = _get_client(ctx)
         result = await client.desativar_marcadores(ids_marcadores)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_reativar_marcador(
     ids_marcadores: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Reativa marcador(es) desativados. IDs separados por vírgula."""
     try:
         client = _get_client(ctx)
         result = await client.reativar_marcadores(ids_marcadores)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_historico_marcador_processo(
     processo: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista histórico de marcadores de um processo.
 
@@ -3612,7 +3788,7 @@ async def sei_historico_marcador_processo(
         id_proc = await _resolver_processo(client, processo)
         result = await client.historico_marcador_processo(id_proc)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3622,7 +3798,7 @@ async def sei_historico_marcador_processo(
 @mcp.tool()
 async def sei_listar_processos_bloco_interno(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista processos de um bloco interno.
 
@@ -3633,7 +3809,7 @@ async def sei_listar_processos_bloco_interno(
         client = _get_client(ctx)
         result = await client.listar_processos_bloco_interno(id_bloco)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3641,7 +3817,7 @@ async def sei_listar_processos_bloco_interno(
 async def sei_alterar_bloco_interno(
     id_bloco: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera descrição de um bloco interno.
 
@@ -3652,14 +3828,14 @@ async def sei_alterar_bloco_interno(
         client = _get_client(ctx)
         result = await client.alterar_bloco_interno(id_bloco, descricao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_excluir_bloco_interno(
     ids_blocos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Exclui bloco(s) interno(s). IDs separados por vírgula.
 
@@ -3670,14 +3846,14 @@ async def sei_excluir_bloco_interno(
         client = _get_client(ctx)
         result = await client.excluir_blocos_internos(ids_blocos)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_concluir_bloco_interno(
     ids_blocos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Conclui bloco(s) interno(s). IDs separados por vírgula.
 
@@ -3688,14 +3864,14 @@ async def sei_concluir_bloco_interno(
         client = _get_client(ctx)
         result = await client.concluir_blocos_internos(ids_blocos)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_reabrir_bloco_interno(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Reabre bloco interno concluído.
 
@@ -3706,7 +3882,7 @@ async def sei_reabrir_bloco_interno(
         client = _get_client(ctx)
         result = await client.reabrir_bloco_interno(id_bloco)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3715,7 +3891,7 @@ async def sei_anotar_processo_bloco_interno(
     id_bloco: str,
     processo: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria anotação em processo dentro de um bloco interno.
 
@@ -3727,7 +3903,7 @@ async def sei_anotar_processo_bloco_interno(
         id_proc = await _resolver_processo(client, processo)
         result = await client.anotar_processo_bloco_interno(id_bloco, id_proc, descricao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3736,7 +3912,7 @@ async def sei_alterar_anotacao_bloco_interno(
     id_bloco: str,
     processo: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera anotação de processo em um bloco interno.
 
@@ -3748,7 +3924,7 @@ async def sei_alterar_anotacao_bloco_interno(
         id_proc = await _resolver_processo(client, processo)
         result = await client.alterar_anotacao_bloco_interno(id_bloco, id_proc, descricao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3758,14 +3934,14 @@ async def sei_alterar_anotacao_bloco_interno(
 @mcp.tool()
 async def sei_listar_documentos_bloco_assinatura(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Lista documentos de um bloco de assinatura."""
     try:
         client = _get_client(ctx)
         result = await client.listar_documentos_bloco_assinatura(id_bloco)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3773,7 +3949,7 @@ async def sei_listar_documentos_bloco_assinatura(
 async def sei_retirar_documentos_bloco_assinatura(
     id_bloco: str,
     documentos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Retira documento(s) de um bloco de assinatura.
 
@@ -3783,7 +3959,7 @@ async def sei_retirar_documentos_bloco_assinatura(
         client = _get_client(ctx)
         result = await client.retirar_documento_bloco_assinatura(id_bloco, documentos)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3791,7 +3967,7 @@ async def sei_retirar_documentos_bloco_assinatura(
 async def sei_alterar_bloco_assinatura(
     id_bloco: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera descrição de um bloco de assinatura.
 
@@ -3802,14 +3978,14 @@ async def sei_alterar_bloco_assinatura(
         client = _get_client(ctx)
         result = await client.alterar_bloco_assinatura(id_bloco, descricao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_excluir_bloco_assinatura(
     ids_blocos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Exclui bloco(s) de assinatura. IDs separados por vírgula.
 
@@ -3820,14 +3996,14 @@ async def sei_excluir_bloco_assinatura(
         client = _get_client(ctx)
         result = await client.excluir_blocos_assinatura(ids_blocos)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_concluir_bloco_assinatura(
     ids_blocos: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Conclui bloco(s) de assinatura. IDs separados por vírgula.
 
@@ -3838,14 +4014,14 @@ async def sei_concluir_bloco_assinatura(
         client = _get_client(ctx)
         result = await client.concluir_blocos_assinatura(ids_blocos)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_reabrir_bloco_assinatura(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Reabre bloco de assinatura concluído.
 
@@ -3856,14 +4032,14 @@ async def sei_reabrir_bloco_assinatura(
         client = _get_client(ctx)
         result = await client.reabrir_bloco_assinatura(id_bloco)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
 @mcp.tool()
 async def sei_retornar_bloco_assinatura(
     id_bloco: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Retorna bloco de assinatura para a unidade de origem.
 
@@ -3874,7 +4050,7 @@ async def sei_retornar_bloco_assinatura(
         client = _get_client(ctx)
         result = await client.retornar_bloco_assinatura(id_bloco)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3883,7 +4059,7 @@ async def sei_anotar_documento_bloco_assinatura(
     id_bloco: str,
     documento: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Cria anotação em documento dentro de um bloco de assinatura.
 
@@ -3894,7 +4070,7 @@ async def sei_anotar_documento_bloco_assinatura(
         client = _get_client(ctx)
         result = await client.anotar_documento_bloco_assinatura(id_bloco, documento, descricao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
@@ -3903,7 +4079,7 @@ async def sei_alterar_anotacao_bloco_assinatura(
     id_bloco: str,
     documento: str,
     descricao: str,
-    ctx: Context = None,
+    ctx: Context | None = None,
 ) -> str:
     """Altera anotação de documento em um bloco de assinatura.
 
@@ -3914,18 +4090,19 @@ async def sei_alterar_anotacao_bloco_assinatura(
         client = _get_client(ctx)
         result = await client.alterar_anotacao_bloco_assinatura(id_bloco, documento, descricao)
         return _json(result)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
 
-def main():
+def main():  # noqa: ANN201, D103
     if _http_mode:
-        import uvicorn
-        from pathlib import Path
-        from starlette.routing import Route
-        from starlette.responses import Response
+        from pathlib import Path  # noqa: PLC0415
 
-        from mcp_seipro.auth import login_page, login_submit
+        import uvicorn  # noqa: PLC0415
+        from starlette.responses import Response  # noqa: PLC0415
+        from starlette.routing import Route  # noqa: PLC0415
+
+        from todos.auth import login_page, login_submit  # noqa: PLC0415
 
         # Favicon / ícone do SEI Pro — busca em vários locais possíveis
         _icon_bytes = b""
@@ -3937,11 +4114,14 @@ def main():
                 _icon_bytes = _candidate.read_bytes()
                 break
 
-        from starlette.responses import HTMLResponse
+        from starlette.responses import HTMLResponse  # noqa: PLC0415
 
-        async def favicon(request):
-            return Response(_icon_bytes, media_type="image/png",
-                            headers={"Cache-Control": "public, max-age=86400"})
+        async def favicon(request):  # noqa: ANN001, ANN202, ARG001
+            return Response(
+                _icon_bytes,
+                media_type="image/png",
+                headers={"Cache-Control": "public, max-age=86400"},
+            )
 
         _base = os.environ.get("BASE_URL", f"http://localhost:{_http_port}")
         _root_html = f"""<!DOCTYPE html>
@@ -3952,7 +4132,7 @@ def main():
 <title>SEI Pro MCP Server</title>
 </head><body><h1>SEI Pro MCP Server</h1></body></html>"""
 
-        async def root_page(request):
+        async def root_page(request):  # noqa: ANN001, ANN202, ARG001
             return HTMLResponse(_root_html)
 
         app = mcp.streamable_http_app()
@@ -3969,7 +4149,8 @@ def main():
             port=_http_port,
             log_level="info",
         )
-        import anyio
+        import anyio  # noqa: PLC0415
+
         anyio.run(uvicorn.Server(config).serve)
     else:
         mcp.run(transport="stdio")

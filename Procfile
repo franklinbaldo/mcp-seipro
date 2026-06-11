@@ -1,1 +1,1 @@
-web: mcp-seipro
+web: todos

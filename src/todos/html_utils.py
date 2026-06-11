@@ -30,13 +30,13 @@ def html_to_text(raw: str) -> str:
             soup.head.decompose()
 
         # Extrair texto do body (ou do documento inteiro se não houver body)
-        target = soup.body if soup.body else soup
+        target = soup.body if soup.body else soup  # noqa: FURB110
         text = target.get_text(separator="\n", strip=True)
 
         # Limpar linhas vazias e espaços excessivos
         lines = [line.strip() for line in text.split("\n") if line.strip()]
         return "\n".join(lines)
-    except Exception:
+    except Exception:  # noqa: BLE001
         # Fallback: regex brutal
         text = html_module.unescape(raw)
         text = re.sub(r"<[^>]+>", " ", text)
@@ -62,7 +62,7 @@ def _clean_markdown_tables(md: str) -> str:
             # Extrair células e filtrar vazias
             cells = line.split("|")
             # Manter delimitadores externos (primeiro e último são vazios por causa do split)
-            inner = cells[1:-1] if len(cells) > 2 else cells
+            inner = cells[1:-1] if len(cells) > 2 else cells  # noqa: PLR2004
             filled = [c for c in inner if c.strip()]
 
             if not filled:
@@ -99,7 +99,7 @@ def html_to_markdown(raw: str) -> str:
     Preserva negrito, tabelas, links e linhas horizontais.
     Remove colunas vazias de tabelas de layout do SEI.
     Ideal para exibição em chat/terminal com suporte a Markdown.
-    """
+    """  # noqa: D401
     try:
         html = html_module.unescape(raw)
         cleaned = re.sub(r"<style[^>]*>.*?</style>", "", html, flags=re.DOTALL | re.IGNORECASE)
@@ -110,9 +110,8 @@ def html_to_markdown(raw: str) -> str:
             strip=["img", "link", "meta", "head", "title"],
         )
         resultado = _clean_markdown_tables(resultado)
-        resultado = re.sub(r"\n{3,}", "\n\n", resultado).strip()
-        return resultado
-    except Exception:
+        return re.sub(r"\n{3,}", "\n\n", resultado).strip()
+    except Exception:  # noqa: BLE001
         return html_to_text(raw)
 
 
@@ -126,9 +125,8 @@ def _ocr_pdf(content: bytes, lang: str = "") -> list[tuple[int, str]]:
     Retorna lista de (num_pagina, texto).
     Limita a MAX_OCR_PAGES páginas para evitar timeout.
     """
-    import io
-    from pdf2image import convert_from_bytes
-    import pytesseract
+    import pytesseract  # noqa: PLC0415
+    from pdf2image import convert_from_bytes  # noqa: PLC0415
 
     lang = lang or OCR_LANG
     images = convert_from_bytes(content, dpi=200)
@@ -139,12 +137,14 @@ def _ocr_pdf(content: bytes, lang: str = "") -> list[tuple[int, str]]:
         if text and text.strip():
             pages.append((i, text.strip()))
     if len(images) > MAX_OCR_PAGES:
-        pages.append((
-            MAX_OCR_PAGES + 1,
-            f"[OCR limitado a {MAX_OCR_PAGES} páginas. "
-            f"O documento tem {len(images)} páginas no total. "
-            f"Use sei_baixar_anexo para obter o PDF completo.]",
-        ))
+        pages.append(
+            (
+                MAX_OCR_PAGES + 1,
+                f"[OCR limitado a {MAX_OCR_PAGES} páginas. "
+                f"O documento tem {len(images)} páginas no total. "
+                f"Use sei_baixar_anexo para obter o PDF completo.]",
+            )
+        )
     return pages
 
 
@@ -153,13 +153,12 @@ def _extract_pdf_pages(content: bytes) -> list[tuple[int, str]]:
 
     Retorna lista de (num_pagina, texto).
     """
-    import io
-    import pdfplumber
+    import io  # noqa: PLC0415
+
+    import pdfplumber  # noqa: PLC0415
 
     pages = []
-    total = 0
     with pdfplumber.open(io.BytesIO(content)) as pdf:
-        total = len(pdf.pages)
         for i, page in enumerate(pdf.pages, 1):
             text = page.extract_text()
             if text and text.strip():
@@ -171,7 +170,7 @@ def _extract_pdf_pages(content: bytes) -> list[tuple[int, str]]:
     # Fallback: OCR para PDFs de imagem
     try:
         return _ocr_pdf(content)
-    except Exception:
+    except Exception:  # noqa: BLE001
         return []
 
 
@@ -185,9 +184,7 @@ def pdf_to_text(content: bytes) -> str:
     if not pages:
         return "[PDF sem texto extraível — nem texto nativo nem OCR disponível]"
     total = max(p[0] for p in pages)
-    return "\n\n".join(
-        f"--- Página {num}/{total} ---\n{text}" for num, text in pages
-    )
+    return "\n\n".join(f"--- Página {num}/{total} ---\n{text}" for num, text in pages)
 
 
 def pdf_to_markdown(content: bytes) -> str:
@@ -208,7 +205,7 @@ def pdf_to_markdown(content: bytes) -> str:
             stripped = line.strip()
             if not stripped:
                 continue
-            if stripped.isupper() and len(stripped) < 100:
+            if stripped.isupper() and len(stripped) < 100:  # noqa: PLR2004
                 lines.append(f"**{stripped}**")
             else:
                 lines.append(stripped)
@@ -223,7 +220,7 @@ def sanitize_iso8859(text: str) -> str:
 
     Necessário porque o WSSEI faz iconv UTF-8 -> ISO-8859-1 e retorna vazio
     se encontrar caracteres incompatíveis.
-    """
+    """  # noqa: D401
     result = []
     for char in text:
         try:
