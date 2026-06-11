@@ -9,6 +9,7 @@ from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Literal, cast
 
+import httpx
 from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
@@ -1667,6 +1668,7 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
 
     Paginação: pagina=0 é a primeira página, pagina=1 a segunda, etc.
     """
+    _rest_unavailable = False
     try:
         client = _get_client(ctx)
         result = await client.pesquisar_processos(
@@ -1683,20 +1685,48 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
             start=pagina,
         )
         return _json(result)
+    except ValueError:
+        _rest_unavailable = True  # REST client não configurado (sem SEI_URL)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (404, 501):
+            _rest_unavailable = True  # mod-wssei ausente ou endpoint não encontrado
+        else:
+            return _error(str(exc))
     except Exception as e:  # noqa: BLE001
-        # Fallback: tenta pesquisa via web scraper (para instâncias sem mod-wssei)
-        try:
-            web = _get_web_client(ctx)
-            result = await web.pesquisar_processos_web(
-                q=palavras_chave or busca_rapida,
-                descricao=descricao,
-                data_inicio=data_inicio,
-                data_fim=data_fim,
-                pagina=pagina,
-            )
-            return _json(result)
-        except Exception as e2:  # noqa: BLE001
-            return _error(f"REST: {e} | Web: {e2}")
+        return _error(str(e))
+
+    if not _rest_unavailable:
+        return _error("Pesquisa REST falhou por motivo desconhecido.")  # guarda defensiva
+
+    # Fallback via web scraper (instâncias sem mod-wssei)
+    dropped = [n for n, v in [
+        ("sta_tipo_data", sta_tipo_data),
+        ("id_unidade_geradora", id_unidade_geradora),
+        ("id_assunto", id_assunto),
+        ("grupo", grupo),
+    ] if v]
+    try:
+        web = _get_web_client(ctx)
+        items = await web.pesquisar_processos_web(
+            q=palavras_chave or busca_rapida,
+            descricao=descricao,
+            data_inicio=data_inicio,
+            data_fim=data_fim,
+            pagina=pagina,
+        )
+        paged: dict = {
+            "processos": items[:limit],
+            "pagina_atual": pagina,
+            "itens_pagina": len(items[:limit]),
+            "total_itens": len(items),
+            "tem_proxima": len(items) >= 10,  # noqa: PLR2004
+            "fonte": "web",
+        }
+        if dropped:
+            paged["aviso"] = f"Filtros ignorados (não suportados na pesquisa web): {', '.join(dropped)}"
+        return _json(paged)
+    except Exception as e2:  # noqa: BLE001
+        return _error(f"Web: {e2}")
 
 
 @mcp.tool()
