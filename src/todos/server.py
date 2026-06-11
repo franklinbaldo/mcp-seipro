@@ -1065,9 +1065,10 @@ async def sei_baixar_anexo(  # noqa: C901, PLR0911
 @mcp.tool()
 async def sei_criar_documento(  # noqa: PLR0913
     processo: str,
-    id_serie: str,
+    id_serie: str = "",
     descricao: str = "",
     nivel_acesso: str = "0",
+    hipotese_legal: str = "",
     id_unidade: str = "",
     ctx: Context | None = None,
 ) -> str:
@@ -1075,23 +1076,34 @@ async def sei_criar_documento(  # noqa: PLR0913
 
     Parâmetros:
     - processo: protocolo formatado (ex: 50300.018905/2018-67) ou IdProcedimento
-    - id_serie: código do tipo de documento (use sei_pesquisar_tipos_documento)
+    - id_serie: ID do tipo de documento (use sei_pesquisar_tipos_documento).
+      Deixe vazio para ver os tipos disponíveis via web.
     - descricao: descrição/título do documento
     - nivel_acesso: 0=público, 1=restrito, 2=sigiloso
-    - id_unidade: ID da unidade geradora (opcional)
+    - hipotese_legal: ID da hipótese legal (obrigatório se restrito/sigiloso)
+    - id_unidade: ID da unidade geradora (apenas REST, opcional)
 
     O documento é criado vazio. Use sei_listar_secoes e sei_editar_secao
-    para inserir conteúdo.
+    para inserir conteúdo. Funciona via REST (mod-wssei) ou via scraper web.
     """
     try:
-        client = _get_client(ctx)
-        id_procedimento = await _resolver_processo(client, processo)
-        result = await client.criar_documento_interno(
-            id_procedimento=id_procedimento,
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_procedimento = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.criar_documento_interno(
+                id_procedimento=id_procedimento,
+                id_serie=id_serie,
+                descricao=descricao,
+                nivel_acesso=nivel_acesso,
+                id_unidade=id_unidade,
+            )
+            return _json(result)
+        result = await backend.web.criar_documento_interno_web(
+            protocolo=processo,
             id_serie=id_serie,
             descricao=descricao,
             nivel_acesso=nivel_acesso,
-            id_unidade=id_unidade,
+            hipotese_legal=hipotese_legal,
         )
         return _json(result)
     except Exception as e:  # noqa: BLE001
@@ -1703,26 +1715,36 @@ async def sei_criar_processo(  # noqa: PLR0913
     Parâmetros:
     - tipo_processo: ID do tipo de processo (use sei_pesquisar_tipos_processo)
     - especificacao: descrição do processo (recomendado para organizar a caixa)
-    - assuntos: IDs dos assuntos (separados por vírgula)
-    - interessados: IDs dos interessados (separados por vírgula)
-    - observacoes: observações adicionais
+    - assuntos: IDs dos assuntos separados por vírgula
+    - interessados: IDs dos interessados separados por vírgula
+    - observacoes: observações adicionais (apenas REST)
     - nivel_acesso: 0=público (padrão), 1=restrito, 2=sigiloso
     - hipotese_legal: ID da hipótese legal (obrigatório se restrito/sigiloso).
       Use sei_pesquisar_hipoteses_legais para descobrir o ID.
 
     Retorna o IdProcedimento e ProtocoloFormatado do processo criado.
-
-    Para assuntos, use sei_pesquisar_tipos_processo para ver as sugestões
-    de assunto do tipo de processo escolhido (endpoint /processo/assunto/sugestao).
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.criar_processo(
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.criar_processo(
+                tipo_processo=tipo_processo,
+                especificacao=especificacao,
+                assuntos=assuntos,
+                interessados=interessados,
+                observacoes=observacoes,
+                nivel_acesso=nivel_acesso,
+                hipotese_legal=hipotese_legal,
+            )
+            return _json(result)
+        assuntos_ids = [a.strip() for a in assuntos.split(",") if a.strip()]
+        interessados_ids = [i.strip() for i in interessados.split(",") if i.strip()]
+        result = await backend.web.criar_processo_web(
             tipo_processo=tipo_processo,
             especificacao=especificacao,
-            assuntos=assuntos,
-            interessados=interessados,
-            observacoes=observacoes,
+            assuntos_ids=assuntos_ids,
+            interessados_ids=interessados_ids,
             nivel_acesso=nivel_acesso,
             hipotese_legal=hipotese_legal,
         )
@@ -1732,7 +1754,7 @@ async def sei_criar_processo(  # noqa: PLR0913
 
 
 @mcp.tool()
-async def sei_enviar_processo(  # noqa: PLR0913
+async def sei_enviar_processo(  # noqa: C901, PLR0913
     numero_processo: str,
     unidades_destino: str,
     manter_aberto: str = "N",
@@ -1748,36 +1770,36 @@ async def sei_enviar_processo(  # noqa: PLR0913
     - numero_processo: protocolo formatado (ex: 50300.000123/2025-00)
     - unidades_destino: sigla da unidade (ex: "SFC", "ECP-SFC") OU ID numérico.
       Para múltiplas unidades, separe por vírgula.
-      Se informar sigla, resolve o ID automaticamente via pesquisa.
+      Se informar sigla, resolve o ID automaticamente via REST ou AJAX web.
     - manter_aberto: "N" fechar na unidade atual (padrão), "S" manter aberto
     - remover_anotacao: "S" remover anotações, "N" manter (padrão)
     - enviar_email: "S" notificar por email (só se o usuário pedir)
     - data_retorno: data de retorno programado DD/MM/AAAA (só se o usuário pedir)
     - dias_retorno: prazo em dias para retorno (alternativa à data, só se pedir)
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
+        backend = _get_backend(ctx)
 
         # Resolver unidades destino: aceita sigla ou ID
         destinos = [d.strip() for d in unidades_destino.split(",")]
-        ids_resolvidos = []
+        ids_resolvidos: list[str] = []
+
         for destino in destinos:
             if destino.isdigit():
                 ids_resolvidos.append(destino)
-            else:
-                # Pesquisar pela sigla/nome
-                result = await client.pesquisar_unidades(filtro=destino, limit=10)
+            elif backend.has_rest:
+                result = await backend.rest.pesquisar_unidades(filtro=destino, limit=10)
                 unidades = result.get("unidades", [])
                 encontrou = False
                 for u in unidades:
-                    sigla = u.get("sigla", "")
-                    if sigla.upper() == destino.upper():
+                    if u.get("sigla", "").upper() == destino.upper():
                         ids_resolvidos.append(str(u.get("id", "")))
                         encontrou = True
                         break
                 if not encontrou:
                     if unidades:
-                        # Usar a primeira que contém o texto
                         ids_resolvidos.append(str(unidades[0].get("id", "")))
                     else:
                         return _json(
@@ -1786,10 +1808,37 @@ async def sei_enviar_processo(  # noqa: PLR0913
                                 "dica": "Use sei_pesquisar_unidades para buscar.",
                             }
                         )
+            else:
+                # Via AJAX autocomplete
+                matches = await backend.web.autocomplete_unidades(destino)
+                exact = next(
+                    (m for m in matches if m.get("sigla", "").upper() == destino.upper()),
+                    matches[0] if matches else None,
+                )
+                if not exact:
+                    return _json(
+                        {
+                            "error": f"Unidade '{destino}' não encontrada via autocomplete web",
+                            "dica": "Informe o ID numérico diretamente.",
+                        }
+                    )
+                ids_resolvidos.append(exact["id"])
 
-        result = await client.enviar_processo(
-            numero_processo=numero_processo,
-            unidades_destino=",".join(ids_resolvidos),
+        if backend.has_rest:
+            result = await backend.rest.enviar_processo(
+                numero_processo=numero_processo,
+                unidades_destino=",".join(ids_resolvidos),
+                manter_aberto=manter_aberto,
+                remover_anotacao=remover_anotacao,
+                enviar_email=enviar_email,
+                data_retorno=data_retorno,
+                dias_retorno=dias_retorno,
+            )
+            return _json(result)
+
+        result = await backend.web.enviar_processo_web(
+            protocolo=numero_processo,
+            unidades_ids=ids_resolvidos,
             manter_aberto=manter_aberto,
             remover_anotacao=remover_anotacao,
             enviar_email=enviar_email,
