@@ -150,6 +150,11 @@ class SEIWebClient:
     async def close(self) -> None:  # noqa: D102
         await self._http.aclose()
 
+    async def ensure_authenticated(self) -> None:
+        """Garante sessão SIP ativa; faz login automaticamente se necessário."""
+        if self._inbox_url is None:
+            await self.login()
+
     # ------------------------------------------------------------------
     # Login flow
     # ------------------------------------------------------------------
@@ -717,8 +722,7 @@ class SEIWebClient:
 
         Retorna dict com {"ok": True, "mensagem": str} ou levanta RuntimeError.
         """
-        if self._inbox_url is None:
-            await self.login()
+        await self.ensure_authenticated()
 
         html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
         sei_base = f"{self.sei_root}/sei/"
@@ -765,6 +769,14 @@ class SEIWebClient:
             erro2 = _extrair_erro_sei(body2)
             if erro2:
                 raise RuntimeError(erro2)
+        else:
+            # Sem form: pode ser ação que executa direto via GET (redirect imediato).
+            # Valida ausência de erros e loga para facilitar debug.
+            if _extrair_erro_sei(body):
+                raise RuntimeError(f"Ação '{nome_acao}' falhou sem form de confirmação.")  # noqa: EM102, TRY003
+            logger.debug(
+                "executar_acao_processo: ação '%s' concluída via GET (sem form)", nome_acao
+            )
 
         return {
             "ok": True,

@@ -115,9 +115,17 @@ def _get_web_client(ctx: Context | None) -> SEIWebClient:
 
 
 def _get_backend(ctx: Context | None) -> SEIBackend:
-    """Retorna SEIBackend com REST + web para o contexto atual."""
+    """Retorna SEIBackend com REST + web para o contexto atual.
+
+    SEIWebClient é criado de forma lazy: se não estiver configurado (ex: modo
+    REST-only sem SEI_WEB_URL), usa instância vazia que nunca será invocada
+    enquanto has_rest=True, evitando ValueError em instalações REST-only.
+    """
     rest = _get_client(ctx)
-    web = _get_web_client(ctx)
+    try:
+        web = _get_web_client(ctx)
+    except ValueError:
+        web = SEIWebClient()  # instância vazia; só usada se has_rest = False
     return SEIBackend(rest, web)
 
 
@@ -1735,8 +1743,6 @@ async def sei_concluir_processo(numero_processo: str, ctx: Context | None = None
         if backend.has_rest:
             result = await backend.rest.concluir_processo(numero_processo)
             return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         result = await backend.web.executar_acao_processo(numero_processo, "procedimento_concluir")
         return _json(result)
     except Exception as e:  # noqa: BLE001
@@ -1758,8 +1764,6 @@ async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str
             id_proc = await _resolver_processo(backend.rest, processo)
             result = await backend.rest.reabrir_processo(id_proc)
             return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         result = await backend.web.executar_acao_processo(processo, "procedimento_reabrir")
         return _json(result)
     except Exception as e:  # noqa: BLE001
@@ -2120,6 +2124,11 @@ async def sei_dar_ciencia(
         backend = _get_backend(ctx)
 
         if tipo == "documento":
+            if not backend.has_rest:
+                return _error(
+                    "Dar ciência em documento requer mod-wssei (REST). "
+                    "Configure SEI_URL ou use tipo='processo'."
+                )
             doc_id, _ = await _resolver_documento(backend.rest, referencia)
             result = await backend.rest.dar_ciencia_documento(doc_id)
             return _json(result)
@@ -2128,8 +2137,6 @@ async def sei_dar_ciencia(
             id_proc = await _resolver_processo(backend.rest, referencia)
             result = await backend.rest.dar_ciencia_processo(id_proc)
             return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         result = await backend.web.executar_acao_processo(referencia, "processo_dar_ciencia")
         return _json(result)
     except Exception as e:  # noqa: BLE001
@@ -2183,8 +2190,6 @@ async def sei_remover_atribuicao(
             id_proc = await _resolver_processo(backend.rest, processo)
             result = await backend.rest.remover_atribuicao(id_proc)
             return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         result = await backend.web.executar_acao_processo(processo, "atribuicao_cancelar")
         return _json(result)
     except Exception as e:  # noqa: BLE001
@@ -2207,8 +2212,6 @@ async def sei_receber_processo(
             id_proc = await _resolver_processo(backend.rest, processo)
             result = await backend.rest.receber_processo(id_proc)
             return _json(result)
-        if backend.web._inbox_url is None:  # noqa: SLF001
-            await backend.web.login()
         result = await backend.web.executar_acao_processo(processo, "procedimento_receber")
         return _json(result)
     except Exception as e:  # noqa: BLE001
