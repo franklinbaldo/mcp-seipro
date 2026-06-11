@@ -864,15 +864,18 @@ class SEIWebClient:
             "andamentos": andamentos,
         }
 
+    MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # limite de segurança (o SEI rejeita antes)
+
     async def incluir_documento_externo(
         self,
         protocolo_formatado: str,
-        arquivo_path: str,
+        arquivo_path: Optional[str] = None,
         nome_arquivo: Optional[str] = None,
         id_serie: Optional[str] = None,
         data_elaboracao: str = "",
         nivel_acesso: str = "0",
         hipotese_legal: str = "",
+        conteudo: Optional[bytes] = None,
     ) -> dict:
         """Inclui documento externo (upload de arquivo) em processo SEI via web.
 
@@ -921,6 +924,7 @@ class SEIWebClient:
                 data_elaboracao,
                 nivel_acesso,
                 hipotese_legal,
+                conteudo,
             )
 
         soup_fs = BeautifulSoup(r1.text, "html.parser")
@@ -1046,10 +1050,30 @@ class SEIWebClient:
             return {"tipos_disponiveis": tipos}
 
         # --- Step 6: Upload do arquivo ---
-        nome = nome_arquivo or _os.path.basename(arquivo_path)
+        if conteudo is not None:
+            if not nome_arquivo:
+                raise ValueError("nome_arquivo é obrigatório quando conteudo é passado")
+            nome = nome_arquivo
+            file_bytes = conteudo
+        else:
+            if not arquivo_path:
+                raise ValueError("Informe arquivo_path ou conteudo")
+            if not _os.path.isfile(arquivo_path):
+                raise ValueError(
+                    f"Arquivo não encontrado ou não é regular: {arquivo_path}"
+                )
+            if _os.path.getsize(arquivo_path) > self.MAX_UPLOAD_BYTES:
+                raise ValueError(
+                    f"Arquivo excede o limite de {self.MAX_UPLOAD_BYTES // 1024 // 1024} MB"
+                )
+            nome = nome_arquivo or _os.path.basename(arquivo_path)
+            with open(arquivo_path, "rb") as f:
+                file_bytes = f.read(self.MAX_UPLOAD_BYTES + 1)
+        if len(file_bytes) > self.MAX_UPLOAD_BYTES:
+            raise ValueError(
+                f"Conteúdo excede o limite de {self.MAX_UPLOAD_BYTES // 1024 // 1024} MB"
+            )
         mime = mimetypes.guess_type(nome)[0] or "application/octet-stream"
-        with open(arquivo_path, "rb") as f:
-            file_bytes = f.read()
 
         tam_int = len(file_bytes)
         if tam_int < 1024:

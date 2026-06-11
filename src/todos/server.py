@@ -3447,7 +3447,9 @@ async def sei_gerar_zip_processo(
 @mcp.tool()
 async def sei_incluir_documento_externo(
     processo: str,
-    arquivo_path: str,
+    arquivo_path: str = "",
+    arquivo_base64: str = "",
+    nome_arquivo: str = "",
     id_serie: str = "",
     data_elaboracao: str = "",
     nivel_acesso: str = "0",
@@ -3460,7 +3462,12 @@ async def sei_incluir_documento_externo(
 
     Parâmetros:
     - processo: protocolo formatado (ex: 0020.008886/2026-49)
-    - arquivo_path: caminho local do arquivo (ex: C:/Users/frank/Downloads/NF52.pdf)
+    - arquivo_path: caminho local do arquivo (apenas em modo stdio/local;
+      ex: C:/Users/frank/Downloads/NF52.pdf)
+    - arquivo_base64: conteúdo do arquivo em base64 (obrigatório em modo
+      remoto/HTTP; alternativa a arquivo_path)
+    - nome_arquivo: nome do arquivo com extensão (obrigatório com arquivo_base64;
+      ex: NF52.pdf)
     - id_serie: ID do tipo de documento no SEI. Se vazio, retorna lista de tipos disponíveis.
       Para Nota Fiscal, use sei_pesquisar_tipos_documento para descobrir o id.
     - data_elaboracao: data de elaboração no formato dd/mm/aaaa (padrão: hoje)
@@ -3475,17 +3482,40 @@ async def sei_incluir_documento_externo(
     Se o processo estiver concluído, use sei_reabrir_processo primeiro.
     """
     try:
+        conteudo: bytes | None = None
+        if arquivo_base64:
+            if not nome_arquivo:
+                return _error(
+                    "nome_arquivo é obrigatório quando arquivo_base64 é usado."
+                )
+            try:
+                conteudo = base64.b64decode(arquivo_base64, validate=True)
+            except Exception:
+                return _error("arquivo_base64 inválido (não é base64 válido).")
+        elif arquivo_path:
+            # Em modo remoto o caminho apontaria para o filesystem do SERVIDOR,
+            # permitindo exfiltrar arquivos do host — exigir base64.
+            if _http_mode:
+                return _error(
+                    "Em modo remoto use arquivo_base64 + nome_arquivo "
+                    "(caminhos do servidor não são permitidos)."
+                )
+        elif id_serie:
+            return _error("Informe arquivo_path (local) ou arquivo_base64 (remoto).")
+
         web = _get_web_client(ctx)
         if web._inbox_url is None:
             await web.login()
 
         result = await web.incluir_documento_externo(
             protocolo_formatado=processo,
-            arquivo_path=arquivo_path,
+            arquivo_path=arquivo_path or None,
+            nome_arquivo=nome_arquivo or None,
             id_serie=id_serie or None,
             data_elaboracao=data_elaboracao,
             nivel_acesso=nivel_acesso,
             hipotese_legal=hipotese_legal,
+            conteudo=conteudo,
         )
         return _json(result)
     except Exception as e:
