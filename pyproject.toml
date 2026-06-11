@@ -35,8 +35,26 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "SIM", "RET", "C4", "PIE", "PT", "TID"]
-ignore = ["E501"]  # line length handled by formatter
+select = ["ALL"]
+ignore = [
+    # ── Formatter conflicts (ruff format owns these) ──────────────────────
+    "W191", "E101",                  # tabs
+    "E111", "E114", "E117",          # indentation width
+    "D206", "D300",                  # docstring formatting
+    "Q000", "Q001", "Q002", "Q003",  # quote style
+    "COM812", "COM819",              # trailing commas
+    "ISC001", "ISC002",              # implicit string concat
+    "E501",                          # line length (formatter handles it)
+    # ── Mutually exclusive D pairs — pick one of each ─────────────────────
+    "D203",   # keep D211 (no blank line before class)
+    "D213",   # keep D212 (summary on first line)
+    # ── Intentional project-wide decisions ────────────────────────────────
+    "RUF001", "RUF002", "RUF003",    # ambiguous unicode — Portuguese text is intentional
+    "CPY001",                        # no copyright headers
+    "FIX001", "FIX002", "FIX003", "FIX004",  # FIXME/HACK markers ok
+    "TD001", "TD002", "TD003", "TD004", "TD005", "TD006", "TD007",  # TODO tracking
+    "S104",   # 0.0.0.0 intentional — Railway/container deploy (same as bandit skip)
+]
 
 [tool.ruff.lint.per-file-ignores]
 "setup_claude.py" = ["T201"]  # print() ok in installer

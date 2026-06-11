@@ -27,8 +27,8 @@ ROTULOS = {
 Decisao = Literal["liberar", "bloquear"]
 
 
-def normalizar_nivel(valor) -> str | None:
-    """Converte o valor cru de nivelAcesso para uma string '0'/'1'/'2' ou None."""
+def normalizar_nivel(valor) -> str | None:  # noqa: ANN001
+    """Converte o valor cru de nivelAcesso para uma string '0'/'1'/'2' ou None."""  # noqa: D401
     if valor is None:
         return None
     s = str(valor).strip()
@@ -37,8 +37,8 @@ def normalizar_nivel(valor) -> str | None:
     return None
 
 
-def precisa_disclaimer(nivel_acesso) -> bool:
-    """True quando o nível de acesso é restrito ou sigiloso."""
+def precisa_disclaimer(nivel_acesso) -> bool:  # noqa: ANN001
+    """True quando o nível de acesso é restrito ou sigiloso."""  # noqa: D401
     return normalizar_nivel(nivel_acesso) in (RESTRITO, SIGILOSO)
 
 
@@ -180,7 +180,7 @@ def construir_disclaimer_acompanhante(
 
 
 def avaliar_acesso(
-    nivel_acesso,
+    nivel_acesso,  # noqa: ANN001
     hipotese_legal: str | None = None,
     *,
     confirmou: bool,
@@ -215,7 +215,7 @@ def prefixar_markdown(disclaimer: dict, conteudo: str) -> str:
     linhas.append(">")
     linhas.append("> Riscos:")
     for r in disclaimer["riscos"]:
-        linhas.append(f"> - {r}")
+        linhas.append(f"> - {r}")  # noqa: PERF401
     return "\n".join(linhas) + "\n\n" + conteudo
 
 
@@ -230,7 +230,7 @@ def prefixar_texto(disclaimer: dict, conteudo: str) -> str:
         linhas.append(f"Hipótese legal: {disclaimer['hipotese_legal']}")
     linhas.append("Riscos:")
     for r in disclaimer["riscos"]:
-        linhas.append(f"  - {r}")
+        linhas.append(f"  - {r}")  # noqa: PERF401
     linhas.append("=" * 70)
     return "\n".join(linhas) + "\n\n" + conteudo
 
