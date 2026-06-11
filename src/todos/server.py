@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import unicodedata
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Any, Literal, cast
@@ -293,6 +294,55 @@ async def _solicitar_consentimento_via_elicit(
     if result.action == "accept" and result.data and result.data.autorizo_acesso:
         return "aceitou"
     return "recusou"
+
+
+def _nivel_acesso_meta_web(meta: dict) -> str | None:
+    """Extrai o nível de acesso ('0'/'1'/'2') de metadados scrapeados da web.
+
+    As chaves vêm normalizadas do parser (ex: 'nível_de_acesso') e o valor é
+    o texto da página (ex: 'Restrito'); ambos variam com acentuação.
+    """
+    for k, v in meta.items():
+        k_ascii = unicodedata.normalize("NFKD", str(k)).encode("ascii", "ignore").decode()
+        if "nivel" in k_ascii and "acesso" in k_ascii:
+            texto = unicodedata.normalize("NFKD", str(v)).encode("ascii", "ignore").decode().lower()
+            if "sigilos" in texto:
+                return access_control.SIGILOSO
+            if "restrit" in texto:
+                return access_control.RESTRITO
+            if "public" in texto:
+                return access_control.PUBLICO
+            return access_control.normalizar_nivel(v)
+    return None
+
+
+async def _aplicar_gate_documento_web(
+    web: SEIWebClient,
+    processo: str,
+    id_documento: str,
+    tipo_documento: str,
+    confirmou: bool,  # noqa: FBT001
+) -> dict | None:
+    """Gate de acesso restrito para os fallbacks web-only.
+
+    Consulta os metadados scrapeados de documento_consultar e, se o documento
+    for restrito/sigiloso sem consentimento, retorna o payload de bloqueio.
+    Retorna None quando o acesso está liberado. Falha na consulta propaga
+    como exceção (fail-closed): sem metadados não há como classificar o nível.
+    """
+    if confirmou or access_control.env_permite_restritos():
+        return None
+    meta = await web.consultar_documento_web(processo, id_documento)
+    nivel = _nivel_acesso_meta_web(meta)
+    if not access_control.precisa_disclaimer(nivel):
+        return None
+    alvo = {
+        "tipo": "documento",
+        "id": str(id_documento),
+        "tipo_documento": tipo_documento,
+        "processo": processo,
+    }
+    return access_control.construir_aviso_bloqueio(nivel, None, alvo)
 
 
 async def _aplicar_gate_documento(  # noqa: PLR0911
@@ -809,53 +859,32 @@ async def sei_ler_documento(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915
                     "(protocolo do processo, ex: '50300.018905/2018-67') para ler documentos."
                 )
             web = backend.web
-            # Gate de acesso: verificar nível antes de expor conteúdo ao modelo
-            if not confirmar_acesso_restrito and not access_control.env_permite_restritos():
-                try:
-                    meta_web = await web.consultar_documento_web(processo, id_documento)
-                    nivel_str = str(
-                        meta_web.get(
-                            "nível_de_acesso",
-                            meta_web.get("nivel_de_acesso", ""),
-                        )
-                    ).lower()
-                    nivel_cod = (
-                        access_control.SIGILOSO
-                        if "sigiloso" in nivel_str
-                        else access_control.RESTRITO
-                        if "restrito" in nivel_str
-                        else None
-                    )
-                    if nivel_cod is not None:
-                        return _json(
-                            access_control.construir_aviso_bloqueio(
-                                nivel_cod,
-                                None,
-                                {"tipo": "documento", "id": id_documento},
-                            )
-                        )
-                except Exception:  # noqa: BLE001, S110
-                    pass  # falha no check → prossegue (fail-open em web-only)
-            tipo_doc = tipo_documento
-            if tipo_doc == "auto":
+
+            bloqueio = await _aplicar_gate_documento_web(
+                web, processo, id_documento, tipo_documento, confirmou=confirmar_acesso_restrito
+            )
+            if bloqueio is not None:
+                return _json(bloqueio)
+
+            def _pdf_resposta(raw_bytes: bytes) -> str:
+                if raw_bytes[:4] != b"%PDF":
+                    return _error("Documento externo não é PDF. Use sei_baixar_anexo.")
+                if formato == "markdown":
+                    return pdf_to_markdown(raw_bytes)
+                if formato == "html":
+                    return _error("formato='html' só é válido para documentos internos.")
+                return pdf_to_text(raw_bytes)
+
+            if tipo_documento == "auto":
                 # Tenta interno primeiro; se falhar, tenta externo
                 try:
                     raw = await web.visualizar_documento_interno_web(processo, id_documento)
-                    tipo_doc = "I"
                 except Exception:  # noqa: BLE001
                     raw_bytes = await web.baixar_documento_externo_web(processo, id_documento)
-                    if raw_bytes[:4] == b"%PDF":
-                        if formato == "markdown":
-                            return pdf_to_markdown(raw_bytes)
-                        return pdf_to_text(raw_bytes)
-                    return _error("Documento externo não é PDF. Use sei_baixar_anexo.")
-            elif tipo_doc == "X":
+                    return _pdf_resposta(raw_bytes)
+            elif tipo_documento == "X":
                 raw_bytes = await web.baixar_documento_externo_web(processo, id_documento)
-                if raw_bytes[:4] == b"%PDF":
-                    if formato == "markdown":
-                        return pdf_to_markdown(raw_bytes)
-                    return pdf_to_text(raw_bytes)
-                return _error("Documento externo não é PDF. Use sei_baixar_anexo.")
+                return _pdf_resposta(raw_bytes)
             else:
                 raw = await web.visualizar_documento_interno_web(processo, id_documento)
             if formato == "markdown":
@@ -977,33 +1006,11 @@ async def sei_baixar_anexo(  # noqa: C901, PLR0911
                     "Em instâncias sem mod-wssei, forneça o parâmetro 'processo' "
                     "para baixar anexos."
                 )
-            # Gate de acesso: verificar nível antes de expor conteúdo ao modelo
-            if not confirmar_acesso_restrito and not access_control.env_permite_restritos():
-                try:
-                    meta_web = await backend.web.consultar_documento_web(processo, id_documento)
-                    nivel_str = str(
-                        meta_web.get(
-                            "nível_de_acesso",
-                            meta_web.get("nivel_de_acesso", ""),
-                        )
-                    ).lower()
-                    nivel_cod = (
-                        access_control.SIGILOSO
-                        if "sigiloso" in nivel_str
-                        else access_control.RESTRITO
-                        if "restrito" in nivel_str
-                        else None
-                    )
-                    if nivel_cod is not None:
-                        return _json(
-                            access_control.construir_aviso_bloqueio(
-                                nivel_cod,
-                                None,
-                                {"tipo": "documento", "id": id_documento},
-                            )
-                        )
-                except Exception:  # noqa: BLE001, S110
-                    pass  # falha no check → prossegue (fail-open em web-only)
+            bloqueio = await _aplicar_gate_documento_web(
+                backend.web, processo, id_documento, "X", confirmou=confirmar_acesso_restrito
+            )
+            if bloqueio is not None:
+                return _json(bloqueio)
             content = await backend.web.baixar_documento_externo_web(processo, id_documento)
             if len(content) > MAX_BINARY_SIZE:
                 return _error(
