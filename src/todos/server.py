@@ -12,18 +12,18 @@ from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.transport_security import TransportSecuritySettings
 from pydantic import BaseModel, Field
 
-from mcp_seipro.sei_client import SEIClient
-from mcp_seipro.sei_web_client import SEIWebClient
-from mcp_seipro.html_utils import (
+from todos.sei_client import SEIClient
+from todos.sei_web_client import SEIWebClient
+from todos.html_utils import (
     html_to_text, html_to_markdown,
     pdf_to_text, pdf_to_markdown,
     sanitize_iso8859,
 )
-from mcp_seipro.sei_styles import (
+from todos.sei_styles import (
     SEI_STYLES, STYLE_SHORTCUTS,
     html_referencia_sei, html_destinatario,
 )
-from mcp_seipro import access_control
+from todos import access_control
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ def _get_client(ctx: Context) -> SEIClient:
     # Modo HTTP: extrai credenciais do token OAuth
     if _http_mode:
         from mcp.server.auth.middleware.auth_context import get_access_token
-        from mcp_seipro.auth import get_sei_credentials_from_token
+        from todos.auth import get_sei_credentials_from_token
 
         access_token = get_access_token()
         if not access_token:
@@ -88,7 +88,7 @@ def _get_web_client(ctx: Context) -> SEIWebClient:
 
     if _http_mode:
         from mcp.server.auth.middleware.auth_context import get_access_token
-        from mcp_seipro.auth import get_sei_credentials_from_token
+        from todos.auth import get_sei_credentials_from_token
 
         access_token = get_access_token()
         if not access_token:
@@ -107,7 +107,7 @@ _http_kwargs = {}
 if _http_mode:
     from pydantic import AnyHttpUrl
     from mcp.server.auth.settings import AuthSettings, ClientRegistrationOptions, RevocationOptions
-    from mcp_seipro.auth import SEIProOAuthProvider
+    from todos.auth import SEIProOAuthProvider
 
     _base_url = os.environ.get("BASE_URL", f"http://localhost:{_http_port}")
     _provider = SEIProOAuthProvider()
@@ -3286,6 +3286,47 @@ async def sei_gerar_zip_processo(
         return _error(str(e))
 
 
+@mcp.tool()
+async def sei_incluir_documento_externo(
+    processo: str,
+    arquivo_path: str,
+    id_serie: str = "",
+    data_elaboracao: str = "",
+    ctx: Context = None,
+) -> str:
+    """Inclui documento externo (PDF, imagem, etc.) em um processo SEI via web scraper.
+
+    Implementação via scraper web — funciona em instâncias sem mod-wssei REST.
+
+    Parâmetros:
+    - processo: protocolo formatado (ex: 0020.008886/2026-49)
+    - arquivo_path: caminho local do arquivo (ex: C:/Users/frank/Downloads/NF52.pdf)
+    - id_serie: ID do tipo de documento no SEI. Se vazio, retorna lista de tipos disponíveis.
+      Para Nota Fiscal, use sei_pesquisar_tipos_documento para descobrir o id.
+    - data_elaboracao: data de elaboração no formato dd/mm/aaaa (padrão: hoje)
+
+    Se id_serie não for informado, retorna os tipos disponíveis para que você
+    possa escolher e chamar novamente com o id correto.
+
+    Nota: o processo deve estar aberto na caixa da unidade atual.
+    Se o processo estiver concluído, use sei_reabrir_processo primeiro.
+    """
+    try:
+        web = _get_web_client(ctx)
+        if web._inbox_url is None:
+            await web.login()
+
+        result = await web.incluir_documento_externo(
+            protocolo_formatado=processo,
+            arquivo_path=arquivo_path,
+            id_serie=id_serie or None,
+            data_elaboracao=data_elaboracao,
+        )
+        return _json(result)
+    except Exception as e:
+        return _error(str(e))
+
+
 # -- Acompanhamento: meus, da unidade, alterar --
 
 
@@ -3925,7 +3966,7 @@ def main():
         from starlette.routing import Route
         from starlette.responses import Response
 
-        from mcp_seipro.auth import login_page, login_submit
+        from todos.auth import login_page, login_submit
 
         # Favicon / ícone do SEI Pro — busca em vários locais possíveis
         _icon_bytes = b""

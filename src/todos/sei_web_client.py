@@ -799,6 +799,288 @@ class SEIWebClient:
             "andamentos": andamentos,
         }
 
+    async def incluir_documento_externo(
+        self,
+        protocolo_formatado: str,
+        arquivo_path: str,
+        nome_arquivo: Optional[str] = None,
+        id_serie: Optional[str] = None,
+        data_elaboracao: str = "",
+    ) -> dict:
+        """Inclui documento externo (upload de arquivo) em processo SEI via web.
+
+        Fluxo:
+        1. procedimento_trabalhar → frameset → arvore_montar
+        2. Extrai Nos[0].acoes → link documento_escolher_tipo
+        3. GET documento_escolher_tipo
+        4. POST frmDocumentoEscolherTipo com hdnIdSerie=-1 → documento_receber
+        5. Parse: upload URL, selSerie, user, unidade
+        6. Se id_serie vazio → retorna tipos disponíveis
+        7. POST multipart upload (filArquivo) → nome_upload#nome#data_hora#tamanho
+        8. Build hdnAnexos + POST frmDocumentoCadastro
+
+        Retorna:
+            {"sucesso": True, "url_final": str}
+            ou {"tipos_disponiveis": [{id, nome}, ...]} se id_serie=None
+        """
+        import mimetypes
+        import os as _os
+        from datetime import date as _date
+
+        if self._inbox_url is None:
+            raise RuntimeError("login() não foi chamado")
+
+        if protocolo_formatado not in self._trabalhar_links:
+            await self.fetch_inbox(detalhada=False)
+        if protocolo_formatado not in self._trabalhar_links:
+            await self.pesquisar_processo(protocolo_formatado)
+
+        trab_url = urljoin(str(self._inbox_url), self._trabalhar_links[protocolo_formatado])
+
+        # --- Step 1: trabalhar → frameset ---
+        r1 = await self._http.get(trab_url, headers={"Referer": str(self._inbox_url)})
+        if r1.status_code != 200:
+            raise RuntimeError(f"trabalhar status={r1.status_code}")
+        if 'name="txtUsuario"' in r1.text or 'id="txtUsuario"' in r1.text:
+            self._form_action = None
+            await self.login()
+            return await self.incluir_documento_externo(
+                protocolo_formatado, arquivo_path, nome_arquivo, id_serie, data_elaboracao
+            )
+
+        soup_fs = BeautifulSoup(r1.text, "html.parser")
+        ifr = soup_fs.find("iframe", id="ifrArvore")
+        if not ifr:
+            raise RuntimeError("ifrArvore não encontrado no frameset")
+        arvore_url = urljoin(str(r1.url), ifr.get("src", "").replace("&amp;", "&"))
+
+        # --- Step 2: arvore_montar → Nos[0].acoes ---
+        r2 = await self._http.get(arvore_url, headers={"Referer": str(r1.url)})
+        if r2.status_code != 200:
+            raise RuntimeError(f"arvore status={r2.status_code}")
+
+        acoes_html = ""
+        for pat in (
+            r"Nos\[0\]\.acoes\s*=\s*'((?:[^'\\]|\\.)*)'",
+            r'Nos\[0\]\.acoes\s*=\s*"((?:[^"\\]|\\.)*)"',
+        ):
+            m = re.search(pat, r2.text, re.S)
+            if m:
+                acoes_html = m.group(1).replace("\\'", "'").replace('\\"', '"').replace("\\\\", "\\")
+                break
+
+        if not acoes_html:
+            raise RuntimeError(
+                "Nos[0].acoes não encontrado — o processo pode estar concluído "
+                "ou você não tem permissão para incluir documentos nele."
+            )
+
+        sei_base = f"{self.sei_root}/sei/"
+        soup_acoes = BeautifulSoup(acoes_html, "html.parser")
+        incluir_href: Optional[str] = None
+        for a in soup_acoes.find_all("a", href=re.compile(r"documento_escolher_tipo")):
+            incluir_href = a.get("href", "").replace("&amp;", "&")
+            break
+        if not incluir_href:
+            for img in soup_acoes.find_all("img"):
+                if "Incluir" in (img.get("title", "") or "") or "incluir" in (img.get("src", "") or ""):
+                    pa = img.find_parent("a")
+                    if pa:
+                        incluir_href = pa.get("href", "").replace("&amp;", "&")
+                        break
+
+        if not incluir_href:
+            raise RuntimeError(
+                "Link 'Incluir Documento' não encontrado nas ações do processo. "
+                "O processo pode estar concluído, sem tramitação para esta unidade, "
+                "ou você não tem permissão. Tente reabrir o processo primeiro."
+            )
+
+        # --- Step 3: GET documento_escolher_tipo ---
+        escolher_url = urljoin(sei_base, incluir_href)
+        r3 = await self._http.get(escolher_url, headers={"Referer": str(r2.url)})
+        if r3.status_code != 200:
+            raise RuntimeError(f"documento_escolher_tipo status={r3.status_code}")
+
+        body3 = r3.content.decode("iso-8859-1", "replace")
+        soup3 = BeautifulSoup(body3, "html.parser")
+        form3 = soup3.find("form", id="frmDocumentoEscolherTipo")
+        if not form3:
+            raise RuntimeError("frmDocumentoEscolherTipo não encontrado")
+        form3_action = form3.get("action", "").replace("&amp;", "&")
+        post3_url = urljoin(str(r3.url), form3_action)
+
+        # --- Step 4: POST escolher com hdnIdSerie=-1 → documento_receber ---
+        post3_data: dict[str, str] = {}
+        for inp in form3.find_all("input", type="hidden"):
+            n = inp.get("name")
+            if n:
+                post3_data[n] = inp.get("value", "") or ""
+        post3_data["hdnIdSerie"] = "-1"
+
+        r4 = await self._http.post(post3_url, data=post3_data, headers={"Referer": str(r3.url)})
+        if r4.status_code != 200:
+            raise RuntimeError(f"POST escolher_tipo status={r4.status_code}")
+
+        body4 = r4.content.decode("iso-8859-1", "replace")
+
+        # --- Step 5: Parse documento_receber ---
+        # Validação de página: infraUpload deve estar presente no JS
+        if "infraUpload" not in body4 and "frmDocumentoCadastro" not in body4:
+            raise RuntimeError("documento_receber não encontrado — verifique o processo e as permissões")
+
+        # parse frmDocumentoCadastro
+        soup4 = BeautifulSoup(body4, "html.parser")
+        form4 = soup4.find("form", id="frmDocumentoCadastro")
+        if not form4:
+            raise RuntimeError("frmDocumentoCadastro não encontrado em documento_receber")
+        form4_action = form4.get("action", "").replace("&amp;", "&")
+        post4_url = urljoin(str(r4.url), form4_action)
+
+        form4_data: dict[str, str] = {}
+        for inp in form4.find_all("input", type="hidden"):
+            n = inp.get("name")
+            if n:
+                form4_data[n] = inp.get("value", "") or ""
+
+        # selSerie options
+        sel_serie = form4.find("select", attrs={"name": "selSerie"})
+        tipos: list[dict] = []
+        if sel_serie:
+            for opt in sel_serie.find_all("option"):
+                v = opt.get("value", "")
+                t = opt.get_text(strip=True)
+                if v and v not in ("-1", ""):
+                    tipos.append({"id": v, "nome": t})
+
+        # Se id_serie não informado, retorna tipos disponíveis
+        if not id_serie:
+            return {"tipos_disponiveis": tipos}
+
+        # --- Step 6: Upload do arquivo ---
+        nome = nome_arquivo or _os.path.basename(arquivo_path)
+        mime = mimetypes.guess_type(nome)[0] or "application/octet-stream"
+        with open(arquivo_path, "rb") as f:
+            file_bytes = f.read()
+
+        tam_int = len(file_bytes)
+        if tam_int < 1024:
+            tamanho_fmt = f"{tam_int} B"
+        elif tam_int < 1024 * 1024:
+            tamanho_fmt = f"{tam_int / 1024:.1f} KB"
+        else:
+            tamanho_fmt = f"{tam_int / 1024 / 1024:.1f} MB"
+
+        # Extrai URL de upload: new infraUpload('frmAnexos', 'URL')
+        m_up = re.search(
+            r"new infraUpload\(['\"][^'\"]*['\"],\s*['\"]([^'\"]*documento_upload_anexo[^'\"]*)['\"]",
+            body4,
+        )
+        if not m_up:
+            raise RuntimeError("URL de upload (infraUpload) não encontrada em documento_receber")
+        upload_url = urljoin(str(r4.url), m_up.group(1).replace("&amp;", "&"))
+
+        r5 = await self._http.post(
+            upload_url,
+            files={"filArquivo": (nome, file_bytes, mime)},
+            headers={"Referer": str(r4.url)},
+        )
+        if r5.status_code != 200:
+            raise RuntimeError(f"upload status={r5.status_code}: {r5.text[:200]}")
+
+        # Resposta: nome_upload#nome#mime#tamanho#data_hora#
+        up_parts = r5.text.strip().rstrip("#").split("#")
+        if len(up_parts) < 2:
+            raise RuntimeError(f"Resposta de upload inesperada: {r5.text!r}")
+        nome_upload = up_parts[0]
+        upload_dh = up_parts[4] if len(up_parts) > 4 else ""
+        upload_tam = up_parts[3] if len(up_parts) > 3 else str(tam_int)
+
+        # Extrai usuario e unidade da linha JS:
+        # objTabelaAnexos.adicionar([arr[...], ..., 'CPF', 'SIGLA'])
+        m_add = re.search(
+            r"objTabelaAnexos\.adicionar\(\[.*?'([0-9]+)'\s*,\s*'([^']+)'\s*\]\)",
+            body4, re.DOTALL,
+        )
+        usuario = m_add.group(1) if m_add else self._usuario
+        unidade = m_add.group(2) if m_add else ""
+
+        # --- Step 7: POST frmDocumentoCadastro com hdnAnexos ---
+        # SEI Pro extension usa ± (U+00B1) como separador, com encodeURIComponent
+        # e remoção do byte alto UTF-8 (%C2) para manter %B1 (ISO-8859-1 ±).
+        # O PHP servidor divide hdnAnexos em \xB1.
+        import urllib.parse as _up
+        _SEP = "%B1"  # ± URL-encoded como ISO-8859-1 (PHP split target)
+
+        def _qpart(s: str) -> str:
+            return _up.quote(s.replace(" ", "+"), safe="+-.!~*'()_")
+
+        hdn_anexos = _SEP.join([
+            _qpart(nome_upload),
+            _qpart(nome),
+            _qpart(upload_dh),
+            _qpart(upload_tam),
+            _qpart(tamanho_fmt),
+            _qpart(usuario),
+            _qpart(unidade),
+        ])
+
+        # Monta body URL-encoded manualmente para hdnAnexos não ser duplo-codificado
+        form4_data["hdnAnexos"] = ""   # placeholder — substituído abaixo
+        form4_data["hdnIdSerie"] = id_serie
+        form4_data["selSerie"] = id_serie
+        form4_data["txtDataElaboracao"] = data_elaboracao or _date.today().strftime("%d/%m/%Y")
+        form4_data["hdnStaNivelAcessoLocal"] = "0"
+        form4_data["rdoNivelAcesso"] = "0"   # público
+        form4_data["rdoFormato"] = "N"        # nato-digital
+        # JS submeter() altera de '1' → '2' antes do form.submit()
+        form4_data["hdnFlagDocumentoCadastro"] = "2"
+
+        # Codifica todos os campos exceto hdnAnexos, depois concatena manualmente
+        other_fields = {k: v for k, v in form4_data.items() if k != "hdnAnexos"}
+        raw_body = _up.urlencode(other_fields) + "&hdnAnexos=" + hdn_anexos
+
+        r6 = await self._http.post(
+            post4_url,
+            content=raw_body.encode("ascii"),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Referer": str(r4.url),
+            },
+        )
+        if r6.status_code != 200:
+            raise RuntimeError(f"POST frmDocumentoCadastro status={r6.status_code}")
+
+        body6 = r6.content.decode("iso-8859-1", "replace")
+        final_url = str(r6.url)
+        sucesso = "arvore_visualizar" in final_url
+
+        if not sucesso:
+            soup6 = BeautifulSoup(body6, "html.parser")
+            erros = []
+            for cls in ["infraMsg", "infraMsgErro", "errMsg"]:
+                el = soup6.find(class_=cls)
+                if el:
+                    erros.append(el.get_text(strip=True)[:300])
+            scripts6 = re.findall(r"<script[^>]*>(.*?)</script>", body6, re.DOTALL | re.IGNORECASE)
+            for sc in scripts6:
+                if "alert(" in sc:
+                    m_alert = re.search(r"alert\(['\"]([^'\"]+)['\"]", sc)
+                    if m_alert:
+                        erros.append(m_alert.group(1))
+            msg = "; ".join(erros) if erros else f"URL final inesperada: {final_url}"
+            raise RuntimeError(f"Falha ao incluir documento: {msg}")
+
+        m_id = re.search(r"id_documento=(\d+)", final_url)
+        id_doc = m_id.group(1) if m_id else ""
+        return {
+            "sucesso": True,
+            "id_documento": id_doc,
+            "url_final": final_url,
+            "nome_arquivo": nome,
+            "tamanho": tamanho_fmt,
+        }
+
     async def listar_processos(
         self,
         detalhada: bool = True,

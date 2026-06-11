@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mcp-seipro"
-version = "0.3.8"
-description = "MCP server for SEI (Sistema Eletronico de Informacoes) - 116 tools for mod-wssei v2 REST API"
+name = "todos"
+version = "0.4.0"
+description = "TOdos Domina O Sei — MCP server para o SEI com paridade web-first: 116 tools, scraper HTTP + REST híbrido, funciona em instâncias sem mod-wssei"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -22,7 +22,10 @@ dependencies = [
 ]
 
 [project.scripts]
-mcp-seipro = "mcp_seipro.server:main"
+todos = "todos.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/todos"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/mcp_seipro/", "pyproject.toml", "README.md"]
+include = ["src/todos/", "pyproject.toml", "README.md"]

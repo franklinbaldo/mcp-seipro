@@ -6,8 +6,8 @@ Uso:
     python3 setup_claude.py
 
 Este script:
-  1. Pergunta suas credenciais do SEI (URL, usuario, senha)
-  2. Cria um ambiente virtual e instala o mcp-seipro
+  1. Pergunta suas credenciais do SEI (URL opcional, usuario, senha)
+  2. Cria um ambiente virtual e instala o todos
   3. Configura o Claude Desktop para usar o MCP do SEI
 
 Nenhuma dependencia externa necessaria - usa apenas a stdlib do Python.
@@ -28,8 +28,8 @@ from urllib.parse import urlparse
 # Constantes
 # ---------------------------------------------------------------------------
 MIN_PYTHON = (3, 11)
-MCP_SERVER_NAME = "seipro"
-VENV_HOME = Path.home() / ".mcp-seipro"
+MCP_SERVER_NAME = "todos"
+VENV_HOME = Path.home() / ".todos"
 VENV_DIR = VENV_HOME / ".venv"
 
 # ---------------------------------------------------------------------------
@@ -39,15 +39,15 @@ VENV_DIR = VENV_HOME / ".venv"
 def banner():
     print()
     print("=" * 60)
-    print("  SEI Pro  -  Instalador para Claude Desktop")
+    print("  todos  -  Instalador para Claude Desktop")
     print("=" * 60)
     print()
-    print("  Este script configura o servidor MCP do SEI Pro no")
+    print("  Este script configura o servidor MCP do SEI no")
     print("  aplicativo Claude Desktop (Claude Chat / Cowork).")
     print()
     print("  O que sera feito:")
     print("    1. Coletar suas credenciais do SEI")
-    print("    2. Criar ambiente virtual e instalar o mcp-seipro")
+    print("    2. Criar ambiente virtual e instalar o todos")
     print("    3. Configurar o Claude Desktop automaticamente")
     print()
 
@@ -113,8 +113,8 @@ def detect_repo_root() -> Path | None:
     if pyproject.exists():
         try:
             text = pyproject.read_text(encoding="utf-8")
-            if 'name = "mcp-seipro"' in text:
-                info(f"Repositorio mcp-seipro detectado: {script_dir}")
+            if 'name = "todos"' in text:
+                info(f"Repositorio todos detectado: {script_dir}")
                 return script_dir
         except Exception:
             pass
@@ -127,14 +127,14 @@ def detect_repo_root() -> Path | None:
 
 def prompt_url() -> str:
     print()
-    print("  [1/5] URL da API do SEI")
+    print("  [1/5] URL da API do SEI (opcional)")
     print("        Exemplo: https://sei.orgao.gov.br/sei/modulos/wssei/controlador_ws.php/api/v2")
+    print("        Deixe em branco se sua instancia nao tiver mod-wssei instalado.")
     print()
     while True:
-        url = input("        URL: ").strip()
+        url = input("        URL [Enter para pular]: ").strip()
         if not url:
-            warn("URL nao pode ser vazia.")
-            continue
+            return ""
         parsed = urlparse(url)
         if not parsed.scheme:
             warn("URL deve comecar com https:// ou http://")
@@ -232,35 +232,35 @@ def venv_python() -> Path:
     return VENV_DIR / "bin" / "python"
 
 
-def mcp_seipro_command() -> Path:
+def todos_command() -> Path:
     if platform.system() == "Windows":
-        return VENV_DIR / "Scripts" / "mcp-seipro.exe"
-    return VENV_DIR / "bin" / "mcp-seipro"
+        return VENV_DIR / "Scripts" / "todos.exe"
+    return VENV_DIR / "bin" / "todos"
 
 
 def install_package(repo_root: Path | None, uv_path: str | None):
     pip_cmd = get_pip(uv_path)
 
     if repo_root:
-        info(f"Instalando mcp-seipro do repositorio local ({repo_root}) ...")
+        info(f"Instalando todos do repositorio local ({repo_root}) ...")
         subprocess.run(
             [*pip_cmd, "-e", str(repo_root)],
             check=True,
         )
     else:
-        info("Instalando mcp-seipro do PyPI ...")
+        info("Instalando todos do PyPI ...")
         subprocess.run(
-            [*pip_cmd, "mcp-seipro"],
+            [*pip_cmd, "todos"],
             check=True,
         )
 
-    cmd = mcp_seipro_command()
+    cmd = todos_command()
     if not cmd.exists():
-        error(f"Comando mcp-seipro nao encontrado em {cmd}")
+        error(f"Comando todos nao encontrado em {cmd}")
         error("A instalacao pode ter falhado. Verifique os erros acima.")
         sys.exit(1)
 
-    info(f"mcp-seipro instalado: {cmd}")
+    info(f"todos instalado: {cmd}")
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +352,7 @@ def print_success(config_path: Path):
     print("              Instalacao concluida!")
     print("  " + "=" * 56)
     print()
-    print("  Reinicie o Claude Desktop para ativar o SEI Pro.")
+    print("  Reinicie o Claude Desktop para ativar o todos.")
     print()
     print("  Para testar, pergunte ao Claude:")
     print('    "Liste as unidades do SEI"')
@@ -361,7 +361,7 @@ def print_success(config_path: Path):
     print("    python3 setup_claude.py")
     print()
     print("  Para remover:")
-    print(f'    Apague a entrada "sei" de {config_path}')
+    print(f'    Apague a entrada "todos" de {config_path}')
     print(f"    E delete a pasta {VENV_HOME}")
     print()
 
@@ -387,20 +387,21 @@ def main():
     sei_orgao = prompt_orgao()
     sei_ssl = prompt_ssl()
 
-    env = {
-        "SEI_URL": sei_url,
+    env: dict = {
         "SEI_USUARIO": sei_usuario,
         "SEI_SENHA": sei_senha,
         "SEI_ORGAO": sei_orgao,
         "SEI_VERIFY_SSL": sei_ssl,
     }
+    if sei_url:
+        env["SEI_URL"] = sei_url
 
     # Fase 2
     print()
     create_venv(uv_path)
     install_package(repo_root, uv_path)
 
-    command = str(mcp_seipro_command())
+    command = str(todos_command())
 
     # Fase 3
     print_summary(config_path, command, env)
