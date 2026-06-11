@@ -219,7 +219,7 @@ mcp = FastMCP(
 
 
 @mcp.resource("sei://status")
-async def sei_status_resource(ctx: Context) -> str:  # noqa: D103
+async def sei_status_resource(ctx: Context) -> str:
     """Unidade SEI ativa, usuário logado, instância e unidades disponíveis. Leia ao iniciar."""
     web = _get_web_client(ctx)
     try:

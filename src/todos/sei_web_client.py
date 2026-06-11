@@ -404,7 +404,7 @@ class SEIWebClient:
             return
 
         # Extrai nome, id e órgão do usuário via lnkUsuarioSistema
-        # title="FRANKLIN SILVEIRA BALDO (76450694220/PGE)"
+        # formato do title: "NOME COMPLETO (ID/SIGLA_ORGAO)"
         user_link = soup.find("a", id="lnkUsuarioSistema")
         if isinstance(user_link, Tag):
             title = _tag_str(user_link, "title").strip()
