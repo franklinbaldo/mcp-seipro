@@ -333,9 +333,16 @@ Com o todos configurado, basta conversar com o Claude em linguagem natural:
 
 ### Instâncias sem mod-wssei
 
-O todos é **web-first**: todas as tools de uso cotidiano (listar processos, consultar, arvore, documentos, upload, andamento, ciência, anotação, marcador, concluir, enviar) funcionam via scraper do frontend web, sem depender do mod-wssei.
+O todos está migrando para **web-first**. Hoje, as seguintes tools funcionam via scraper do frontend web, sem depender do mod-wssei:
 
-O mod-wssei (quando presente) é usado como otimização ou para operações administrativas específicas. Ao detectar que o módulo não está instalado, o servidor roteia automaticamente para o scraper.
+- `sei_listar_processos`, `sei_arvore_processo`, `sei_listar_documentos`, `sei_listar_atividades`
+- `sei_incluir_documento_externo` (upload de arquivos)
+- `sei_gerar_pdf_processo`, `sei_gerar_zip_processo`
+- `sei_consultar_processo` (híbrida — parte web; a parte REST requer mod-wssei)
+
+As demais tools (tramitação, conclusão, ciência, anotação, marcadores, blocos, assinatura etc.) ainda dependem do mod-wssei. A paridade completa via scraper é o objetivo do [RFC 0001](docs/rfc/0001-web-first.md) e será implementada em fases.
+
+Para instâncias sem mod-wssei, configure `SEI_WEB_URL` (raiz do SEI, ex: `https://sei.orgao.gov.br`) no lugar de `SEI_URL`.
 
 ### Versões do SEI
 

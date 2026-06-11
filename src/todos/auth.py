@@ -293,9 +293,12 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <div class="logo"><img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAKHSURBVFhH7ZY9aBRBFMf/M3t3uYuJIoIWFjYiCIKNnYWgIIggKIiF2FgIFhYKgp2NjWBhI1iIiI2FhQiCIBZW" alt="SEI Pro"></div>
   <h1>SEI Pro</h1>
   <p class="sub">Conecte sua conta do SEI ao Claude</p>
-  <label for="sei_url">URL da API do SEI</label>
-  <input id="sei_url" name="sei_url" type="url" required
+  <label for="sei_url">URL da API do SEI (opcional &#8212; deixe em branco se sem mod-wssei)</label>
+  <input id="sei_url" name="sei_url" type="url"
          placeholder="https://sei.orgao.gov.br/sei/modulos/wssei/controlador_ws.php/api/v2">
+  <label for="sei_web_url">URL base do SEI (obrigat&#243;ria se a URL da API ficar em branco)</label>
+  <input id="sei_web_url" name="sei_web_url" type="url"
+         placeholder="https://sei.orgao.gov.br">
   <label for="sei_usuario">Usu&#225;rio</label>
   <input id="sei_usuario" name="sei_usuario" required placeholder="seu.usuario">
   <label for="sei_senha">Senha</label>
@@ -331,8 +334,16 @@ async def login_submit(request: Request):
 
     # Checkbox marcado envia "false"; desmarcado não envia nada (= "true")
     verify_ssl = "false" if form.get("sei_verify_ssl") == "false" else "true"
+    sei_url = str(form.get("sei_url", "")).strip()
+    sei_web_url = str(form.get("sei_web_url", "")).strip()
+    if not sei_url and not sei_web_url:
+        return HTMLResponse(
+            "<h1>Informe a URL da API do SEI ou a URL base do SEI (web).</h1>",
+            status_code=400,
+        )
     sei_creds = {
-        "sei_url": str(form.get("sei_url", "")),
+        "sei_url": sei_url,
+        "sei_web_url": sei_web_url,
         "sei_usuario": str(form.get("sei_usuario", "")),
         "sei_senha": str(form.get("sei_senha", "")),
         "sei_orgao": str(form.get("sei_orgao", "0")),

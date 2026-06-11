@@ -24,9 +24,8 @@ env/
 .DS_Store
 
 # Docs e uploads internos (exceto RFCs que são documentação do projeto)
-docs/
+docs/*
 !docs/rfc/
-!docs/rfc/**
 uploads/
 
 # Claude Code
