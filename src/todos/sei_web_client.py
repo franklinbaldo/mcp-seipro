@@ -159,6 +159,7 @@ class SEIWebClient:
             },
         )
         self._inbox_url: httpx.URL | None = None
+        self._unidade_atual: dict[str, str] | None = None
         # cache do form principal de procedimento_controlar (action + hidden fields)
         self._form_action: str | None = None
         self._form_hidden: dict[str, str] = {}
@@ -292,9 +293,11 @@ class SEIWebClient:
         self._arvore_cache.clear()
         # popula cache do form principal e dos links de processos a partir
         # da própria resposta do post-login (já contém o HTML da inbox)
-        self._extract_main_form(post_resp.text)
-        self._extract_pesquisa_rapida(post_resp.text)
-        self._populate_trabalhar_links(post_resp.text)
+        _soup = BeautifulSoup(post_resp.text, "html.parser")
+        self._extract_main_form(post_resp.text, _soup)
+        self._extract_pesquisa_rapida(post_resp.text, _soup)
+        self._populate_trabalhar_links(post_resp.text, _soup)
+        self._extract_unidade_atual(post_resp.text, _soup)
         logger.info("SEI web login bem-sucedido — inbox capturada")
 
     def _descobrir_sel_orgao(self, login_form, soup) -> str:  # noqa: ANN001
@@ -329,9 +332,10 @@ class SEIWebClient:
                 return v
         raise RuntimeError("Nenhum <option> válido em selOrgao.")  # noqa: EM101, TRY003
 
-    def _extract_pesquisa_rapida(self, html: str) -> None:
+    def _extract_pesquisa_rapida(self, html: str, soup: BeautifulSoup | None = None) -> None:
         """Captura a action do form de pesquisa rápida (protocolo_pesquisa_rapida)."""
-        soup = BeautifulSoup(html, "html.parser")
+        if soup is None:
+            soup = BeautifulSoup(html, "html.parser")
         for f in soup.find_all("form"):
             if not isinstance(f, Tag):
                 continue
@@ -340,13 +344,14 @@ class SEIWebClient:
                 self._pesquisa_rapida_action = action.replace("&amp;", "&")
                 return
 
-    def _extract_main_form(self, html: str) -> None:
+    def _extract_main_form(self, html: str, soup: BeautifulSoup | None = None) -> None:
         """Captura action + hidden fields do form principal de procedimento_controlar.
 
         Esse form tem seu próprio `infra_hash` (diferente da inbox URL) e é
         usado para alternar visualização (resumida↔detalhada) e paginação.
         """
-        soup = BeautifulSoup(html, "html.parser")
+        if soup is None:
+            soup = BeautifulSoup(html, "html.parser")
         for f in soup.find_all("form"):
             if not isinstance(f, Tag):
                 continue
@@ -362,13 +367,14 @@ class SEIWebClient:
                         self._form_hidden[name] = _tag_str(h, "value")
                 return
 
-    def _populate_trabalhar_links(self, inbox_html: str) -> None:
+    def _populate_trabalhar_links(self, inbox_html: str, soup: BeautifulSoup | None = None) -> None:
         """Mapeia protocolo → URL pré-assinada de procedimento_trabalhar.
 
         Sem isso não conseguimos navegar para um processo específico —
         a infra_hash é gerada server-side e não pode ser reconstruída.
         """
-        soup = BeautifulSoup(inbox_html, "html.parser")
+        if soup is None:
+            soup = BeautifulSoup(inbox_html, "html.parser")
         for a in soup.find_all("a", href=re.compile(r"acao=procedimento_trabalhar")):
             if not isinstance(a, Tag):
                 continue
@@ -376,6 +382,157 @@ class SEIWebClient:
             href = _tag_str(a, "href").replace("&amp;", "&")
             if txt and href:
                 self._trabalhar_links.setdefault(txt, href)
+
+    def _extract_unidade_atual(self, html: str, soup: BeautifulSoup | None = None) -> None:
+        """Extrai a unidade ativa do seletor exibido no cabecalho do SEI."""
+        if soup is None:
+            soup = BeautifulSoup(html, "html.parser")
+        unit_link = soup.find(
+            "a",
+            id=re.compile(r"unidade", re.IGNORECASE),
+            title=True,
+        )
+        if not isinstance(unit_link, Tag):
+            return
+
+        sigla = unit_link.get_text(" ", strip=True)
+        nome = _tag_str(unit_link, "title").strip()
+        if not sigla and not nome:
+            return
+
+        unidade: dict[str, str] = {"sigla": sigla, "nome": nome}
+        if self._inbox_url is not None:
+            query = dict(parse_qsl(str(self._inbox_url.query)))
+            id_unidade = query.get("infra_unidade_atual", "")
+            if id_unidade:
+                unidade["id_unidade"] = id_unidade
+        self._unidade_atual = unidade
+
+    async def unidade_atual(self) -> dict[str, str]:
+        """Retorna id, sigla e nome da unidade ativa na sessao web."""
+        await self.ensure_authenticated()
+        if self._unidade_atual is None:
+            _, html = await self.fetch_inbox(detalhada=False)
+            self._extract_unidade_atual(html)
+        if self._unidade_atual is None:
+            msg = "Nao foi possivel identificar a unidade ativa na pagina do SEI."
+            raise RuntimeError(msg)
+        return dict(self._unidade_atual)
+
+    async def _fetch_unit_switch_form(self) -> tuple[str, Tag]:
+        """Abre a tela de troca de unidade e retorna URL e formulario."""
+        await self.ensure_authenticated()
+        _, html = await self.fetch_inbox(detalhada=False)
+        soup = BeautifulSoup(html, "html.parser")
+        unit_link = soup.find("a", id="lnkInfraUnidade")
+        if not isinstance(unit_link, Tag):
+            msg = "Link de troca de unidade nao encontrado."
+            raise TypeError(msg)
+
+        onclick = _tag_str(unit_link, "onclick")
+        match = re.search(r"window\.location\.href='([^']+)'", onclick)
+        if not match:
+            msg = "URL de troca de unidade nao encontrada."
+            raise RuntimeError(msg)
+
+        switch_url = urljoin(str(self._inbox_url), match.group(1))
+        response = await self._http.get(switch_url, headers={"Referer": str(self._inbox_url)})
+        if response.status_code != 200:  # noqa: PLR2004
+            msg = f"Tela de troca de unidade retornou {response.status_code}."
+            raise RuntimeError(msg)
+
+        switch_soup = BeautifulSoup(response.text, "html.parser")
+        form = switch_soup.find("form", id="frmInfraSelecaoUnidade")
+        if not isinstance(form, Tag):
+            msg = "Formulario de troca de unidade nao encontrado."
+            raise TypeError(msg)
+        return str(response.url), form
+
+    @staticmethod
+    def _units_from_form(form: Tag) -> list[dict[str, str]]:
+        """Extrai a lista de unidades a partir do formulario de troca de unidade."""
+        units: list[dict[str, str]] = []
+        for radio in form.find_all("input", attrs={"name": "chkInfraItem"}):
+            if not isinstance(radio, Tag):
+                continue
+            id_unidade = _tag_str(radio, "value")
+            row = radio.find_parent("tr")
+            if not id_unidade or not isinstance(row, Tag):
+                continue
+            cells = [" ".join(td.get_text(" ", strip=True).split()) for td in row.find_all("td")]
+            values = [cell for cell in cells if cell]
+            if len(values) < 2:  # noqa: PLR2004
+                continue
+            units.append({"id_unidade": id_unidade, "sigla": values[0], "nome": values[1]})
+        return units
+
+    async def listar_unidades(self) -> list[dict[str, str]]:
+        """Lista unidades acessiveis ao usuario pela tela web de troca."""
+        _, form = await self._fetch_unit_switch_form()
+        return self._units_from_form(form)
+
+    @staticmethod
+    def _build_unit_post(form: Tag, target_id: str) -> dict[str, str]:
+        """Constroi o payload POST para submeter o formulario de troca de unidade."""
+        data: dict[str, str] = {}
+        for field in form.find_all("input"):
+            if not isinstance(field, Tag):
+                continue
+            name = _tag_str(field, "name")
+            if name and _tag_str(field, "type").lower() == "hidden":
+                data[name] = _tag_str(field, "value")
+        data["selInfraUnidades"] = target_id
+        return data
+
+    def _verificar_troca(self, current: dict[str, str], target: dict[str, str]) -> None:
+        """Lanca RuntimeError se o SEI nao confirmou a troca de unidade."""
+        current_id = current.get("id_unidade")
+        if current_id:
+            if current_id != target["id_unidade"]:
+                msg = f"SEI nao confirmou a troca para {target['sigla']}."
+                raise RuntimeError(msg)
+        elif current.get("sigla", "").casefold() != target["sigla"].casefold():
+            # Fallback: verify by sigla when id_unidade is absent from the redirect URL
+            msg = f"SEI nao confirmou a troca para {target['sigla']}."
+            raise RuntimeError(msg)
+
+    async def trocar_unidade(self, referencia: str) -> dict[str, str]:
+        """Troca a unidade ativa por ID ou sigla usando a interface web."""
+        form_url, form = await self._fetch_unit_switch_form()
+        units = self._units_from_form(form)
+
+        ref = referencia.strip().casefold()
+        matches = [
+            u for u in units if u["id_unidade"].casefold() == ref or u["sigla"].casefold() == ref
+        ]
+        if not matches:
+            msg = f"Unidade {referencia!r} nao encontrada entre as unidades acessiveis."
+            raise RuntimeError(msg)
+
+        target = matches[0]
+        post_url = urljoin(form_url, _tag_str(form, "action"))
+        data = self._build_unit_post(form, target["id_unidade"])
+        response = await self._http.post(post_url, data=data, headers={"Referer": form_url})
+        if response.status_code != 200:  # noqa: PLR2004
+            msg = f"Troca de unidade retornou {response.status_code}."
+            raise RuntimeError(msg)
+
+        self._inbox_url = response.url
+        self._form_action = None
+        self._form_hidden = {}
+        self._trabalhar_links.clear()
+        self._pesquisa_rapida_action = None
+        self._arvore_cache.clear()
+        self._unidade_atual = None
+        _soup = BeautifulSoup(response.text, "html.parser")
+        self._extract_main_form(response.text, _soup)
+        self._extract_pesquisa_rapida(response.text, _soup)
+        self._populate_trabalhar_links(response.text, _soup)
+        self._extract_unidade_atual(response.text, _soup)
+
+        current = await self.unidade_atual()
+        self._verificar_troca(current, target)
+        return current
 
     # ------------------------------------------------------------------
     # Listar processos (Controle de Processos / inbox)
@@ -411,8 +568,10 @@ class SEIWebClient:
             )
             if resp.status_code != 200:  # noqa: PLR2004
                 raise RuntimeError(f"fetch_inbox status={resp.status_code}")  # noqa: EM102, TRY003
-            self._extract_main_form(resp.text)
-            self._populate_trabalhar_links(resp.text)
+            _soup = BeautifulSoup(resp.text, "html.parser")
+            self._extract_main_form(resp.text, _soup)
+            self._populate_trabalhar_links(resp.text, _soup)
+            self._extract_unidade_atual(resp.text, _soup)
             return len(resp.content), resp.text
 
         # Precisa do form action — fetch inicial se ainda não temos
@@ -459,9 +618,11 @@ class SEIWebClient:
             )
 
         # atualiza cache do form (action e hashCriterios podem mudar entre páginas)
-        self._extract_main_form(body)
-        self._extract_pesquisa_rapida(body)
-        self._populate_trabalhar_links(body)
+        _soup = BeautifulSoup(body, "html.parser")
+        self._extract_main_form(body, _soup)
+        self._extract_pesquisa_rapida(body, _soup)
+        self._populate_trabalhar_links(body, _soup)
+        self._extract_unidade_atual(body, _soup)
         return len(resp.content), body
 
     # ------------------------------------------------------------------
@@ -2333,12 +2494,13 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:  # noqa: C901, PLR0912, PL
 
 
 # Tabelas de listas conhecidas das páginas de consulta — excluídas da
-# extração genérica de pares label/valor de metadados
+# extração genérica de pares label/valor de metadados.
+# Nota: tblSobrestamento é intencionalmente excluída deste conjunto porque
+# documento_consultar usa-a para pares chave/valor de metadados.
 _TABELAS_LISTA = frozenset(
     {
         "tblAssinaturas",
         "tblCiencias",
-        "tblSobrestamento",
         "tblUnidadesProcesso",
         "tblAndamento",
         "tblInteressados",

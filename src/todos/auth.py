@@ -17,8 +17,8 @@ import os
 import secrets
 import time
 
+from fastmcp.server.auth import AccessToken, OAuthProvider
 from mcp.server.auth.provider import (
-    AccessToken,
     AuthorizationCode,
     AuthorizationParams,
     RefreshToken,
@@ -33,8 +33,6 @@ from starlette.responses import HTMLResponse
 # ---------------------------------------------------------------------------
 
 _JWT_SECRET = os.environ.get("JWT_SECRET", "")
-_BASE_URL = os.environ.get("BASE_URL", "http://localhost:8000")
-
 TOKEN_TTL = 86400 * 30  # 30 dias
 
 
@@ -81,8 +79,23 @@ _auth_codes: dict[str, dict] = {}  # code -> {params, sei_creds, ...}
 # ---------------------------------------------------------------------------
 
 
-class SEIProOAuthProvider:
+class SEIProOAuthProvider(OAuthProvider):
     """OAuth 2.1 provider que encripta credenciais SEI no access token."""
+
+    def __init__(self, base_url: str) -> None:
+        """Configura os endpoints OAuth para a URL pública do servidor."""
+        from mcp.server.auth.settings import (  # noqa: PLC0415
+            ClientRegistrationOptions,
+            RevocationOptions,
+        )
+
+        super().__init__(
+            base_url=base_url,
+            resource_base_url=base_url,
+            client_registration_options=ClientRegistrationOptions(enabled=True),
+            revocation_options=RevocationOptions(enabled=True),
+        )
+        self.public_base_url = base_url.rstrip("/")
 
     # -- Client registration (Dynamic Client Registration) --
 
@@ -106,7 +119,7 @@ class SEIProOAuthProvider:
             "client_id": client.client_id,
             "params": params.model_dump(mode="json"),
         }
-        return f"{_BASE_URL}/login?session={temp_id}"
+        return f"{self.public_base_url}/login?session={temp_id}"
 
     async def load_authorization_code(  # noqa: D102
         self,

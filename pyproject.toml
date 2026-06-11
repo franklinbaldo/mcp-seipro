@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "mcp-sei"
 version = "0.4.0"
-description = "TOdos Domina O Sei — MCP server para o SEI com paridade web-first: 116 tools, scraper HTTP + REST híbrido, funciona em instâncias sem mod-wssei"
+description = "TOdos Domina O Sei — MCP server para o SEI com 121 tools, scraper HTTP + REST híbrido e suporte a instâncias sem mod-wssei"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.11"
@@ -19,6 +19,8 @@ dependencies = [
     "pdf2image>=1.16",
     "pytesseract>=0.3",
     "uvicorn[standard]>=0.30",
+    "fastmcp==3.4.2",
+    "py-key-value-aio[disk]==0.4.5",
 ]
 
 [project.scripts]
@@ -58,6 +60,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "setup_claude.py" = ["T201"]  # print() ok in installer
+"scripts/smoke_web.py" = ["D103", "PLR0915", "T201"]
 
 [tool.vulture]
 min_confidence = 80

@@ -4,10 +4,11 @@ import base64
 import json
 import logging
 import os
-import time
 from typing import Any
 
 import httpx
+
+from todos.catalog_cache import get_catalog_cache
 
 logger = logging.getLogger(__name__)
 
@@ -25,10 +26,13 @@ class SEIClient:
         self._unidade_ativa: str | None = None
         self._id_usuario: str | None = None
         self._id_orgao_usuario: str | None = None
-        # Cache de metadados estáticos (TTL 1 hora). Evita chamadas REST
-        # repetidas de ~3-5 s cada para dados que raramente mudam.
-        self._cache: dict[str, tuple[float, Any]] = {}
-        self._cache_ttl: float = 3600.0  # 1 hora
+        self._catalog_cache = get_catalog_cache()
+        self._cache_namespace = {
+            "base_url": self.base_url,
+            "usuario": self._usuario,
+            "orgao": self._orgao,
+            "contexto": self._contexto,
+        }
 
         verify_ssl = kwargs.get("sei_verify_ssl", os.environ.get("SEI_VERIFY_SSL", "true"))
         if isinstance(verify_ssl, str):
@@ -38,19 +42,13 @@ class SEIClient:
             verify=verify_ssl,
         )
 
-    def _cache_get(self, key: str) -> Any:  # noqa: ANN401
-        """Retorna valor cacheado se TTL não expirou, senão None."""
-        entry = self._cache.get(key)
-        if entry is None:
-            return None
-        ts, val = entry
-        if time.monotonic() - ts > self._cache_ttl:
-            del self._cache[key]
-            return None
-        return val
+    async def _cache_get(self, key: str) -> Any:  # noqa: ANN401
+        """Retorna um catálogo persistido ou None."""
+        return await self._catalog_cache.get(self._cache_namespace, key)
 
-    def _cache_set(self, key: str, val: Any) -> None:  # noqa: ANN401
-        self._cache[key] = (time.monotonic(), val)
+    async def _cache_set(self, key: str, val: Any) -> None:  # noqa: ANN401
+        """Persista um catálogo retornado com sucesso pelo SEI."""
+        await self._catalog_cache.set(self._cache_namespace, key, val)
 
     async def _get_headers(self) -> dict:
         if not self._token:
@@ -465,8 +463,8 @@ class SEIClient:
 
     async def listar_unidades_usuario(self) -> list[dict]:
         """Lista unidades às quais o usuário autenticado tem acesso.
-        Resultado cacheado por 1 hora (raramente muda)."""  # noqa: D205, D209
-        cached = self._cache_get("unidades_usuario")
+        Resultado cacheado por 24 horas em disco (raramente muda)."""  # noqa: D205, D209
+        cached = await self._cache_get("unidades_usuario")
         if cached is not None:
             return cached
         resp = await self._request("GET", "/usuario/unidades")
@@ -474,7 +472,7 @@ class SEIClient:
         if not data.get("sucesso"):
             raise Exception(f"Erro ao listar unidades: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
         result = data.get("data", [])
-        self._cache_set("unidades_usuario", result)
+        await self._cache_set("unidades_usuario", result)
         return result
 
     async def pesquisar_usuarios(
@@ -730,10 +728,10 @@ class SEIClient:
         self, filtro: str = "", favoritos: str = "", limit: int = 50, start: int = 0
     ) -> dict:
         """Pesquisa tipos de processo disponíveis.
-        Resultado cacheado por 1 hora quando chamado sem filtros (metadado estático)."""  # noqa: D205, D209
+        Resultado cacheado por 24 horas em disco quando chamado sem filtros."""  # noqa: D205, D209
         cache_key = f"tipos_processo:{filtro}:{favoritos}:{limit}:{start}"
         if not filtro and not favoritos:
-            cached = self._cache_get(cache_key)
+            cached = await self._cache_get(cache_key)
             if cached is not None:
                 return cached
         params: dict = {"limit": limit, "start": start}
@@ -747,7 +745,7 @@ class SEIClient:
             raise Exception(f"Erro ao pesquisar tipos de processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
         result = self._paginated(data, "tipos", data.get("data", []), start, limit)
         if not filtro and not favoritos:
-            self._cache_set(cache_key, result)
+            await self._cache_set(cache_key, result)
         return result
 
     async def criar_processo(  # noqa: PLR0913
@@ -898,6 +896,11 @@ class SEIClient:
         """Pesquisa tipos de documento (séries) disponíveis.
         Retorna: {data: [{id, nome}, ...], total: N}
         """  # noqa: D205, D400, D415
+        cache_key = f"tipos_documento:{filtro}:{favoritos}:{aplicabilidade}:{limit}:{start}"
+        if not filtro and not favoritos:
+            cached = await self._cache_get(cache_key)
+            if cached is not None:
+                return cached
         params: dict = {"limit": limit, "start": start}
         if filtro:
             params["filter"] = filtro
@@ -909,7 +912,10 @@ class SEIClient:
         data = resp.json()
         if not data.get("sucesso"):
             raise Exception(f"Erro ao pesquisar tipos de documento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
-        return self._paginated(data, "tipos", data.get("data", []), start, limit)
+        result = self._paginated(data, "tipos", data.get("data", []), start, limit)
+        if not filtro and not favoritos:
+            await self._cache_set(cache_key, result)
+        return result
 
     # ------------------------------------------------------------------
     # Ciência
@@ -1023,13 +1029,7 @@ class SEIClient:
     # ------------------------------------------------------------------
 
     async def pesquisar_marcadores(self, filtro: str = "", limit: int = 50, start: int = 0) -> dict:
-        """Pesquisa marcadores disponíveis na unidade.
-        Resultado cacheado por 1 hora quando chamado sem filtros."""  # noqa: D205, D209
-        cache_key = f"marcadores:{filtro}:{limit}:{start}"
-        if not filtro:
-            cached = self._cache_get(cache_key)
-            if cached is not None:
-                return cached
+        """Pesquisa marcadores disponíveis na unidade."""
         params: dict = {"limit": limit, "start": start}
         if filtro:
             params["filter"] = filtro
@@ -1037,10 +1037,7 @@ class SEIClient:
         data = resp.json()
         if not data.get("sucesso"):
             raise Exception(f"Erro ao pesquisar marcadores: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
-        result = self._paginated(data, "marcadores", data.get("data", []), start, limit)
-        if not filtro:
-            self._cache_set(cache_key, result)
-        return result
+        return self._paginated(data, "marcadores", data.get("data", []), start, limit)
 
     async def listar_cores_marcador(self) -> list[dict]:
         """Lista cores disponíveis para marcadores."""

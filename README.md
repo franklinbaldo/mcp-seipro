@@ -6,7 +6,7 @@
 
 **TOdos Domina O Sei** — MCP Server para o SEI (Sistema Eletrônico de Informações) com arquitetura **web-first**: scraper HTTP do frontend + REST mod-wssei v2 quando disponível. Funciona em qualquer instância SEI 4.0+ — **inclusive sem mod-wssei instalado**.
 
-**116 tools** para gerenciar processos, documentos, tramitação, assinatura, blocos, marcadores, acompanhamento, credenciamento, modelos e mais. Operações de leitura críticas usam scraper web (**23×** mais rápido que REST). Metadados estáticos em cache TTL 1h.
+**121 tools** para gerenciar processos, documentos, tramitação, assinatura, blocos, marcadores, acompanhamento, credenciamento, modelos e mais. Operações de leitura críticas usam scraper web (**23×** mais rápido que REST). Catálogos estáticos usam cache em disco com TTL de 24h.
 
 ## Origem
 
@@ -146,12 +146,13 @@ Com o todos configurado, basta conversar com o Claude em linguagem natural:
 | `sei_listar_orgaos` | Lista órgãos da instalação do SEI |
 | `sei_listar_contextos` | Lista contextos disponíveis para um órgão |
 
-### Navegação e contexto (7)
+### Navegação e contexto (8)
 
 | Tool | Descrição |
 |------|-----------|
+| `sei_unidade_atual` | Informa ID, sigla e nome da unidade/setor ativo na sessão |
 | `sei_listar_unidades` | Lista unidades acessíveis pelo usuário |
-| `sei_trocar_unidade` | Troca a unidade ativa |
+| `sei_trocar_unidade` | Troca a unidade ativa por ID ou sigla, via interface web |
 | `sei_pesquisar_unidades` | Pesquisa unidades por nome/sigla |
 | `sei_pesquisar_outras_unidades` | Pesquisa unidades excluindo a atual |
 | `sei_pesquisar_textos_padrao` | Pesquisa textos padrão internos da unidade |
@@ -345,6 +346,7 @@ Com o todos configurado, basta conversar com o Claude em linguagem natural:
 
 O todos está migrando para **web-first**. Hoje, as seguintes tools funcionam via scraper do frontend web, sem depender do mod-wssei:
 
+- `sei_unidade_atual`, `sei_listar_unidades`, `sei_trocar_unidade`
 - `sei_listar_processos`, `sei_arvore_processo`, `sei_listar_documentos`, `sei_listar_atividades`
 - `sei_incluir_documento_externo` (upload de arquivos)
 - `sei_gerar_pdf_processo`, `sei_gerar_zip_processo`
@@ -386,9 +388,12 @@ O todos opera primariamente via **scraping HTTP do frontend web do SEI** — o m
 | `sei_arvore_processo` | Scraper web (`arvore_montar.php`) | ~12 s → ~1.1 s (**10×**) |
 | `sei_listar_documentos` | Scraper web (`arvore_montar.php`) | ~9.7 s → ~1.1 s (**10×**) |
 | `sei_listar_atividades` | Scraper web (`procedimento_consultar_historico.php`) | ~2.5 s → ~1.2 s (**2×**) |
-| `pesquisar_tipos_processo` | Cache in-memory TTL 1h | ~4.2 s → instant |
-| `listar_unidades_usuario` | Cache in-memory TTL 1h | ~3.0 s → instant |
-| `pesquisar_marcadores` | Cache in-memory TTL 1h | ~2.6 s → instant |
+| `pesquisar_tipos_processo` | Cache em disco TTL 24h | ~4.2 s → instant |
+| `pesquisar_tipos_documento` | Cache em disco TTL 24h | chamadas repetidas instantâneas |
+| `listar_unidades_usuario` | Cache em disco TTL 24h | ~3.0 s → instant |
+
+O cache usa o `DiskStore` do ecossistema FastMCP, persistido por padrão em
+`~/.cache/todos/`. Defina `TODOS_CACHE_DIR` para usar outro diretório.
 
 O scraper:
 
@@ -449,9 +454,27 @@ As demais tools (`sei_consultar_processo`, `sei_consultar_documento_externo`, et
 
 > O gate trata restrito e sigiloso de forma idêntica. Sigiloso já tem proteção adicional do SEI (credenciamento). Se quiser regras diferentes, abra um issue.
 
-## Deploy remoto (Railway)
+## Execução remota
 
-O servidor pode rodar em modo HTTP para uso via Claude no celular, na web ou em qualquer cliente MCP remoto.
+O servidor usa **FastMCP 3**. Sem `PORT`, executa apenas o transporte local
+`stdio`. Com `PORT`, carrega o runtime HTTP/OAuth isolado em `todos.remote`,
+para uso via Claude no celular, na web ou em qualquer cliente MCP remoto.
+
+Railway é apenas uma opção de hospedagem. O mesmo container pode rodar em
+qualquer plataforma que forneça uma porta HTTP e uma URL pública.
+
+Variáveis obrigatórias no modo remoto:
+
+| Variável | Finalidade |
+|----------|------------|
+| `PORT` | Ativa o transporte Streamable HTTP |
+| `BASE_URL` | URL pública usada na descoberta OAuth |
+| `JWT_SECRET` | Assina os tokens que carregam as credenciais SEI |
+
+As sessões SEI remotas são mantidas separadamente por sessão MCP. O runtime
+local não importa `uvicorn`, Starlette nem o provedor OAuth.
+
+### Exemplo com Railway
 
 ### 1. Criar conta no Railway
 
@@ -491,7 +514,7 @@ railway up
 | Ambiente | Variável `PORT` | Transporte | Uso |
 |----------|-----------------|------------|-----|
 | Local | ausente | stdio | Claude Code / Claude Desktop |
-| Railway | presente (injetada) | Streamable HTTP + OAuth | Claude mobile / web / remoto |
+| Host remoto | presente | Streamable HTTP + OAuth | Claude mobile / web / remoto |
 
 ## Requisitos de sistema
 
