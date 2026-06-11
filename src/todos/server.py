@@ -5,7 +5,6 @@ import base64
 import json
 import logging
 import os
-import unicodedata
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Literal, cast
@@ -67,6 +66,18 @@ async def lifespan(_server: FastMCP):  # noqa: ANN201, D103
         await get_catalog_cache().close()
 
 
+def _store_session_client(clients: dict, session_id: str, client: object) -> None:
+    """Store a session-scoped client, evicting the oldest entry if the pool is full."""
+    if session_id in clients:
+        return
+    max_sessions = int(os.environ.get("SEI_MAX_SESSIONS", "100"))
+    if len(clients) >= max_sessions:
+        oldest = next(iter(clients))
+        clients.pop(oldest)
+        logger.warning("session pool at limit (%d); evicted oldest session", max_sessions)
+    clients[session_id] = client
+
+
 def _get_client(ctx: Context | None) -> SEIClient:
     """Obtém o SEIClient REST, criando sob demanda em modo HTTP."""
     if ctx is None:
@@ -77,21 +88,19 @@ def _get_client(ctx: Context | None) -> SEIClient:
 
         from todos.auth import get_sei_credentials_from_token  # noqa: PLC0415
 
-        clients = ctx.lifespan_context["sei_by_session"]
-        client = clients.get(ctx.session_id)
-        if client is not None:
-            return client
-
         access_token = get_access_token()
         if not access_token:
             raise ValueError("Autenticacao necessaria. Reconecte o MCP.")  # noqa: EM101, TRY003
-
         creds = get_sei_credentials_from_token(access_token.token)
         if not creds:
             raise ValueError("Token invalido ou expirado. Reconecte o MCP.")  # noqa: EM101, TRY003
 
+        clients = ctx.lifespan_context["sei_by_session"]
+        client = clients.get(ctx.session_id)
+        if client is not None:
+            return client
         client = SEIClient(**creds)
-        clients[ctx.session_id] = client
+        _store_session_client(clients, ctx.session_id, client)
         return client
 
     client = ctx.lifespan_context.get("sei")
@@ -114,19 +123,19 @@ def _get_web_client(ctx: Context | None) -> SEIWebClient:
 
         from todos.auth import get_sei_credentials_from_token  # noqa: PLC0415
 
-        clients = ctx.lifespan_context["sei_web_by_session"]
-        client = clients.get(ctx.session_id)
-        if client is not None:
-            return client
-
         access_token = get_access_token()
         if not access_token:
             raise ValueError("Autenticacao necessaria. Reconecte o MCP.")  # noqa: EM101, TRY003
         creds = get_sei_credentials_from_token(access_token.token)
         if not creds:
             raise ValueError("Token invalido ou expirado. Reconecte o MCP.")  # noqa: EM101, TRY003
+
+        clients = ctx.lifespan_context["sei_web_by_session"]
+        client = clients.get(ctx.session_id)
+        if client is not None:
+            return client
         client = SEIWebClient(**creds)
-        clients[ctx.session_id] = client
+        _store_session_client(clients, ctx.session_id, client)
         return client
 
     client = ctx.lifespan_context.get("sei_web")
@@ -289,24 +298,18 @@ async def _solicitar_consentimento_via_elicit(
     return "recusou"
 
 
-def _nivel_acesso_meta_web(meta: dict) -> str | None:
-    """Extrai o nível de acesso ('0'/'1'/'2') de metadados scrapeados da web.
-
-    As chaves vêm normalizadas do parser (ex: 'nível_de_acesso') e o valor é
-    o texto da página (ex: 'Restrito'); ambos variam com acentuação.
-    """
-    for k, v in meta.items():
-        k_ascii = unicodedata.normalize("NFKD", str(k)).encode("ascii", "ignore").decode()
-        if "nivel" in k_ascii and "acesso" in k_ascii:
-            texto = unicodedata.normalize("NFKD", str(v)).encode("ascii", "ignore").decode().lower()
-            if "sigilos" in texto:
-                return access_control.SIGILOSO
-            if "restrit" in texto:
-                return access_control.RESTRITO
-            if "public" in texto:
-                return access_control.PUBLICO
-            return access_control.normalizar_nivel(v)
-    return None
+def _gate_bloqueio(
+    nivel: str | None,
+    tipo: str,
+    id_doc: str,
+    tipo_documento: str,
+    processo: str,
+) -> dict | None:
+    """Return the block payload if nivel requires a disclaimer, else None."""
+    if not access_control.precisa_disclaimer(nivel):
+        return None
+    alvo = {"tipo": tipo, "id": str(id_doc), "tipo_documento": tipo_documento, "processo": processo}
+    return access_control.construir_aviso_bloqueio(nivel, None, alvo)
 
 
 async def _aplicar_gate_documento_web(
@@ -320,22 +323,18 @@ async def _aplicar_gate_documento_web(
 
     Consulta os metadados scrapeados de documento_consultar e, se o documento
     for restrito/sigiloso sem consentimento, retorna o payload de bloqueio.
-    Retorna None quando o acesso está liberado. Falha na consulta propaga
-    como exceção (fail-closed): sem metadados não há como classificar o nível.
+    Retorna None quando o acesso está liberado ou quando a consulta falha
+    (fail-open: sem metadados não bloqueia).
     """
     if confirmou or access_control.env_permite_restritos():
         return None
-    meta = await web.consultar_documento_web(processo, id_documento)
-    nivel = _nivel_acesso_meta_web(meta)
-    if not access_control.precisa_disclaimer(nivel):
+    try:
+        meta = await web.consultar_documento_web(processo, id_documento)
+    except Exception:  # noqa: BLE001
+        logger.warning("gate web-only: consulta de metadados falhou — prossegue fail-open")
         return None
-    alvo = {
-        "tipo": "documento",
-        "id": str(id_documento),
-        "tipo_documento": tipo_documento,
-        "processo": processo,
-    }
-    return access_control.construir_aviso_bloqueio(nivel, None, alvo)
+    nivel = access_control.extrair_nivel_web(meta)
+    return _gate_bloqueio(nivel, "documento", id_documento, tipo_documento, processo)
 
 
 async def _aplicar_gate_documento(  # noqa: PLR0911
@@ -484,8 +483,8 @@ async def sei_listar_unidades(ctx: Context) -> str:
     """
     try:
         client = _get_web_client(ctx)
-        result = await client.listar_unidades()
-        return _json(result)
+        units = await client.listar_unidades()
+        return _json({"data": units, "total": len(units)})
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
 

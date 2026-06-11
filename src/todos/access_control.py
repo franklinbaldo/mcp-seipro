@@ -12,6 +12,7 @@ variável de ambiente `SEI_PERMITIR_RESTRITOS=true`.
 from __future__ import annotations
 
 import os
+import unicodedata as _unicodedata
 from typing import Literal
 
 PUBLICO = "0"
@@ -256,6 +257,31 @@ def envelopar_html(disclaimer: dict, conteudo: str) -> str:
 def riscos_padrao() -> list[str]:
     """Lista padrão de riscos exibida em disclaimers e elicit prompts."""
     return list(_RISCOS)
+
+
+def _nfkd(s: str) -> str:
+    return _unicodedata.normalize("NFKD", str(s)).encode("ascii", "ignore").decode()
+
+
+def extrair_nivel_web(metadata: dict) -> str | None:
+    """Extract the access level code from web-scraped metadata.
+
+    Web metadata uses text values ('Restrito', 'Sigiloso', 'Público') and
+    accented keys ('nível_de_acesso'). Scans all keys; returns '0'/'1'/'2' or None.
+    """
+    for k, v in metadata.items():
+        k_norm = _nfkd(k).lower()
+        if "nivel" not in k_norm or "acesso" not in k_norm:
+            continue
+        texto = _nfkd(v).lower()
+        if "sigilos" in texto:
+            return SIGILOSO
+        if "restrit" in texto:
+            return RESTRITO
+        if "public" in texto:
+            return PUBLICO
+        return normalizar_nivel(v)
+    return None
 
 
 def extrair_nivel(metadata: dict) -> tuple[str | None, str | None]:
