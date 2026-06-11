@@ -58,6 +58,9 @@ async def lifespan(_server: FastMCP):  # noqa: ANN201, D103
             client = SEIClient()
             web_client = SEIWebClient()
             try:
+                # Login eager: popula _unidade_atual para sei://status responder sem HTTP extra
+                with suppress(Exception):
+                    await web_client.unidade_atual()
                 yield {"sei": client, "sei_web": web_client}
             finally:
                 await client.close()
@@ -164,6 +167,8 @@ mcp = FastMCP(
     instructions=(
         "MCP Server para o SEI (Sistema Eletrônico de Informações). "
         "Permite gerenciar processos, documentos, tramitação e assinatura. "
+        "CONTEXTO: leia o resource sei://status antes de qualquer operação — "
+        "ele mostra a instância SEI conectada e a unidade ativa do usuário. "
         "ASSINATURA: as credenciais do usuário já estão configuradas no servidor. "
         "NUNCA peça login ou senha ao usuário para assinar. Basta chamar "
         "sei_assinar_documento com o id do documento e o cargo. Se não souber "
@@ -211,6 +216,21 @@ mcp = FastMCP(
     ),
     lifespan=lifespan,
 )
+
+
+@mcp.resource("sei://status")
+async def sei_status_resource(ctx: Context) -> str:  # noqa: D103
+    """Unidade SEI ativa, usuário logado e instância conectada. Leia ao iniciar a sessão."""
+    web = _get_web_client(ctx)
+    try:
+        unidade = await web.unidade_atual()
+        sigla = unidade.get("sigla", "?")
+        nome = unidade.get("nome", "?")
+        web_url = os.environ.get("SEI_WEB_URL") or os.environ.get("SEI_URL", "?")
+        nome_usuario = web._nome_usuario or web._usuario  # noqa: SLF001
+        return f"Instância SEI: {web_url}\nUsuário: {nome_usuario}\nUnidade ativa: {sigla} — {nome}"
+    except Exception as exc:  # noqa: BLE001
+        return f"Status: erro ao obter sessão — {exc}"
 
 
 class _ConsentimentoRestrito(BaseModel):

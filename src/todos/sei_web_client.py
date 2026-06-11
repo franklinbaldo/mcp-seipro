@@ -160,6 +160,7 @@ class SEIWebClient:
         )
         self._inbox_url: httpx.URL | None = None
         self._unidade_atual: dict[str, str] | None = None
+        self._nome_usuario: str | None = None
         # cache do form principal de procedimento_controlar (action + hidden fields)
         self._form_action: str | None = None
         self._form_hidden: dict[str, str] = {}
@@ -399,6 +400,11 @@ class SEIWebClient:
         nome = _tag_str(unit_link, "title").strip()
         if not sigla and not nome:
             return
+
+        # Extrai nome do usuário do link lnkInfraUsuario no mesmo cabeçalho
+        user_link = soup.find("a", id=re.compile(r"usuario", re.IGNORECASE))
+        if isinstance(user_link, Tag):
+            self._nome_usuario = user_link.get_text(" ", strip=True) or None
 
         unidade: dict[str, str] = {"sigla": sigla, "nome": nome}
         if self._inbox_url is not None:
