@@ -206,11 +206,13 @@ class SEIWebClient:
     async def login(self) -> None:  # noqa: C901, PLR0912, PLR0915
         """Faz login via formulário SIP e captura a inbox URL com infra_hash."""
         if not self._senha and self._keyring_user:
+            keyring_user = self._keyring_user
+            self._keyring_user = None  # one-shot: don't retry on re-auth
             try:
                 import keyring  # noqa: PLC0415
 
                 senha = await asyncio.wait_for(
-                    asyncio.to_thread(keyring.get_password, "todos-mcp", self._keyring_user),
+                    asyncio.to_thread(keyring.get_password, "todos-mcp", keyring_user),
                     timeout=5.0,
                 )
                 if senha:

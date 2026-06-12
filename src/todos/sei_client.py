@@ -96,11 +96,13 @@ class SEIClient:
     async def autenticar(self) -> str:
         """Autentica no SEI e obtém token."""
         if not self._senha and self._keyring_user:
+            keyring_user = self._keyring_user
+            self._keyring_user = None  # one-shot: don't retry on re-auth
             try:
                 import keyring  # noqa: PLC0415
 
                 senha = await asyncio.wait_for(
-                    asyncio.to_thread(keyring.get_password, "todos-mcp", self._keyring_user),
+                    asyncio.to_thread(keyring.get_password, "todos-mcp", keyring_user),
                     timeout=5.0,
                 )
                 if senha:

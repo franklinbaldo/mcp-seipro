@@ -515,11 +515,11 @@ def main():
         except subprocess.TimeoutExpired:
             error("Timeout ao salvar no chaveiro do sistema (>30s); verifique se o daemon está disponível.")
             warn("A senha será armazenada em texto plano no arquivo de configuração como fallback.")
-            env["SEI_SENHA"] = sei_senha  # env is referenced by config; mutation propagates
+            config["mcpServers"][MCP_SERVER_NAME]["env"]["SEI_SENHA"] = sei_senha
         except (subprocess.CalledProcessError, OSError) as e:
             error(f"Erro ao salvar senha no cofre do sistema: {getattr(e, 'stderr', None) or getattr(e, 'stdout', None) or str(e)}")
             warn("A senha será armazenada em texto plano no arquivo de configuração como fallback.")
-            env["SEI_SENHA"] = sei_senha  # env is referenced by config; mutation propagates
+            config["mcpServers"][MCP_SERVER_NAME]["env"]["SEI_SENHA"] = sei_senha
 
     write_config(config_path, config)
 
