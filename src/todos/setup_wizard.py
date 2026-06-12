@@ -38,7 +38,26 @@ def run_setup_wizard():
     
     # Extrair parâmetros iniciais da query
     query = parse_qs(parsed.query)
-    sigla_orgao_sistema = query.get("sigla_orgao_sistema", ["RO" if "ro.gov.br" in sei_root else "SEI"])[0]
+    
+    # Dedução inteligente da sigla_orgao_sistema a partir do hostname
+    sigla_orgao_sistema = None
+    if "sigla_orgao_sistema" in query:
+        sigla_orgao_sistema = query["sigla_orgao_sistema"][0]
+    else:
+        hostname = parsed.netloc.lower()
+        if "ro.gov.br" in hostname:
+            sigla_orgao_sistema = "RO"
+        else:
+            parts = hostname.split('.')
+            if len(parts) >= 2:
+                if parts[0] in ('sip', 'sei') and parts[1] not in ('gov', 'com', 'org', 'net', 'edu'):
+                    sigla_orgao_sistema = parts[1].upper()
+                elif parts[0] not in ('gov', 'com', 'org', 'net', 'edu'):
+                    sigla_orgao_sistema = parts[0].upper()
+            
+            if not sigla_orgao_sistema:
+                sigla_orgao_sistema = "SEI"
+                
     sigla_sistema = query.get("sigla_sistema", ["SEI"])[0]
 
     # Resolver URL de login
