@@ -30,15 +30,21 @@ Baixe o arquivo [`todos.mcpb`](https://github.com/franklinbaldo/todos/releases/l
 pip install mcp-sei
 ```
 
-### Opção 3: Instalador interativo
+### Opção 3: Instalador interativo (Recomendado)
 
-```bash
-git clone https://github.com/franklinbaldo/todos.git
-cd todos
-python3 setup_claude.py
-```
+Para instalar o `uv`, a CLI do `todos` globalmente e configurar o acesso seguro via Keyring (gerenciador de credenciais do OS) de forma automatizada e cross-platform, execute o comando correspondente em seu terminal:
 
-O script pergunta suas credenciais, instala o pacote e configura o Claude Desktop automaticamente.
+* **No Windows (PowerShell):**
+  ```powershell
+  powershell -ExecutionPolicy Bypass -Command "if (-not (Get-Command 'uv' -ErrorAction SilentlyContinue)) { Write-Host '[*] Instalando uv...'; irm https://astral.sh/uv/install.ps1 | iex; $env:PATH += ';$env:USERPROFILE\.local\bin' }; uv tool install git+https://github.com/franklinbaldo/todos.git --force; $env:PATH += ';$env:USERPROFILE\.local\bin'; todos setup"
+  ```
+
+* **No Linux / macOS (Terminal):**
+  ```bash
+  if ! command -v uv &> /dev/null; then echo "[*] Instalando uv..."; curl -LsSf https://astral.sh/uv/install.sh | sh; source $HOME/.local/bin/env; fi; uv tool install git+https://github.com/franklinbaldo/todos.git --force; export PATH="$HOME/.local/bin:$PATH"; todos setup
+  ```
+
+O assistente solicitará suas credenciais de forma segura (entrada oculta) e configurará os ambientes de MCP do Antigravity, Claude Desktop, Claude Code e o `.mcp.json` local automaticamente.
 
 ## Configuração
 
