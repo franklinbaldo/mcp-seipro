@@ -116,15 +116,15 @@ class SEIWebClient:
             self.sei_root = sei_url.rstrip("/")
 
         self._usuario = kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", ""))
-        
+
         senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
         if not senha and self._usuario:
             try:
-                import keyring
+                import keyring  # noqa: PLC0415
                 senha_keyring = keyring.get_password("todos-mcp", self._usuario)
                 if senha_keyring:
                     senha = senha_keyring
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning("Não foi possível obter a senha do keyring: %s", e)
         self._senha = senha
 
