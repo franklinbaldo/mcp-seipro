@@ -121,6 +121,7 @@ class SEIWebClient:
         if not senha and self._usuario:
             try:
                 import keyring  # noqa: PLC0415
+
                 senha_keyring = keyring.get_password("todos-mcp", self._usuario)
                 if senha_keyring:
                     senha = senha_keyring
