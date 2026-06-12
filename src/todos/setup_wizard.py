@@ -5,6 +5,8 @@ import getpass
 import json
 import os
 import re
+import shutil
+import subprocess as _sp
 import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -372,16 +374,94 @@ def run_setup_wizard():
     senha_validacao = ""
     del senha_validacao
 
-    # 4. Configurar caminhos dos arquivos MCP por plataforma
+    # 4. Preparar variáveis de ambiente MCP
+    mcp_env = {
+        "SEI_URL": rest_url,
+        "SEI_WEB_URL": sei_root,
+        "SEI_SIGLA_ORGAO": sigla_orgao,
+        "SEI_SIGLA_ORGAO_SISTEMA": sigla_orgao_sistema,
+        "SEI_SIGLA_SISTEMA": sigla_sistema,
+        "SEI_USUARIO": usuario,
+        "SEI_SENHA": senha,  # Vazio se keyring foi usado
+        "SEI_ORGAO": orgao_id,
+    }
+
+    # Limpar senha local imediatamente após montar o dicionário
+    senha = ""
+    del senha
+
+    # 5. Atualizar as configurações
+    print()
+    print_yellow("[*] Atualizando arquivos de configuração MCP...")
+
     home = Path.home()
-    configs_to_update = []
+    claude_cli = shutil.which("claude")
 
-    # Antigravity IDE (apenas se a pasta do gemini existir)
-    if (home / ".gemini").exists():
-        antigravity_config = home / ".gemini" / "antigravity-ide" / "mcp_config.json"
-        configs_to_update.append(antigravity_config)
+    def _mcp_add_via_cli(scope: str, cwd: Path | None = None) -> bool:
+        """Usa `claude mcp add` para registrar o servidor. Retorna True se ok."""
+        if not claude_cli:
+            return False
+        env_args = []
+        for k, v in mcp_env.items():
+            env_args += ["-e", f"{k}={v}"]
+        cmd = [claude_cli, "mcp", "add", "-s", scope] + env_args + ["todos", "todos"]
+        try:
+            _sp.run(cmd, check=True, capture_output=True, text=True, cwd=str(cwd or Path.cwd()))
+            return True
+        except _sp.CalledProcessError as e:
+            # Se já existir, tenta remover e readicionar
+            if "already exists" in (e.stderr or "") or "already exists" in (e.stdout or ""):
+                try:
+                    _sp.run(
+                        [claude_cli, "mcp", "remove", "-s", scope, "todos"],
+                        check=True, capture_output=True, text=True, cwd=str(cwd or Path.cwd()),
+                    )
+                    _sp.run(cmd, check=True, capture_output=True, text=True, cwd=str(cwd or Path.cwd()))
+                    return True
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        return False
 
-    # Claude Desktop (apenas se o Claude Desktop estiver instalado/diretório existir)
+    def _mcp_add_via_json(config_path: Path) -> bool:
+        """Fallback: edita o JSON diretamente. Retorna True se ok."""
+        try:
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_data: dict = {"mcpServers": {}}
+            if config_path.exists():
+                content = config_path.read_text(encoding="utf-8").strip()
+                if content:
+                    parsed = json.loads(content)
+                    if isinstance(parsed, dict):
+                        config_data = parsed
+                    if not isinstance(config_data.get("mcpServers"), dict):
+                        config_data["mcpServers"] = {}
+            config_data["mcpServers"]["todos"] = {
+                "command": "todos",
+                "args": [],
+                "env": dict(mcp_env),
+            }
+            with config_path.open("w", encoding="utf-8") as f:
+                json.dump(config_data, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception:
+            return False
+
+    # Antigravity IDE — atualiza todos os caminhos conhecidos que existirem
+    # ~/.gemini/antigravity-ide/mcp_config.json  (versão atual)
+    # ~/.gemini/config/mcp_config.json           (caminho documentado / versões futuras)
+    for _ag_path in [
+        home / ".gemini" / "antigravity-ide" / "mcp_config.json",
+        home / ".gemini" / "config" / "mcp_config.json",
+    ]:
+        if _ag_path.exists() or _ag_path.parent.exists():
+            if _mcp_add_via_json(_ag_path):
+                print_green(f"[+] Atualizado: {_ag_path}")
+            else:
+                print_yellow(f"[!] Não foi possível atualizar {_ag_path}")
+
+    # Claude Desktop (apenas se o diretório existir)
     if sys.platform == "win32":
         appdata = Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming")))
         claude_desktop = appdata / "Claude" / "claude_desktop_config.json"
@@ -389,90 +469,102 @@ def run_setup_wizard():
         claude_desktop = (
             home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
         )
-    else:  # Linux
+    else:
         claude_desktop = home / ".config" / "Claude" / "claude_desktop_config.json"
 
     if claude_desktop.parent.exists():
-        configs_to_update.append(claude_desktop)
+        if _mcp_add_via_json(claude_desktop):
+            print_green(f"[+] Atualizado: {claude_desktop}")
+        else:
+            print_yellow(f"[!] Não foi possível atualizar {claude_desktop}")
 
-    # Claude Code (Global) - sempre atualizado na home
-    claude_code = home / ".claude.json"
-    configs_to_update.append(claude_code)
+    # Claude Code (Global) — usa `claude mcp add -s user` se disponível
+    if claude_cli:
+        if _mcp_add_via_cli("user"):
+            print_green(f"[+] Atualizado: Claude Code (global) via `claude mcp add -s user`")
+        else:
+            print_yellow("[!] `claude mcp add -s user` falhou; tentando edição direta...")
+            if _mcp_add_via_json(home / ".claude.json"):
+                print_green(f"[+] Atualizado: {home / '.claude.json'}")
+            else:
+                print_yellow(f"[!] Não foi possível atualizar {home / '.claude.json'}")
+    else:
+        if _mcp_add_via_json(home / ".claude.json"):
+            print_green(f"[+] Atualizado: {home / '.claude.json'}")
+        else:
+            print_yellow(f"[!] Não foi possível atualizar {home / '.claude.json'}")
 
-    # Workspace Local (.mcp.json) - apenas se já existir localmente para evitar lixo no cwd
-    local_mcp = Path(".mcp.json")
-    if local_mcp.exists():
-        configs_to_update.append(local_mcp)
+    # Workspace Local (.mcp.json) — usa `claude mcp add -s project` se disponível
+    # Procura o .mcp.json no CWD e em diretórios pais (funciona quando rodado de subdiretório)
+    _mcp_search = Path.cwd()
+    _workspace_dir: Path | None = None
+    for _ in range(5):
+        if (_mcp_search / ".mcp.json").exists():
+            _workspace_dir = _mcp_search
+            break
+        parent = _mcp_search.parent
+        if parent == _mcp_search:
+            break
+        _mcp_search = parent
 
-    # Definição do MCP todos
-    todos_mcp_config = {
-        "command": "todos",
-        "args": [],
-        "env": {
-            "SEI_URL": rest_url,
-            "SEI_WEB_URL": sei_root,
-            "SEI_SIGLA_ORGAO": sigla_orgao,
-            "SEI_SIGLA_ORGAO_SISTEMA": sigla_orgao_sistema,
-            "SEI_SIGLA_SISTEMA": sigla_sistema,
-            "SEI_USUARIO": usuario,
-            "SEI_SENHA": senha,  # Fica vazio se usamos o keyring, ou texto limpo caso contrário
-            "SEI_ORGAO": orgao_id,
-        },
-    }
+    if _workspace_dir is not None:
+        if claude_cli and _mcp_add_via_cli("project", cwd=_workspace_dir):
+            print_green(f"[+] Atualizado: {_workspace_dir / '.mcp.json'} via `claude mcp add -s project`")
+        elif _mcp_add_via_json(_workspace_dir / ".mcp.json"):
+            print_green(f"[+] Atualizado: {_workspace_dir / '.mcp.json'}")
+        else:
+            print_yellow(f"[!] Não foi possível atualizar {_workspace_dir / '.mcp.json'}")
 
-    # Limpar a variável local de senha da memória; a referência no dicionário
-    # todos_mcp_config será zerada/sobrescrita logo após a escrita nos arquivos de configuração.
-    senha = ""
-    del senha
+    # Codex CLI — usa `codex mcp add` se disponível, senão edita ~/.codex/config.toml
+    codex_cli = shutil.which("codex")
+    codex_config = home / ".codex" / "config.toml"
+    if codex_cli or codex_config.exists():
+        added_codex = False
+        if codex_cli:
+            env_args = []
+            for k, v in mcp_env.items():
+                env_args += ["-e", f"{k}={v}"]
+            cmd_codex = [codex_cli, "mcp", "add", "todos", "--"] + ["todos"] + env_args
+            try:
+                _sp.run(cmd_codex, check=True, capture_output=True, text=True)
+                added_codex = True
+                print_green("[+] Atualizado: Codex (global) via `codex mcp add`")
+            except _sp.CalledProcessError as e:
+                if "already" in (e.stderr or "") or "already" in (e.stdout or ""):
+                    try:
+                        _sp.run([codex_cli, "mcp", "remove", "todos"], check=True, capture_output=True, text=True)
+                        _sp.run(cmd_codex, check=True, capture_output=True, text=True)
+                        added_codex = True
+                        print_green("[+] Atualizado: Codex (global) via `codex mcp add`")
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        if not added_codex:
+            # Fallback: edita config.toml diretamente com a seção [mcpServers.todos]
+            try:
+                codex_config.parent.mkdir(parents=True, exist_ok=True)
+                existing = codex_config.read_text(encoding="utf-8") if codex_config.exists() else ""
+                # Remove bloco [mcpServers.todos] existente se houver
+                import re as _re
+                existing = _re.sub(
+                    r'\[mcpServers\.todos\][^\[]*',
+                    '',
+                    existing,
+                    flags=_re.DOTALL,
+                ).rstrip()
+                env_lines = "\n".join(f'  {k} = {json.dumps(v)}' for k, v in mcp_env.items())
+                block = f'\n\n[mcpServers.todos]\ncommand = "todos"\nargs = []\n[mcpServers.todos.env]\n{env_lines}\n'
+                codex_config.write_text(existing + block, encoding="utf-8")
+                print_green(f"[+] Atualizado: {codex_config}")
+            except Exception as e_codex:
+                print_yellow(f"[!] Não foi possível atualizar {codex_config}: {e_codex}")
 
-    # 5. Atualizar as configurações
-    print()
-    print_yellow("[*] Atualizando arquivos de configuração MCP...")
-    for config_path in configs_to_update:
-        try:
-            # Garantir que o diretório pai existe
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-
-            config_data = {"mcpServers": {}}
-            skip_write = False
-            if config_path.exists():
-                try:
-                    with config_path.open(encoding="utf-8") as f:
-                        content = f.read().strip()
-                        if content:
-                            config_data = json.loads(content)
-                            if not isinstance(config_data, dict):
-                                config_data = {"mcpServers": {}}
-                            if "mcpServers" not in config_data or not isinstance(
-                                config_data["mcpServers"], dict
-                            ):
-                                config_data["mcpServers"] = {}
-                except Exception as e_read:
-                    print_yellow(
-                        f"[!] Não foi possível ler o arquivo {config_path.name}: {e_read}. "
-                        "Pulando este arquivo para evitar a perda de dados existentes."
-                    )
-                    skip_write = True
-
-            if skip_write:
-                continue
-
-            # Mesclar
-            config_data["mcpServers"]["todos"] = todos_mcp_config
-
-            # Salvar
-            with config_path.open("w", encoding="utf-8") as f:
-                json.dump(config_data, f, indent=2, ensure_ascii=False)
-            print_green(f"[+] Atualizado: {config_path}")
-        except Exception as e_write:
-            print_yellow(f"[!] Não foi possível atualizar {config_path}: {e_write}")
-
-    # Limpar senha das variáveis de configuração em memória após a escrita
-    if "todos_mcp_config" in locals() and "env" in todos_mcp_config:
-        todos_mcp_config["env"]["SEI_SENHA"] = ""
+    # Limpar senha do dicionário em memória
+    mcp_env["SEI_SENHA"] = ""
 
     print()
     print_cyan("=====================================================")
     print_green("  Configuração concluída com sucesso!")
-    print_green("  Agora você já pode iniciar o Antigravity ou Claude.")
+    print_green("  Agora você já pode iniciar o Antigravity, Claude ou Codex.")
     print_cyan("=====================================================")
