@@ -466,12 +466,15 @@ def main():
         info("Salvando senha com segurança no chaveiro do sistema...")
         try:
             # Chama o python do venv para registrar a senha no keyring do sistema
+            # Passa a senha via stdin para evitar expor a credencial em processos/logs
             subprocess.run(
                 [
                     str(venv_python()),
                     "-c",
-                    f"import keyring; keyring.set_password('todos-mcp', {sei_usuario!r}, {sei_senha!r})",
+                    "import sys, keyring; keyring.set_password('todos-mcp', sys.argv[1], sys.stdin.read().strip())",
+                    sei_usuario,
                 ],
+                input=sei_senha,
                 check=True,
                 capture_output=True,
                 text=True,
