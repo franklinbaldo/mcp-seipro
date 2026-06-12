@@ -7,6 +7,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import sqlite3
 import time
 from functools import lru_cache
@@ -31,6 +32,7 @@ class CatalogCache:
     def _init_db(self) -> None:
         """Inicializa a tabela SQLite se ela não existir."""
         with sqlite3.connect(self.db_path) as conn:
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS catalogs (
@@ -87,7 +89,8 @@ class CatalogCache:
     def _set_sync(self, namespace: dict[str, str], key: str, value: Any) -> None:  # noqa: ANN401
         db_key = self.make_key(namespace, key)
         val_str = json.dumps(value, ensure_ascii=False)
-        expires_at = time.time() + CATALOG_CACHE_TTL
+        now = time.time()
+        expires_at = now + CATALOG_CACHE_TTL
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
@@ -96,6 +99,9 @@ class CatalogCache:
                 """,
                 (db_key, val_str, expires_at),
             )
+            # Probabilistic sweep: purge all expired rows ~5% of writes
+            if random.random() < 0.05:  # noqa: S311
+                conn.execute("DELETE FROM catalogs WHERE expires_at < ?", (now,))
 
     async def ttl(self, namespace: dict[str, str], key: str) -> float | None:
         """Retorne o TTL restante de uma entrada (executado em thread worker)."""

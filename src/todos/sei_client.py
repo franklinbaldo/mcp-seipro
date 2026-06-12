@@ -1,5 +1,6 @@
 """Cliente REST genérico para o mod-wssei v2 do SEI."""
 
+import asyncio
 import base64
 import json
 import logging
@@ -29,25 +30,18 @@ class SEIClient:
         else:
             self.sei_root = self.base_url.rstrip("/")
 
-        senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
-        if not senha and self._usuario:
-            try:
-                import keyring  # noqa: PLC0415
-
-                instance_url = (
-                    self.sei_root.replace("https://", "")
-                    .replace("http://", "")
-                    .strip()
-                    .rstrip("/")
-                    .lower()
-                )
-                keyring_user = f"{self._usuario}@{instance_url}" if instance_url else self._usuario
-                senha_keyring = keyring.get_password("todos-mcp", keyring_user)
-                if senha_keyring:
-                    senha = senha_keyring
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Não foi possível obter a senha do keyring: %s", e)
-        self._senha = senha
+        self._senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
+        # Pre-compute keyring key so autenticar() can do the actual lookup in a thread
+        self._keyring_user: str | None = None
+        if not self._senha and self._usuario:
+            instance_url = (
+                self.sei_root.replace("https://", "")
+                .replace("http://", "")
+                .strip()
+                .rstrip("/")
+                .lower()
+            )
+            self._keyring_user = f"{self._usuario}@{instance_url}" if instance_url else self._usuario
 
         self._orgao = kwargs.get("sei_orgao", os.environ.get("SEI_ORGAO", "0"))
         self._contexto = kwargs.get("sei_contexto", os.environ.get("SEI_CONTEXTO", ""))
@@ -99,6 +93,18 @@ class SEIClient:
 
     async def autenticar(self) -> str:
         """Autentica no SEI e obtém token."""
+        if not self._senha and self._keyring_user:
+            try:
+                import keyring  # noqa: PLC0415
+
+                senha = await asyncio.to_thread(
+                    keyring.get_password, "todos-mcp", self._keyring_user
+                )
+                if senha:
+                    self._senha = senha
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Não foi possível obter a senha do keyring: %s", e)
+
         resp = await self._client.post(
             f"{self.base_url}/autenticar",
             data={

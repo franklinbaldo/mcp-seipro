@@ -507,8 +507,8 @@ def main():
                 text=True,
             )
             info("Senha salva com sucesso no cofre do sistema.")
-        except subprocess.CalledProcessError as e:
-            error(f"Erro ao salvar senha no cofre do sistema: {e.stderr or e.stdout or str(e)}")
+        except (subprocess.CalledProcessError, OSError) as e:
+            error(f"Erro ao salvar senha no cofre do sistema: {getattr(e, 'stderr', None) or getattr(e, 'stdout', None) or str(e)}")
             warn("A senha será armazenada em texto plano no arquivo de configuração como fallback.")
             env["SEI_SENHA"] = sei_senha
 

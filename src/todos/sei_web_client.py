@@ -17,6 +17,7 @@ Limitações:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -117,25 +118,18 @@ class SEIWebClient:
 
         self._usuario = kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", ""))
 
-        senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
-        if not senha and self._usuario:
-            try:
-                import keyring  # noqa: PLC0415
-
-                instance_url = (
-                    self.sei_root.replace("https://", "")
-                    .replace("http://", "")
-                    .strip()
-                    .rstrip("/")
-                    .lower()
-                )
-                keyring_user = f"{self._usuario}@{instance_url}" if instance_url else self._usuario
-                senha_keyring = keyring.get_password("todos-mcp", keyring_user)
-                if senha_keyring:
-                    senha = senha_keyring
-            except Exception as e:  # noqa: BLE001
-                logger.warning("Não foi possível obter a senha do keyring: %s", e)
-        self._senha = senha
+        self._senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
+        # Pre-compute keyring key so login() can do the actual lookup in a thread
+        self._keyring_user: str | None = None
+        if not self._senha and self._usuario:
+            instance_url = (
+                self.sei_root.replace("https://", "")
+                .replace("http://", "")
+                .strip()
+                .rstrip("/")
+                .lower()
+            )
+            self._keyring_user = f"{self._usuario}@{instance_url}" if instance_url else self._usuario
 
         # SEI_ORGAO no .env é o id da REST (geralmente "0"). O selOrgao do SIP
         # é descoberto dinamicamente do <select> na página de login.
@@ -209,6 +203,18 @@ class SEIWebClient:
 
     async def login(self) -> None:  # noqa: C901, PLR0912, PLR0915
         """Faz login via formulário SIP e captura a inbox URL com infra_hash."""
+        if not self._senha and self._keyring_user:
+            try:
+                import keyring  # noqa: PLC0415
+
+                senha = await asyncio.to_thread(
+                    keyring.get_password, "todos-mcp", self._keyring_user
+                )
+                if senha:
+                    self._senha = senha
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Não foi possível obter a senha do keyring: %s", e)
+
         if not self.sei_root:
             raise RuntimeError(  # noqa: TRY003
                 "Nenhuma URL do SEI configurada. Defina SEI_URL (API REST "  # noqa: EM101
