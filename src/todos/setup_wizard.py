@@ -85,6 +85,7 @@ def run_setup_wizard():
         import httpx
         from bs4 import BeautifulSoup
 
+        resp = None
         try:
             with httpx.Client(verify=True, follow_redirects=True, timeout=10.0) as client:
                 resp = client.get(login_url)
@@ -110,6 +111,7 @@ def run_setup_wizard():
             else:
                 raise
 
+        if resp is not None:
             # Detectar parâmetros de query após possíveis redirecionamentos
             parsed_final = urlparse(str(resp.url))
             query_final = parse_qs(parsed_final.query)
@@ -147,13 +149,18 @@ def run_setup_wizard():
         parts = [p.strip() for p in sigla_orgao.split("-") if p.strip()]
         sigla_orgao = min(parts, key=len) if len(parts) > 1 else parts[0]
     else:
-        sigla_orgao = input("Digite a sigla do seu órgão no SEI (padrão: PGE): ").strip() or "PGE"
+        default_sigla = sigla_orgao_sistema or "PGE"
+        sigla_orgao = (
+            input(f"Digite a sigla do seu órgão no SEI (padrão: {default_sigla}): ").strip()
+            or default_sigla
+        )
+        default_sigla_sistema = sigla_orgao_sistema or "RO"
         sigla_orgao_sistema = (
-            input("Digite a sigla do órgão no sistema (padrão: RO): ").strip() or "RO"
+            input(f"Digite a sigla do órgão no sistema (padrão: {default_sigla_sistema}): ").strip()
+            or default_sigla_sistema
         )
-        orgao_id = (
-            input("Digite o ID do órgão (padrão: 9 para PGE-RO, 0 para outros): ").strip() or "0"
-        )
+        default_id = "9" if default_sigla_sistema == "RO" else "0"
+        orgao_id = input(f"Digite o ID do órgão (padrão: {default_id}): ").strip() or default_id
 
     print_green(f"[+] Configurado para o órgão: {sigla_orgao} (ID: {orgao_id})")
 
