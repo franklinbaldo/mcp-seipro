@@ -1732,20 +1732,31 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
     ]
     try:
         web = _get_web_client(ctx)
-        items = await web.pesquisar_processos_web(
+        result_dict = await web.pesquisar_processos_web(
             q=q_web,
             descricao=descricao,
             data_inicio=data_inicio,
             data_fim=data_fim,
             pagina=pagina,
         )
+        items = result_dict["processos"]
+        parsed_total = result_dict.get("total_itens")
+
         page_items = items[:limit]
+
+        if parsed_total is not None:
+            total_itens = parsed_total
+            tem_proxima = len(page_items) >= 10 and total_itens > (pagina + 1) * 10  # noqa: PLR2004
+        else:
+            total_itens = len(page_items)
+            tem_proxima = len(items) >= 10  # noqa: PLR2004
+
         paged: dict = {
             "processos": page_items,
             "pagina_atual": pagina,
             "itens_pagina": len(page_items),
-            "total_itens": len(page_items),
-            "tem_proxima": len(items) >= 10,  # noqa: PLR2004
+            "total_itens": total_itens,
+            "tem_proxima": tem_proxima,
             "fonte": "web",
         }
         avisos: list[str] = []

@@ -742,7 +742,7 @@ class SEIWebClient:
         data_inicio: str = "",
         data_fim: str = "",
         pagina: int = 0,
-    ) -> list[dict[str, str]]:
+    ) -> dict[str, Any]:
         """Pesquisa processos via formulário web do SEI (sem mod-wssei).
 
         Parâmetros:
@@ -878,7 +878,28 @@ class SEIWebClient:
                 }
             )
 
-        return results
+        total_itens: int | None = None
+        try:
+            text_content = soup1.get_text(" ")
+            match_title = re.search(
+                r"Resultado\s+da\s+pesquisa:\s*(\d+)\s+processo\(s\)\s+encontrado\(s\)?",
+                text_content,
+                re.IGNORECASE,
+            )
+            if match_title:
+                total_itens = int(match_title.group(1))
+            else:
+                match_broad = re.search(
+                    r"(\d+)\s+processo\(s\)\s+encontrado\(s\)?",
+                    text_content,
+                    re.IGNORECASE,
+                )
+                if match_broad:
+                    total_itens = int(match_broad.group(1))
+        except Exception:  # noqa: BLE001
+            logger.debug("Falha ao parsear total de itens da pesquisa", exc_info=True)
+
+        return {"processos": results, "total_itens": total_itens}
 
     async def consultar_processo(self, protocolo_formatado: str) -> dict:  # noqa: C901, PLR0912, PLR0915
         """Busca dados de um processo navegando pela cadeia de páginas web.
