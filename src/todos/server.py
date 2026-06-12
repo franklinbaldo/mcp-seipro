@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import sys
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Literal, cast
@@ -4625,9 +4626,9 @@ async def sei_alterar_anotacao_bloco_assinatura(
 
 
 def main():  # noqa: ANN201, D103
-    import sys
     if len(sys.argv) > 1 and sys.argv[1] == "setup":
-        from todos.setup_wizard import run_setup_wizard
+        from todos.setup_wizard import run_setup_wizard  # noqa: PLC0415
+
         run_setup_wizard()
         return
 
