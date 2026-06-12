@@ -32,6 +32,9 @@ def run_setup_wizard():
     if not web_url_input:
         web_url_input = "https://sei.sistemas.ro.gov.br"
 
+    if not web_url_input.startswith(("http://", "https://")):
+        web_url_input = "https://" + web_url_input
+
     # Tentar detectar órgãos da página de login automaticamente
     parsed = urlparse(web_url_input)
     sei_root = f"{parsed.scheme}://{parsed.netloc}"
