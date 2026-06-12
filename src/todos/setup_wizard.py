@@ -401,28 +401,23 @@ def run_setup_wizard():
         """Usa `claude mcp add` para registrar o servidor. Retorna True se ok."""
         if not claude_cli:
             return False
-        env_args = []
-        for k, v in mcp_env.items():
-            env_args += ["-e", f"{k}={v}"]
-        cmd = [claude_cli, "mcp", "add", "-s", scope] + env_args + ["todos", "todos"]
+        env_args = [item for k, v in mcp_env.items() for item in ("-e", f"{k}={v}")]
+        cmd = [claude_cli, "mcp", "add", "-s", scope, *env_args, "todos", "todos"]
+        run_kw = {"capture_output": True, "text": True, "cwd": str(cwd or Path.cwd())}
         try:
-            _sp.run(cmd, check=True, capture_output=True, text=True, cwd=str(cwd or Path.cwd()))
-            return True
+            _sp.run(cmd, check=True, **run_kw)  # noqa: S603
         except _sp.CalledProcessError as e:
-            # Se já existir, tenta remover e readicionar
-            if "already exists" in (e.stderr or "") or "already exists" in (e.stdout or ""):
-                try:
-                    _sp.run(
-                        [claude_cli, "mcp", "remove", "-s", scope, "todos"],
-                        check=True, capture_output=True, text=True, cwd=str(cwd or Path.cwd()),
-                    )
-                    _sp.run(cmd, check=True, capture_output=True, text=True, cwd=str(cwd or Path.cwd()))
-                    return True
-                except Exception:
-                    pass
+            if "already exists" not in (e.stderr or "") and "already exists" not in (e.stdout or ""):
+                return False
+            with contextlib.suppress(Exception):
+                _sp.run([claude_cli, "mcp", "remove", "-s", scope, "todos"], check=True, **run_kw)  # noqa: S603
+                _sp.run(cmd, check=True, **run_kw)  # noqa: S603
+                return True
+            return False
         except Exception:
-            pass
-        return False
+            return False
+        else:
+            return True
 
     def _mcp_add_via_json(config_path: Path) -> bool:
         """Fallback: edita o JSON diretamente. Retorna True se ok."""
@@ -444,9 +439,10 @@ def run_setup_wizard():
             }
             with config_path.open("w", encoding="utf-8") as f:
                 json.dump(config_data, f, indent=2, ensure_ascii=False)
-            return True
         except Exception:
             return False
+        else:
+            return True
 
     # Antigravity IDE — atualiza todos os caminhos conhecidos que existirem
     # ~/.gemini/antigravity-ide/mcp_config.json  (versão atual)
@@ -479,20 +475,12 @@ def run_setup_wizard():
             print_yellow(f"[!] Não foi possível atualizar {claude_desktop}")
 
     # Claude Code (Global) — usa `claude mcp add -s user` se disponível
-    if claude_cli:
-        if _mcp_add_via_cli("user"):
-            print_green(f"[+] Atualizado: Claude Code (global) via `claude mcp add -s user`")
-        else:
-            print_yellow("[!] `claude mcp add -s user` falhou; tentando edição direta...")
-            if _mcp_add_via_json(home / ".claude.json"):
-                print_green(f"[+] Atualizado: {home / '.claude.json'}")
-            else:
-                print_yellow(f"[!] Não foi possível atualizar {home / '.claude.json'}")
+    if claude_cli and _mcp_add_via_cli("user"):
+        print_green("[+] Atualizado: Claude Code (global) via `claude mcp add -s user`")
+    elif _mcp_add_via_json(home / ".claude.json"):
+        print_green(f"[+] Atualizado: {home / '.claude.json'}")
     else:
-        if _mcp_add_via_json(home / ".claude.json"):
-            print_green(f"[+] Atualizado: {home / '.claude.json'}")
-        else:
-            print_yellow(f"[!] Não foi possível atualizar {home / '.claude.json'}")
+        print_yellow(f"[!] Não foi possível atualizar {home / '.claude.json'}")
 
     # Workspace Local (.mcp.json) — usa `claude mcp add -s project` se disponível
     # Procura o .mcp.json no CWD e em diretórios pais (funciona quando rodado de subdiretório)
@@ -521,39 +509,34 @@ def run_setup_wizard():
     if codex_cli or codex_config.exists():
         added_codex = False
         if codex_cli:
-            env_args = []
-            for k, v in mcp_env.items():
-                env_args += ["-e", f"{k}={v}"]
-            cmd_codex = [codex_cli, "mcp", "add", "todos", "--"] + ["todos"] + env_args
+            env_args = [item for k, v in mcp_env.items() for item in ("-e", f"{k}={v}")]
+            cmd_codex = [codex_cli, "mcp", "add", "todos", "--", "todos", *env_args]
             try:
-                _sp.run(cmd_codex, check=True, capture_output=True, text=True)
-                added_codex = True
-                print_green("[+] Atualizado: Codex (global) via `codex mcp add`")
+                _sp.run(cmd_codex, check=True, capture_output=True, text=True)  # noqa: S603
             except _sp.CalledProcessError as e:
                 if "already" in (e.stderr or "") or "already" in (e.stdout or ""):
-                    try:
-                        _sp.run([codex_cli, "mcp", "remove", "todos"], check=True, capture_output=True, text=True)
-                        _sp.run(cmd_codex, check=True, capture_output=True, text=True)
+                    with contextlib.suppress(Exception):
+                        _sp.run([codex_cli, "mcp", "remove", "todos"], check=True, capture_output=True, text=True)  # noqa: S603
+                        _sp.run(cmd_codex, check=True, capture_output=True, text=True)  # noqa: S603
                         added_codex = True
                         print_green("[+] Atualizado: Codex (global) via `codex mcp add`")
-                    except Exception:
-                        pass
             except Exception:
                 pass
+            else:
+                added_codex = True
+                print_green("[+] Atualizado: Codex (global) via `codex mcp add`")
         if not added_codex:
             # Fallback: edita config.toml diretamente com a seção [mcpServers.todos]
             try:
                 codex_config.parent.mkdir(parents=True, exist_ok=True)
                 existing = codex_config.read_text(encoding="utf-8") if codex_config.exists() else ""
-                # Remove bloco [mcpServers.todos] existente se houver
-                import re as _re
-                existing = _re.sub(
-                    r'\[mcpServers\.todos\][^\[]*',
-                    '',
+                existing = re.sub(
+                    r"\[mcpServers\.todos\][^\[]*",
+                    "",
                     existing,
-                    flags=_re.DOTALL,
+                    flags=re.DOTALL,
                 ).rstrip()
-                env_lines = "\n".join(f'  {k} = {json.dumps(v)}' for k, v in mcp_env.items())
+                env_lines = "\n".join(f"  {k} = {json.dumps(v)}" for k, v in mcp_env.items())
                 block = f'\n\n[mcpServers.todos]\ncommand = "todos"\nargs = []\n[mcpServers.todos.env]\n{env_lines}\n'
                 codex_config.write_text(existing + block, encoding="utf-8")
                 print_green(f"[+] Atualizado: {codex_config}")
