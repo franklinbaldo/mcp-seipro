@@ -407,7 +407,9 @@ def run_setup_wizard():
         try:
             _sp.run(cmd, check=True, **run_kw)  # noqa: S603
         except _sp.CalledProcessError as e:
-            if "already exists" not in (e.stderr or "") and "already exists" not in (e.stdout or ""):
+            if "already exists" not in (e.stderr or "") and "already exists" not in (
+                e.stdout or ""
+            ):
                 return False
             with contextlib.suppress(Exception):
                 _sp.run([claude_cli, "mcp", "remove", "-s", scope, "todos"], check=True, **run_kw)  # noqa: S603
@@ -497,7 +499,9 @@ def run_setup_wizard():
 
     if _workspace_dir is not None:
         if claude_cli and _mcp_add_via_cli("project", cwd=_workspace_dir):
-            print_green(f"[+] Atualizado: {_workspace_dir / '.mcp.json'} via `claude mcp add -s project`")
+            print_green(
+                f"[+] Atualizado: {_workspace_dir / '.mcp.json'} via `claude mcp add -s project`"
+            )
         elif _mcp_add_via_json(_workspace_dir / ".mcp.json"):
             print_green(f"[+] Atualizado: {_workspace_dir / '.mcp.json'}")
         else:
@@ -516,7 +520,12 @@ def run_setup_wizard():
             except _sp.CalledProcessError as e:
                 if "already" in (e.stderr or "") or "already" in (e.stdout or ""):
                     with contextlib.suppress(Exception):
-                        _sp.run([codex_cli, "mcp", "remove", "todos"], check=True, capture_output=True, text=True)  # noqa: S603
+                        _sp.run(  # noqa: S603
+                            [codex_cli, "mcp", "remove", "todos"],
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                        )
                         _sp.run(cmd_codex, check=True, capture_output=True, text=True)  # noqa: S603
                         added_codex = True
                         print_green("[+] Atualizado: Codex (global) via `codex mcp add`")
