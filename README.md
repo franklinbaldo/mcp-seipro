@@ -32,7 +32,13 @@ pip install mcp-sei
 
 ### Opção 3: Instalador interativo (Recomendado)
 
-Para instalar o `uv`, a CLI do `todos` globalmente e configurar o acesso seguro via Keyring (gerenciador de credenciais do OS) de forma automatizada e cross-platform, execute o comando correspondente em seu terminal:
+O instalador interativo faz o setup completo do MCP do `todos` em todos os ambientes suportados de forma automática, realizando:
+1. Instalação do gerenciador de pacotes `uv` (se necessário).
+2. Instalação da CLI `todos` globalmente via `uv tool`.
+3. Armazenamento seguro de credenciais no Keyring nativo do OS (sem expor senhas em arquivos).
+4. Registro do servidor MCP automaticamente no **Claude Code**, **Claude Desktop**, **Antigravity IDE** e no workspace local (`.mcp.json`).
+
+Para executar a instalação automatizada:
 
 * **No Windows (PowerShell):**
   ```powershell
@@ -44,9 +50,12 @@ Para instalar o `uv`, a CLI do `todos` globalmente e configurar o acesso seguro 
   if ! command -v uv &> /dev/null; then echo "[*] Instalando uv..."; curl -LsSf https://astral.sh/uv/install.sh | sh; source $HOME/.local/bin/env; fi; uv tool install git+https://github.com/franklinbaldo/todos.git --force; export PATH="$HOME/.local/bin:$PATH"; todos setup
   ```
 
-O assistente solicitará suas credenciais de forma segura (entrada oculta) e configurará os ambientes de MCP do Antigravity, Claude Desktop, Claude Code e o `.mcp.json` local automaticamente.
+O assistente interativo solicitará suas credenciais do SEI de forma segura (com a senha oculta) e aplicará as configurações.
 
 ## Configuração
+
+> [!TIP]
+> **Dica de Ouro**: O comando `todos setup` (descrito na Opção 3 de Instalação) já configura automaticamente todos os ambientes abaixo (Claude Code, Claude Desktop, Antigravity IDE e workspace local) e armazena sua senha de forma criptografada no Keyring do sistema. Use as seções abaixo apenas se preferir realizar a configuração manual.
 
 ### Variáveis de ambiente
 
