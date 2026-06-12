@@ -1,9 +1,5 @@
 # todos
 
-[![PyPI](https://img.shields.io/pypi/v/mcp-sei)](https://pypi.org/project/mcp-sei/)
-[![Python](https://img.shields.io/pypi/pyversions/mcp-sei)](https://pypi.org/project/mcp-sei/)
-[![License](https://img.shields.io/pypi/l/mcp-sei)](https://pypi.org/project/mcp-sei/)
-
 **TOdos Domina O Sei** — MCP Server para o SEI (Sistema Eletrônico de Informações) com arquitetura **web-first**: scraper HTTP do frontend + REST mod-wssei v2 quando disponível. Funciona em qualquer instância SEI 4.0+ — **inclusive sem mod-wssei instalado**.
 
 **121 tools** para gerenciar processos, documentos, tramitação, assinatura, blocos, marcadores, acompanhamento, credenciamento, modelos e mais. Operações de leitura críticas usam scraper web (**23×** mais rápido que REST). Catálogos estáticos usam cache em disco com TTL de 24h.
@@ -24,25 +20,19 @@ A solução foi implementar um **scraper HTTP do próprio frontend web do SEI** 
 
 Baixe o arquivo [`todos.mcpb`](https://github.com/franklinbaldo/todos/releases/latest) e abra com duplo-clique. O Claude Desktop instala automaticamente e pede suas credenciais.
 
-### Opção 2: PyPI (pip)
-
-```bash
-pip install mcp-sei
-```
-
-### Opção 3: Instalador interativo (Recomendado)
+### Opção 2: Instalador interativo (Recomendado)
 
 O instalador interativo faz o setup completo do MCP do `todos` em todos os ambientes suportados de forma automática, realizando:
 1. Instalação do gerenciador de pacotes `uv` (se necessário).
 2. Instalação da CLI `todos` globalmente via `uv tool`.
 3. Armazenamento seguro de credenciais no Keyring nativo do OS (sem expor senhas em arquivos).
-4. Registro do servidor MCP automaticamente no **Claude Code**, **Claude Desktop**, **Antigravity IDE** e no workspace local (`.mcp.json`).
+4. Registro do servidor MCP automaticamente no **Claude Code**, **Claude Desktop**, **Antigravity IDE**, **Codex CLI** e no workspace local (`.mcp.json`).
 
 Para executar a instalação automatizada:
 
 * **No Windows (PowerShell):**
   ```powershell
-  powershell -ExecutionPolicy Bypass -Command "if (-not (Get-Command 'uv' -ErrorAction SilentlyContinue)) { Write-Host '[*] Instalando uv...'; irm https://astral.sh/uv/install.ps1 | iex; $env:PATH += ';$env:USERPROFILE\.local\bin' }; uv tool install git+https://github.com/franklinbaldo/todos.git --force; $env:PATH += ';$env:USERPROFILE\.local\bin'; todos setup"
+  powershell -ExecutionPolicy Bypass -Command "if (-not (Get-Command 'uv' -ErrorAction SilentlyContinue)) { Write-Host '[*] Instalando uv...'; irm https://astral.sh/uv/install.ps1 | iex; $env:PATH += ';' + $env:USERPROFILE + '\.local\bin' }; uv tool install git+https://github.com/franklinbaldo/todos.git --force; $env:PATH += ';' + $env:USERPROFILE + '\.local\bin'; todos setup"
   ```
 
 * **No Linux / macOS (Terminal):**
@@ -104,6 +94,8 @@ Adicione ao `.mcp.json` do projeto ou `~/.claude.json` (global):
   }
 }
 ```
+
+> **Dica:** se você configurou o `todos setup`, deixe `SEI_SENHA` vazio (`""`) — a senha fica no Keyring do sistema.
 
 ### Registro no Claude Desktop (manual)
 
@@ -545,7 +537,6 @@ railway up
 
 - [mcp-seipro](https://github.com/SEI-Pro/mcp-seipro) — Projeto upstream (fork origin), por [@opedrosoares](https://github.com/opedrosoares)
 - [SEI Pro](https://github.com/SEI-Pro/sei-pro) — Extensão de navegador para o SEI
-- [PyPI](https://pypi.org/project/mcp-sei/)
 - [Repositório](https://github.com/franklinbaldo/todos)
 - [RFC 0001 — Web-first](docs/rfc/0001-web-first.md)
 - [Railway](https://railway.com?referralCode=jJJ7Xz) — Plataforma de deploy na nuvem

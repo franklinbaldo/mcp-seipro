@@ -34,6 +34,7 @@ logger = logging.getLogger(__name__)
 # TTL do cache da árvore do processo (links assinados valem a sessão inteira;
 # o TTL curto limita apenas a janela de staleness do conteúdo da árvore)
 _ARVORE_CACHE_TTL = 30.0
+SEI_WEB_PAGE_SIZE = 10
 
 
 def _tag_str(tag: Tag, attr: str, default: str = "") -> str:
@@ -742,7 +743,7 @@ class SEIWebClient:
         data_inicio: str = "",
         data_fim: str = "",
         pagina: int = 0,
-    ) -> list[dict[str, str]]:
+    ) -> dict[str, Any]:
         """Pesquisa processos via formulário web do SEI (sem mod-wssei).
 
         Parâmetros:
@@ -817,7 +818,7 @@ class SEIWebClient:
             "txtDescricaoPesquisa": descricao,
             "txtDataInicio": data_inicio,
             "txtDataFim": data_fim,
-            "hdnInicio": str(pagina * 10),
+            "hdnInicio": str(pagina * SEI_WEB_PAGE_SIZE),
         }
 
         r1 = await self._http.post(action, data=post_data, headers={"Referer": str(r0.url)})
@@ -878,7 +879,23 @@ class SEIWebClient:
                 }
             )
 
-        return results
+        total_itens: int | None = None
+        try:
+            pattern = re.compile(
+                r"^\s*(?:Resultado\s+da\s+pesquisa:\s*)?(\d+)\s+"
+                r"(?:processo(?:\(s\)|s)?\s+encontrado(?:\(s\)|s)?|resultados?)(?:\.|\s)*$",
+                re.IGNORECASE,
+            )
+            for el in soup1.find_all(string=pattern):
+                text_val = str(el).strip()
+                m = pattern.match(text_val)
+                if m:
+                    total_itens = int(m.group(1))
+                    break
+        except Exception:  # noqa: BLE001
+            logger.debug("Falha ao parsear total de itens da pesquisa", exc_info=True)
+
+        return {"processos": results, "total_itens": total_itens}
 
     async def consultar_processo(self, protocolo_formatado: str) -> dict:  # noqa: C901, PLR0912, PLR0915
         """Busca dados de um processo navegando pela cadeia de páginas web.
