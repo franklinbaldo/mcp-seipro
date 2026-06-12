@@ -146,7 +146,7 @@ def run_setup_wizard():
 
         orgao_id, sigla_orgao = organs[selected_idx]
         # Limpar espaços ou traços do nome para ficar limpo (ex: "PGE-RO" -> "PGE")
-        parts = [p.strip() for p in sigla_orgao.split("-") if p.strip()]
+        parts = [p.strip() for p in sigla_orgao.split(" - ") if p.strip()]
         sigla_orgao = min(parts, key=len) if len(parts) > 1 else parts[0]
     else:
         default_sigla = sigla_orgao_sistema or "PGE"
