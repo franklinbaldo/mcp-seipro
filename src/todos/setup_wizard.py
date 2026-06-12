@@ -385,6 +385,9 @@ def run_setup_wizard():
         "SEI_SENHA": senha,  # Vazio se keyring foi usado
         "SEI_ORGAO": orgao_id,
     }
+    if verify_ssl_disabled:
+        mcp_env["SEI_VERIFY_SSL"] = "false"
+    using_plaintext_password = bool(mcp_env["SEI_SENHA"])
 
     # Limpar senha local imediatamente após montar o dicionário
     senha = ""
@@ -396,13 +399,14 @@ def run_setup_wizard():
 
     home = Path.home()
     claude_cli = shutil.which("claude")
+    todos_cmd = shutil.which("todos") or "todos"
 
     def _mcp_add_via_cli(scope: str, cwd: Path | None = None) -> bool:
         """Usa `claude mcp add` para registrar o servidor. Retorna True se ok."""
         if not claude_cli:
             return False
         env_args = [item for k, v in mcp_env.items() for item in ("-e", f"{k}={v}")]
-        cmd = [claude_cli, "mcp", "add", "-s", scope, *env_args, "todos", "todos"]
+        cmd = [claude_cli, "mcp", "add", "-s", scope, *env_args, "todos", todos_cmd]
         cwd_str = str(cwd or Path.cwd())
         try:
             _sp.run(cmd, check=True, capture_output=True, text=True, cwd=cwd_str)  # noqa: S603
@@ -441,7 +445,7 @@ def run_setup_wizard():
                     if not isinstance(config_data.get("mcpServers"), dict):
                         config_data["mcpServers"] = {}
             config_data["mcpServers"]["todos"] = {
-                "command": "todos",
+                "command": todos_cmd,
                 "args": [],
                 "env": dict(mcp_env),
             }
@@ -504,7 +508,12 @@ def run_setup_wizard():
         _mcp_search = parent
 
     if _workspace_dir is not None:
-        if claude_cli and _mcp_add_via_cli("project", cwd=_workspace_dir):
+        if using_plaintext_password:
+            print_yellow(
+                f"[!] Pulando {_workspace_dir / '.mcp.json'}: senha em texto claro não deve "
+                "ser gravada em arquivo de projeto (pode ser enviada ao controle de versão)."
+            )
+        elif claude_cli and _mcp_add_via_cli("project", cwd=_workspace_dir):
             print_green(
                 f"[+] Atualizado: {_workspace_dir / '.mcp.json'} via `claude mcp add -s project`"
             )
@@ -519,8 +528,8 @@ def run_setup_wizard():
     if codex_cli or codex_config.exists():
         added_codex = False
         if codex_cli:
-            env_args = [item for k, v in mcp_env.items() for item in ("-e", f"{k}={v}")]
-            cmd_codex = [codex_cli, "mcp", "add", "todos", "--", "todos", *env_args]
+            env_args = [item for k, v in mcp_env.items() for item in ("--env", f"{k}={v}")]
+            cmd_codex = [codex_cli, "mcp", "add", "todos", *env_args, "--", todos_cmd]
             try:
                 _sp.run(cmd_codex, check=True, capture_output=True, text=True)  # noqa: S603
             except _sp.CalledProcessError as e:
@@ -546,13 +555,13 @@ def run_setup_wizard():
                 codex_config.parent.mkdir(parents=True, exist_ok=True)
                 existing = codex_config.read_text(encoding="utf-8") if codex_config.exists() else ""
                 existing = re.sub(
-                    r"\[mcpServers\.todos\][^\[]*",
+                    r"\[mcp_servers\.todos\][^\[]*",
                     "",
                     existing,
                     flags=re.DOTALL,
                 ).rstrip()
                 env_lines = "\n".join(f"  {k} = {json.dumps(v)}" for k, v in mcp_env.items())
-                block = f'\n\n[mcpServers.todos]\ncommand = "todos"\nargs = []\n[mcpServers.todos.env]\n{env_lines}\n'
+                block = f"\n\n[mcp_servers.todos]\ncommand = {json.dumps(todos_cmd)}\nargs = []\n[mcp_servers.todos.env]\n{env_lines}\n"
                 codex_config.write_text(existing + block, encoding="utf-8")
                 print_green(f"[+] Atualizado: {codex_config}")
             except Exception as e_codex:

@@ -32,7 +32,7 @@ Para executar a instalação automatizada:
 
 * **No Windows (PowerShell):**
   ```powershell
-  powershell -ExecutionPolicy Bypass -Command "if (-not (Get-Command 'uv' -ErrorAction SilentlyContinue)) { Write-Host '[*] Instalando uv...'; irm https://astral.sh/uv/install.ps1 | iex; $env:PATH += \";$env:USERPROFILE\.local\bin\" }; uv tool install git+https://github.com/franklinbaldo/todos.git --force; $env:PATH += \";$env:USERPROFILE\.local\bin\"; todos setup"
+  powershell -ExecutionPolicy Bypass -Command "if (-not (Get-Command 'uv' -ErrorAction SilentlyContinue)) { Write-Host '[*] Instalando uv...'; irm https://astral.sh/uv/install.ps1 | iex; $env:PATH += ';' + $env:USERPROFILE + '\.local\bin' }; uv tool install git+https://github.com/franklinbaldo/todos.git --force; $env:PATH += ';' + $env:USERPROFILE + '\.local\bin'; todos setup"
   ```
 
 * **No Linux / macOS (Terminal):**

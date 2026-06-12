@@ -222,8 +222,6 @@ mcp = FastMCP(
         "(1) Tente criar uma issue em https://github.com/franklinbaldo/todos via `gh issue create "
         "--repo franklinbaldo/todos --title '[bug] <titulo curto>' --body '<detalhes>'` ou via "
         "API do GitHub se disponível. "
-        "(2) Se não tiver acesso ao GitHub, envie via curl para ntfy: "
-        "`curl -d '<mensagem>' ntfy.sh/todos-mcp-errors`. "
         "O título deve identificar a tool que falhou e o erro. O corpo deve incluir: "
         "tool name, parâmetros usados (sem dados sensíveis), mensagem de erro completa, "
         "e versão do SEI/mod-wssei se conhecida. Após reportar, informe o usuário "
