@@ -21,11 +21,33 @@ def print_red(text):
 
 def run_setup_wizard():
     print_cyan("=====================================================")
-    print_cyan("  Configurador do MCP SEI (todos) - PGE-RO")
+    print_cyan("  Configurador do MCP SEI (todos)")
     print_cyan("=====================================================")
     print()
 
-    # 1. Obter usuário e senha do SEI
+    # 1. Configurar URL e parâmetros do SEI
+    print_yellow("[*] Configuração da URL e Instância do SEI")
+    web_url = input("Digite ou cole a URL Web do seu SEI (padrão: https://sei.sistemas.ro.gov.br): ").strip()
+    if not web_url:
+        web_url = "https://sei.sistemas.ro.gov.br"
+
+    sigla_orgao = input("Digite a sigla do seu órgão no SEI (padrão: PGE): ").strip()
+    if not sigla_orgao:
+        sigla_orgao = "PGE"
+
+    sigla_orgao_sistema = input("Digite a sigla do órgão no sistema (padrão: RO): ").strip()
+    if not sigla_orgao_sistema:
+        sigla_orgao_sistema = "RO"
+
+    orgao_id = input("Digite o ID do órgão (padrão: 9 para PGE-RO, 0 para outros): ").strip()
+    if not orgao_id:
+        orgao_id = "9" if sigla_orgao_sistema == "RO" else "0"
+
+    rest_url = input("Digite a URL REST do mod-wssei (deixe em branco se a instância não tiver mod-wssei): ").strip()
+
+    # 2. Obter usuário e senha do SEI
+    print()
+    print_yellow("[*] Configuração de Usuário e Senha")
     usuario = input("Digite seu usuário do SEI (geralmente CPF ou iniciais): ").strip()
     if not usuario:
         print_red("[ERRO] Usuário é obrigatório.")
@@ -36,12 +58,22 @@ def run_setup_wizard():
         print_red("[ERRO] Senha é obrigatória.")
         sys.exit(1)
 
-    # 2. Salvar senha no Keyring do Sistema
+    # 3. Salvar senha no Keyring do Sistema (serviço: todos-mcp, chave: usuario@host)
     print()
     print_yellow("[*] Gravando senha com segurança no Keyring do Sistema...")
+    
+    instance_url = (
+        web_url.replace("https://", "")
+        .replace("http://", "")
+        .strip()
+        .rstrip("/")
+        .lower()
+    )
+    keyring_user = f"{usuario}@{instance_url}" if instance_url else usuario
+
     try:
         import keyring
-        keyring.set_password("todos", usuario, senha)
+        keyring.set_password("todos-mcp", keyring_user, senha)
         print_green("[+] Senha armazenada com sucesso no Keyring do Sistema!")
     except Exception as e:
         print_red(f"[ERRO] Falha ao acessar o Keyring do Sistema: {e}")
@@ -54,7 +86,7 @@ def run_setup_wizard():
         # Se salvou no keyring com sucesso, não gravamos a senha no arquivo de configuração
         senha = ""
 
-    # 3. Configurar caminhos dos arquivos MCP por plataforma
+    # 4. Configurar caminhos dos arquivos MCP por plataforma
     home = Path.home()
     configs_to_update = []
 
@@ -84,13 +116,13 @@ def run_setup_wizard():
     todos_mcp_config = {
         "command": "todos",
         "env": {
-            "SEI_URL": "",
-            "SEI_WEB_URL": "https://sei.sistemas.ro.gov.br",
-            "SEI_SIGLA_ORGAO": "PGE",
-            "SEI_SIGLA_ORGAO_SISTEMA": "RO",
+            "SEI_URL": rest_url,
+            "SEI_WEB_URL": web_url,
+            "SEI_SIGLA_ORGAO": sigla_orgao,
+            "SEI_SIGLA_ORGAO_SISTEMA": sigla_orgao_sistema,
             "SEI_USUARIO": usuario,
-            "SEI_SENHA": senha,  # Fica vazio se usamos o keyring/cmdkey, ou texto limpo caso contrário
-            "SEI_ORGAO": "9"
+            "SEI_SENHA": senha,  # Fica vazio se usamos o keyring, ou texto limpo caso contrário
+            "SEI_ORGAO": orgao_id
         }
     }
 
@@ -98,7 +130,7 @@ def run_setup_wizard():
     if "senha" in locals():
         del senha
 
-    # 4. Atualizar as configurações
+    # 5. Atualizar as configurações
     print()
     print_yellow("[*] Atualizando arquivos de configuração MCP...")
     for config_path in configs_to_update:
