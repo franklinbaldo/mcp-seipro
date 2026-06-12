@@ -116,7 +116,18 @@ class SEIWebClient:
             self.sei_root = sei_url.rstrip("/")
 
         self._usuario = kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", ""))
-        self._senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
+        
+        senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
+        if not senha and self._usuario:
+            try:
+                import keyring
+                senha_keyring = keyring.get_password("todos-mcp", self._usuario)
+                if senha_keyring:
+                    senha = senha_keyring
+            except Exception as e:
+                logger.warning("Não foi possível obter a senha do keyring: %s", e)
+        self._senha = senha
+
         # SEI_ORGAO no .env é o id da REST (geralmente "0"). O selOrgao do SIP
         # é descoberto dinamicamente do <select> na página de login.
         self._sigla_orgao = kwargs.get(

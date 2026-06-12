@@ -19,7 +19,18 @@ class SEIClient:
     def __init__(self, **kwargs):  # noqa: ANN003, ANN204, D107
         self.base_url = kwargs.get("sei_url", os.environ.get("SEI_URL", "")).rstrip("/")
         self._usuario = kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", ""))
-        self._senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
+        
+        senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
+        if not senha and self._usuario:
+            try:
+                import keyring
+                senha_keyring = keyring.get_password("todos-mcp", self._usuario)
+                if senha_keyring:
+                    senha = senha_keyring
+            except Exception as e:
+                logger.warning("Não foi possível obter a senha do keyring: %s", e)
+        self._senha = senha
+        
         self._orgao = kwargs.get("sei_orgao", os.environ.get("SEI_ORGAO", "0"))
         self._contexto = kwargs.get("sei_contexto", os.environ.get("SEI_CONTEXTO", ""))
         self._token: str | None = None
