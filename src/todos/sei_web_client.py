@@ -882,7 +882,7 @@ class SEIWebClient:
         try:
             text_content = soup1.get_text(" ")
             match_title = re.search(
-                r"Resultado\s+da\s+pesquisa:\s*(\d+)\s+processo\(s\)\s+encontrado\(s\)?",
+                r"Resultado\s+da\s+pesquisa:\s*(\d+)\s+processo(?:\(s\)|s)?\s+encontrado(?:\(s\)|s)?",
                 text_content,
                 re.IGNORECASE,
             )
@@ -890,7 +890,7 @@ class SEIWebClient:
                 total_itens = int(match_title.group(1))
             else:
                 match_broad = re.search(
-                    r"(\d+)\s+processo\(s\)\s+encontrado\(s\)?",
+                    r"(\d+)\s+processo(?:\(s\)|s)?\s+encontrado(?:\(s\)|s)?",
                     text_content,
                     re.IGNORECASE,
                 )

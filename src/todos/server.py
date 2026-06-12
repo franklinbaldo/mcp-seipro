@@ -1746,7 +1746,7 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
 
         if parsed_total is not None:
             total_itens = parsed_total
-            tem_proxima = len(page_items) >= 10 and total_itens > (pagina + 1) * 10  # noqa: PLR2004
+            tem_proxima = len(items) >= 10 and total_itens > (pagina + 1) * 10  # noqa: PLR2004
         else:
             total_itens = len(page_items)
             tem_proxima = len(items) >= 10  # noqa: PLR2004
