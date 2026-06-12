@@ -178,6 +178,7 @@ def run_setup_wizard():
             "SEI_WEB_URL": sei_root,
             "SEI_SIGLA_ORGAO": sigla_orgao,
             "SEI_SIGLA_ORGAO_SISTEMA": sigla_orgao_sistema,
+            "SEI_SIGLA_SISTEMA": sigla_sistema,
             "SEI_USUARIO": usuario,
             "SEI_SENHA": senha,  # Fica vazio se usamos o keyring, ou texto limpo caso contrário
             "SEI_ORGAO": orgao_id
