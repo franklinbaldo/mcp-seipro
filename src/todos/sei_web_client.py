@@ -845,18 +845,20 @@ class SEIWebClient:
             meta = siblings[1].get_text(" ", strip=True) if len(siblings) > 1 else ""
 
             # campo meta: "Unidade: SIGLA Usuário: CPF Inclusão: DD/MM/AAAA"
-            unidade_m  = re.search(r"Unidade:\s*(.+?)(?=\s+Usuário:|\s+Inclusão:|$)", meta)
-            usuario_m  = re.search(r"Usuário:\s*(\S+)", meta)
+            unidade_m = re.search(r"Unidade:\s*(.+?)(?=\s+Usuário:|\s+Inclusão:|$)", meta)
+            usuario_m = re.search(r"Usuário:\s*(\S+)", meta)
             inclusao_m = re.search(r"Inclusão:\s*(\S+)", meta)
 
-            results.append({
-                "protocoloFormatado": prot,
-                "tipo": tipo,
-                "trecho": trecho,
-                "unidade": unidade_m.group(1).strip() if unidade_m else "",
-                "usuario": usuario_m.group(1) if usuario_m else "",
-                "inclusao": inclusao_m.group(1) if inclusao_m else "",
-            })
+            results.append(
+                {
+                    "protocoloFormatado": prot,
+                    "tipo": tipo,
+                    "trecho": trecho,
+                    "unidade": unidade_m.group(1).strip() if unidade_m else "",
+                    "usuario": usuario_m.group(1) if usuario_m else "",
+                    "inclusao": inclusao_m.group(1) if inclusao_m else "",
+                }
+            )
 
         return results
 
