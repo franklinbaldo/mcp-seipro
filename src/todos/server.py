@@ -1659,7 +1659,7 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
     Use palavras_chave para busca geral ou busca_rapida para busca simplificada.
     Datas no formato DD/MM/AAAA.
 
-    Filtros adicionais:
+    Filtros adicionais (REST only):
     - sta_tipo_data: tipo de período — "30" (últimos 30 dias), "60" (últimos 60 dias)
       ou "0" (personalizado, requer data_inicio/data_fim)
     - id_unidade_geradora: id da unidade que gerou o processo (use sei_listar_unidades)
@@ -1667,6 +1667,16 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
     - grupo: id do grupo de acompanhamento (use sei_listar_grupos_acompanhamento)
 
     Paginação: pagina=0 é a primeira página, pagina=1 a segunda, etc.
+
+    Busca via web (instâncias sem mod-wssei, ex: SEI-RO):
+    - Quando REST não está disponível, a busca usa o formulário de pesquisa
+      avançada do SEI via scraping. O retorno inclui "fonte": "web".
+    - Use aspas para frase exata: palavras_chave='"NOME COMPLETO" aposentadoria'
+      é muito mais preciso do que palavras soltas.
+    - A busca web varre todo o SEI (não filtrada por unidade do usuário).
+    - Os filtros estruturais acima são ignorados no caminho web; quando isso
+      ocorre, o campo "aviso" no retorno lista os filtros descartados.
+    - Máximo de 10 resultados por página no caminho web.
     """
     _rest_unavailable = False
     try:
