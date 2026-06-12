@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -52,59 +53,70 @@ class CatalogCache:
         return hashlib.sha256(payload.encode()).hexdigest()
 
     async def get(self, namespace: dict[str, str], key: str) -> Any:  # noqa: ANN401
-        """Retorna um valor válido ou None em miss/falha do cache."""
+        """Retorna um valor válido ou None em miss/falha do cache (executado em thread worker)."""
         try:
-            db_key = self.make_key(namespace, key)
-            now = time.time()
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT value, expires_at FROM catalogs WHERE key = ?",
-                    (db_key,),
-                )
-                row = cursor.fetchone()
-                if row:
-                    val_str, expires_at = row
-                    if expires_at > now:
-                        return json.loads(val_str)
-                    # Limpa entrada expirada
-                    conn.execute("DELETE FROM catalogs WHERE key = ?", (db_key,))
+            return await asyncio.to_thread(self._get_sync, namespace, key)
         except Exception:  # noqa: BLE001
             logger.warning("Falha ao ler cache de catalogos", exc_info=True)
         return None
 
+    def _get_sync(self, namespace: dict[str, str], key: str) -> Any:  # noqa: ANN401
+        db_key = self.make_key(namespace, key)
+        now = time.time()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT value, expires_at FROM catalogs WHERE key = ?",
+                (db_key,),
+            )
+            row = cursor.fetchone()
+            if row:
+                val_str, expires_at = row
+                if expires_at > now:
+                    return json.loads(val_str)
+                # Limpa entrada expirada
+                conn.execute("DELETE FROM catalogs WHERE key = ?", (db_key,))
+        return None
+
     async def set(self, namespace: dict[str, str], key: str, value: Any) -> None:  # noqa: ANN401
-        """Persista uma resposta bem-sucedida pelo TTL padrão."""
+        """Persista uma resposta bem-sucedida pelo TTL padrão (executado em thread worker)."""
         try:
-            db_key = self.make_key(namespace, key)
-            val_str = json.dumps(value, ensure_ascii=False)
-            expires_at = time.time() + CATALOG_CACHE_TTL
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO catalogs (key, value, expires_at)
-                    VALUES (?, ?, ?)
-                    """,
-                    (db_key, val_str, expires_at),
-                )
+            await asyncio.to_thread(self._set_sync, namespace, key, value)
         except Exception:  # noqa: BLE001
             logger.warning("Falha ao gravar cache de catalogos", exc_info=True)
 
+    def _set_sync(self, namespace: dict[str, str], key: str, value: Any) -> None:  # noqa: ANN401
+        db_key = self.make_key(namespace, key)
+        val_str = json.dumps(value, ensure_ascii=False)
+        expires_at = time.time() + CATALOG_CACHE_TTL
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO catalogs (key, value, expires_at)
+                VALUES (?, ?, ?)
+                """,
+                (db_key, val_str, expires_at),
+            )
+
     async def ttl(self, namespace: dict[str, str], key: str) -> float | None:
-        """Retorne o TTL restante de uma entrada."""
+        """Retorne o TTL restante de uma entrada (executado em thread worker)."""
         try:
-            db_key = self.make_key(namespace, key)
-            now = time.time()
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.execute(
-                    "SELECT expires_at FROM catalogs WHERE key = ?",
-                    (db_key,),
-                )
-                row = cursor.fetchone()
-                if row:
-                    expires_at = row[0]
-                    return max(0.0, expires_at - now)
+            return await asyncio.to_thread(self._ttl_sync, namespace, key)
         except Exception:  # noqa: BLE001
             logger.warning("Falha ao consultar TTL do cache de catalogos", exc_info=True)
+        return None
+
+    def _ttl_sync(self, namespace: dict[str, str], key: str) -> float | None:
+        db_key = self.make_key(namespace, key)
+        now = time.time()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                "SELECT expires_at FROM catalogs WHERE key = ?",
+                (db_key,),
+            )
+            row = cursor.fetchone()
+            if row:
+                expires_at = row[0]
+                return max(0.0, expires_at - now)
         return None
 
     async def close(self) -> None:

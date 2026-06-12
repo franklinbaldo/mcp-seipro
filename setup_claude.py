@@ -471,7 +471,7 @@ def main():
                 [
                     str(venv_python()),
                     "-c",
-                    "import sys, keyring; keyring.set_password('todos-mcp', sys.argv[1], sys.stdin.read().strip())",
+                    "import sys, keyring; keyring.set_password('todos-mcp', sys.argv[1], sys.stdin.read())",
                     sei_usuario,
                 ],
                 input=sei_senha,
