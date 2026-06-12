@@ -1,8 +1,29 @@
 # RFC 0001 — Web-first: paridade funcional para instâncias SEI sem mod-wssei
 
-**Status**: Aceita
-**Data**: 2026-06-11
+**Status**: Em implementação
+**Data**: 2026-06-11 · **Atualizado**: 2026-06-12
 **Autores**: Franklin Baldo (com Claude Code)
+
+## 0. Estado atual (2026-06-12)
+
+A implementação avançou muito além do planejado originalmente. Todas as fases de PR #2 a PR #5 estão **concluídas**. O resumo abaixo reflete o que foi efetivamente entregue.
+
+### ✅ Concluído
+
+| Fase | Conteúdo | PR / Commit |
+|---|---|---|
+| Fundações | `executar_acao_processo`, `obter_form_acao`, `SEIBackend`, `smoke_web.py` | merged |
+| Ações simples | `concluir`, `reabrir`, `dar_ciencia`, `receber`, `remover_atribuicao` | merged |
+| Forms com campos | `registrar_andamento`, `criar_anotacao`, `marcar_processo`, `sobrestar`, `atribuir`, `acompanhar` | merged |
+| Read scrapers | `consultar_documento_web`, `listar_assinaturas_web`, `listar_ciencias_web`, `visualizar_documento_interno_web`, `baixar_documento_externo_web`, `consultar_processo_detalhe` | merged |
+| Forms complexos | `enviar_processo_web`, `criar_processo_web`, `criar_documento_interno_web`, `incluir_documento_externo` | merged |
+| Read fallbacks | `listar_unidades_processo`, `listar_interessados`, `listar_sobrestamentos` via `consultar_processo_detalhe` | merged |
+
+**106 tools** no total — **53 com chamadas web** no caminho de execução.
+
+### 🔲 Ainda a fazer (Fase 6)
+
+Ver §4.6 abaixo.
 
 ## 1. Problema
 
@@ -53,11 +74,25 @@ A diferença entre "concluir processo" e "enviar processo" é só **qual `acao=`
 buscar e quais campos preencher**. O `SEIWebClient` já implementa os passos
 1–2; falta generalizar 3–6.
 
+### Implementações de referência
+
+Três projetos open-source documentam o comportamento real do SEI sem depender de documentação oficial:
+
+| Repo | Linguagem | O que tem |
+|---|---|---|
+| [SEI-Pro/sei-pro](https://github.com/SEI-Pro/sei-pro) | JavaScript (browser ext) | `procedimento_enviar`, `procedimento_concluir`, `procedimento_ciencia`, `documento_assinar`, `editor_montar`; padrão completo de extração de `[type=hidden]` + POST ISO-8859-1 |
+| [jonatasrs/sei](https://github.com/jonatasrs/sei) | JavaScript (browser ext) | `anotacao_registrar`, `documento_receber`, `bloco_*`; nomes dos prefixos de campo (`hdn*`, `txa*`, `txt*`, `sel*`, `rdo*`, `chk*`, `sbm*`) |
+| [pengovbr](https://github.com/pengovbr) | PHP (SEI source) | Controladores PHP — nomes dos arquivos mapeiam diretamente para `acao=` (ex.: `ProcedimentoConcluirController.php` → `acao=procedimento_concluir`) |
+
+**Fluxo de pesquisa por ação**: para implementar uma nova ação, buscar o `acao=` no pengovbr para entender o PHP, depois ver no SEI-Pro/SEI++ quais campos o form exige.
+
 ### Invariantes descobertos (hard-won, documentar para não redescobrir)
 
 | Invariante | Detalhe |
 |---|---|
+| `hdnInfraTipoPagina` | Token de estado de página que **deve ser capturado do GET e incluído no POST** de cada form — análogo a um CSRF token de estado. Ausente → PHP trata como reload. `_extrair_submit_btn` + extração de todos os `[type=hidden]` resolve automaticamente. |
 | Botão submit no login | O PHP exige o par `name=value` do botão submit no POST; sem ele ignora o form silenciosamente. O nome **varia por instância** (`sbmLogin=Acessar` na ANTAQ, `sbmAcessar=ACESSAR` no SEI-RO) — detectar dinamicamente do form |
+| Checkboxes | Enviar como `"on"` / `"off"` (string), não booleano. Ausente no POST = desmarcado para o PHP. |
 | Token CSRF dinâmico | `hdnToken<hash>` capturado do GET da página de login — nunca reutilizar entre sessões |
 | `infra_hash` | sha256(params+secret) da sessão; links de `Nos[0].acoes` já vêm assinados; reutilizável entre chamadas da mesma sessão |
 | Encoding | Backend é ISO-8859-1; decodificar com `iso-8859-1` e POSTar idem — UTF-8 corrompe acentos |
@@ -227,6 +262,43 @@ Critério: as 3 tools funcionam em SEI-RO; smoke test passa.
 Assinatura (PKI), cancelar assinatura, Solr (`sei_pesquisar_processos`),
 admin (órgãos/contextos), sugestões de assunto. Em instância sem REST,
 essas tools retornam erro explicativo com alternativa quando houver.
+
+---
+
+**PR #6 — Catálogos web + listar_usuarios + bloco_assinatura web** *(planejado)*
+
+*Depende de: PR #2–#5 (fundações concluídas)*
+
+Grupo A — **Catálogos via select de form** (extraídos uma vez e cacheados em disco TTL 24h):
+- `sei_pesquisar_tipos_documento`: select `selSerie` em `documento_receber`
+- `sei_pesquisar_tipos_processo`: select `selTipoProcedimento` em `procedimento_iniciar`
+- `sei_pesquisar_hipoteses_legais`: select `selHipoteseLegal` em forms de sigilo
+- `sei_pesquisar_tipos_conferencia`: select `selTipoConferencia` em `documento_receber`
+
+Grupo B — **listar_usuarios via form de atribuição**:
+- `sei_listar_usuarios`: extrair select `selUsuario` de `atribuicao_alterar`
+  (já implementado para atribuição, apenas expor como list separado)
+
+Grupo C — **Bloco de assinatura via web**:
+- `sei_pesquisar_blocos_assinatura`: listar via `bloco_assinatura_listar`
+- `sei_incluir_documento_bloco_assinatura`, `sei_disponibilizar_bloco_assinatura`:
+  ações simples via `executar_acao_processo` com `acao=bloco_assinatura_*`
+
+Critério: todas as tools do grupo A funcionam sem REST; grupo B e C passam no smoke test.
+
+### 4.6 Ferramentas permanentemente REST-only (sem plano de web)
+
+Por restrição técnica ou escopo (PKI server-side, API admin):
+
+| Tool | Razão |
+|---|---|
+| `sei_assinar_documento`, `sei_assinar_bloco` | PKI — chave privada no browser/token do usuário |
+| `sei_cancelar_assinatura` | Não exposta nem via web |
+| `sei_versao`, `sei_listar_orgaos`, `sei_listar_contextos` | APIs de administração do SIP |
+| `sei_listar_credenciamentos` e família | Processos sigilosos — funcionalidade desativável por órgão |
+| `sei_listar_relacionamentos` | Requer mod-wssei ≥ 3.0.2 mesmo via REST |
+| `sei_alterar_processo`, `sei_alterar_documento_*` | Forms com muitos campos interdependentes — alto custo, baixo uso |
+| `sei_criar_observacao`, `sei_criar_contato` | Baixa prioridade; sem referência nos repos de extensão |
 
 ### 4.5 Robustez
 
