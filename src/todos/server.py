@@ -4625,6 +4625,12 @@ async def sei_alterar_anotacao_bloco_assinatura(
 
 
 def main():  # noqa: ANN201, D103
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "setup":
+        from todos.setup_wizard import run_setup_wizard
+        run_setup_wizard()
+        return
+
     if _http_mode:
         from todos.remote import run_remote  # noqa: PLC0415
 
