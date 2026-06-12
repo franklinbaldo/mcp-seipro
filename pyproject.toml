@@ -60,7 +60,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "setup_claude.py" = ["T201"]  # print() ok in installer
-"src/todos/setup_wizard.py" = ["T201", "PLR0915", "PLR0912", "C901", "D103", "ANN201", "ANN001", "S501", "BLE001", "PLC0415", "PLR2004", "D100"]
+"src/todos/setup_wizard.py" = ["T201", "PLR0915", "PLR0912", "C901", "D103", "ANN201", "ANN001", "S501", "BLE001", "PLC0415", "PLR2004", "D100", "S110"]
 "scripts/smoke_web.py" = ["D103", "PLR0915", "T201"]
 
 [tool.vulture]
