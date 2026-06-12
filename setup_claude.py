@@ -473,8 +473,12 @@ def main():
         print("  Cancelado.")
         sys.exit(0)
 
-    # Fase 4
+    # Fase 4 — decide overwrite antes de gravar qualquer credencial
     print()
+    config = read_config(config_path)
+    backup_config(config_path)
+    config = merge_sei_server(config, command, env)  # pode sys.exit se usuário recusar sobrescrever
+
     if usar_keyring:
         info("Salvando senha com segurança no chaveiro do sistema...")
         try:
@@ -505,16 +509,18 @@ def main():
                 check=True,
                 capture_output=True,
                 text=True,
+                timeout=30,
             )
             info("Senha salva com sucesso no cofre do sistema.")
+        except subprocess.TimeoutExpired:
+            error("Timeout ao salvar no chaveiro do sistema (>30s); verifique se o daemon está disponível.")
+            warn("A senha será armazenada em texto plano no arquivo de configuração como fallback.")
+            env["SEI_SENHA"] = sei_senha  # env is referenced by config; mutation propagates
         except (subprocess.CalledProcessError, OSError) as e:
             error(f"Erro ao salvar senha no cofre do sistema: {getattr(e, 'stderr', None) or getattr(e, 'stdout', None) or str(e)}")
             warn("A senha será armazenada em texto plano no arquivo de configuração como fallback.")
-            env["SEI_SENHA"] = sei_senha
+            env["SEI_SENHA"] = sei_senha  # env is referenced by config; mutation propagates
 
-    config = read_config(config_path)
-    backup_config(config_path)
-    config = merge_sei_server(config, command, env)
     write_config(config_path, config)
 
     # Fase 5

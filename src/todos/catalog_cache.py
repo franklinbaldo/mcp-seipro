@@ -100,7 +100,7 @@ class CatalogCache:
                 (db_key, val_str, expires_at),
             )
             # Probabilistic sweep: purge all expired rows ~5% of writes
-            if random.random() < 0.05:  # noqa: S311
+            if random.random() < 0.05:  # noqa: PLR2004, S311
                 conn.execute("DELETE FROM catalogs WHERE expires_at < ?", (now,))
 
     async def ttl(self, namespace: dict[str, str], key: str) -> float | None:

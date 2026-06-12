@@ -207,11 +207,14 @@ class SEIWebClient:
             try:
                 import keyring  # noqa: PLC0415
 
-                senha = await asyncio.to_thread(
-                    keyring.get_password, "todos-mcp", self._keyring_user
+                senha = await asyncio.wait_for(
+                    asyncio.to_thread(keyring.get_password, "todos-mcp", self._keyring_user),
+                    timeout=5.0,
                 )
                 if senha:
                     self._senha = senha
+            except TimeoutError:
+                logger.warning("Timeout ao buscar senha do keyring (>5s); use SEI_SENHA como fallback")
             except Exception as e:  # noqa: BLE001
                 logger.warning("Não foi possível obter a senha do keyring: %s", e)
 
