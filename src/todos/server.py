@@ -5,11 +5,11 @@ import base64
 import json
 import logging
 import os
-import unicodedata
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Literal, cast
 
+import httpx
 from fastmcp import Context, FastMCP
 from pydantic import BaseModel, Field
 
@@ -59,12 +59,28 @@ async def lifespan(_server: FastMCP):  # noqa: ANN201, D103
             client = SEIClient()
             web_client = SEIWebClient()
             try:
+                # Login eager com detalhada=True: popula _unidade_atual e
+                # hdnDetalhadoNroItens (total real de processos abertos na unidade)
+                with suppress(Exception):
+                    await web_client.fetch_inbox(detalhada=True)
                 yield {"sei": client, "sei_web": web_client}
             finally:
                 await client.close()
                 await web_client.close()
     finally:
         await get_catalog_cache().close()
+
+
+def _store_session_client(clients: dict, session_id: str, client: object) -> None:
+    """Store a session-scoped client, evicting the oldest entry if the pool is full."""
+    if session_id in clients:
+        return
+    max_sessions = int(os.environ.get("SEI_MAX_SESSIONS", "100"))
+    if len(clients) >= max_sessions:
+        oldest = next(iter(clients))
+        clients.pop(oldest)
+        logger.warning("session pool at limit (%d); evicted oldest session", max_sessions)
+    clients[session_id] = client
 
 
 def _get_client(ctx: Context | None) -> SEIClient:
@@ -77,21 +93,19 @@ def _get_client(ctx: Context | None) -> SEIClient:
 
         from todos.auth import get_sei_credentials_from_token  # noqa: PLC0415
 
-        clients = ctx.lifespan_context["sei_by_session"]
-        client = clients.get(ctx.session_id)
-        if client is not None:
-            return client
-
         access_token = get_access_token()
         if not access_token:
             raise ValueError("Autenticacao necessaria. Reconecte o MCP.")  # noqa: EM101, TRY003
-
         creds = get_sei_credentials_from_token(access_token.token)
         if not creds:
             raise ValueError("Token invalido ou expirado. Reconecte o MCP.")  # noqa: EM101, TRY003
 
+        clients = ctx.lifespan_context["sei_by_session"]
+        client = clients.get(ctx.session_id)
+        if client is not None:
+            return client
         client = SEIClient(**creds)
-        clients[ctx.session_id] = client
+        _store_session_client(clients, ctx.session_id, client)
         return client
 
     client = ctx.lifespan_context.get("sei")
@@ -114,19 +128,19 @@ def _get_web_client(ctx: Context | None) -> SEIWebClient:
 
         from todos.auth import get_sei_credentials_from_token  # noqa: PLC0415
 
-        clients = ctx.lifespan_context["sei_web_by_session"]
-        client = clients.get(ctx.session_id)
-        if client is not None:
-            return client
-
         access_token = get_access_token()
         if not access_token:
             raise ValueError("Autenticacao necessaria. Reconecte o MCP.")  # noqa: EM101, TRY003
         creds = get_sei_credentials_from_token(access_token.token)
         if not creds:
             raise ValueError("Token invalido ou expirado. Reconecte o MCP.")  # noqa: EM101, TRY003
+
+        clients = ctx.lifespan_context["sei_web_by_session"]
+        client = clients.get(ctx.session_id)
+        if client is not None:
+            return client
         client = SEIWebClient(**creds)
-        clients[ctx.session_id] = client
+        _store_session_client(clients, ctx.session_id, client)
         return client
 
     client = ctx.lifespan_context.get("sei_web")
@@ -155,6 +169,8 @@ mcp = FastMCP(
     instructions=(
         "MCP Server para o SEI (Sistema Eletrônico de Informações). "
         "Permite gerenciar processos, documentos, tramitação e assinatura. "
+        "CONTEXTO: leia o resource sei://status antes de qualquer operação — "
+        "ele mostra a instância SEI conectada e a unidade ativa do usuário. "
         "ASSINATURA: as credenciais do usuário já estão configuradas no servidor. "
         "NUNCA peça login ou senha ao usuário para assinar. Basta chamar "
         "sei_assinar_documento com o id do documento e o cargo. Se não souber "
@@ -202,6 +218,53 @@ mcp = FastMCP(
     ),
     lifespan=lifespan,
 )
+
+
+@mcp.resource("sei://status")
+async def sei_status_resource(ctx: Context) -> str:
+    """Unidade SEI ativa, usuário logado, instância e unidades disponíveis. Leia ao iniciar."""
+    web = _get_web_client(ctx)
+    try:
+        unidade, unidades = await asyncio.gather(
+            web.unidade_atual(),
+            web.listar_unidades(),
+        )
+        sigla = unidade.get("sigla", "?")
+        nome = unidade.get("nome", "?")
+        web_url = os.environ.get("SEI_WEB_URL") or os.environ.get("SEI_URL", "?")
+        nome_usuario = web._nome_usuario  # noqa: SLF001
+        id_usuario = web._id_usuario or web._usuario  # noqa: SLF001
+        orgao_usuario = web._orgao_usuario  # noqa: SLF001
+        if nome_usuario:
+            usuario_str = f"{nome_usuario} (id: {id_usuario}" + (
+                f", órgão: {orgao_usuario})" if orgao_usuario else ")"
+            )
+        else:
+            usuario_str = id_usuario
+        # hdnDetalhadoNroItens reflete o cap da página (500), não o total global.
+        # Se retornou 500, há múltiplas páginas — exibir como "500+".
+        total = int(web._form_hidden.get("hdnDetalhadoNroItens", "0") or "0")  # noqa: SLF001
+        if total == 0:
+            total_str = "não disponível"
+        elif total >= 500:  # noqa: PLR2004
+            total_str = "500+ (múltiplas páginas — use sei_listar_processos para listar)"
+        else:
+            total_str = str(total)
+
+        linhas = [
+            f"Instância SEI: {web_url}",
+            f"Usuário: {usuario_str}",
+            f"Unidade ativa: {sigla} — {nome}",
+            f"Processos abertos na unidade: {total_str}",
+            "",
+            "Unidades disponíveis:",
+        ]
+        for u in unidades:
+            marker = "▶" if u.get("sigla") == sigla else " "
+            linhas.append(f"  {marker} {u['sigla']} — {u['nome']} (id: {u.get('id_unidade', '?')})")
+        return "\n".join(linhas)
+    except Exception as exc:  # noqa: BLE001
+        return f"Status: erro ao obter sessão — {exc}"
 
 
 class _ConsentimentoRestrito(BaseModel):
@@ -289,24 +352,18 @@ async def _solicitar_consentimento_via_elicit(
     return "recusou"
 
 
-def _nivel_acesso_meta_web(meta: dict) -> str | None:
-    """Extrai o nível de acesso ('0'/'1'/'2') de metadados scrapeados da web.
-
-    As chaves vêm normalizadas do parser (ex: 'nível_de_acesso') e o valor é
-    o texto da página (ex: 'Restrito'); ambos variam com acentuação.
-    """
-    for k, v in meta.items():
-        k_ascii = unicodedata.normalize("NFKD", str(k)).encode("ascii", "ignore").decode()
-        if "nivel" in k_ascii and "acesso" in k_ascii:
-            texto = unicodedata.normalize("NFKD", str(v)).encode("ascii", "ignore").decode().lower()
-            if "sigilos" in texto:
-                return access_control.SIGILOSO
-            if "restrit" in texto:
-                return access_control.RESTRITO
-            if "public" in texto:
-                return access_control.PUBLICO
-            return access_control.normalizar_nivel(v)
-    return None
+def _gate_bloqueio(
+    nivel: str | None,
+    tipo: str,
+    id_doc: str,
+    tipo_documento: str,
+    processo: str,
+) -> dict | None:
+    """Return the block payload if nivel requires a disclaimer, else None."""
+    if not access_control.precisa_disclaimer(nivel):
+        return None
+    alvo = {"tipo": tipo, "id": str(id_doc), "tipo_documento": tipo_documento, "processo": processo}
+    return access_control.construir_aviso_bloqueio(nivel, None, alvo)
 
 
 async def _aplicar_gate_documento_web(
@@ -320,22 +377,18 @@ async def _aplicar_gate_documento_web(
 
     Consulta os metadados scrapeados de documento_consultar e, se o documento
     for restrito/sigiloso sem consentimento, retorna o payload de bloqueio.
-    Retorna None quando o acesso está liberado. Falha na consulta propaga
-    como exceção (fail-closed): sem metadados não há como classificar o nível.
+    Retorna None quando o acesso está liberado ou quando a consulta falha
+    (fail-open: sem metadados não bloqueia).
     """
     if confirmou or access_control.env_permite_restritos():
         return None
-    meta = await web.consultar_documento_web(processo, id_documento)
-    nivel = _nivel_acesso_meta_web(meta)
-    if not access_control.precisa_disclaimer(nivel):
+    try:
+        meta = await web.consultar_documento_web(processo, id_documento)
+    except Exception:  # noqa: BLE001
+        logger.warning("gate web-only: consulta de metadados falhou — prossegue fail-open")
         return None
-    alvo = {
-        "tipo": "documento",
-        "id": str(id_documento),
-        "tipo_documento": tipo_documento,
-        "processo": processo,
-    }
-    return access_control.construir_aviso_bloqueio(nivel, None, alvo)
+    nivel = access_control.extrair_nivel_web(meta)
+    return _gate_bloqueio(nivel, "documento", id_documento, tipo_documento, processo)
 
 
 async def _aplicar_gate_documento(  # noqa: PLR0911
@@ -484,8 +537,8 @@ async def sei_listar_unidades(ctx: Context) -> str:
     """
     try:
         client = _get_web_client(ctx)
-        result = await client.listar_unidades()
-        return _json(result)
+        units = await client.listar_unidades()
+        return _json({"data": units, "total": len(units)})
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
 
@@ -500,8 +553,15 @@ async def sei_trocar_unidade(id_unidade: str, ctx: Context) -> str:
     as unidades disponíveis.
     """
     try:
-        client = _get_web_client(ctx)
-        result = await client.trocar_unidade(id_unidade)
+        web = _get_web_client(ctx)
+        result = await web.trocar_unidade(id_unidade)
+        # Keep REST client in sync on hybrid installs so unit-sensitive REST
+        # tools use the same unit as the web client.
+        try:
+            rest = _get_client(ctx)
+            await rest.trocar_unidade(result.get("id_unidade", id_unidade))
+        except Exception as rest_err:  # noqa: BLE001
+            logger.debug("REST unit sync failed (best-effort): %s", rest_err)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -1599,7 +1659,7 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
     Use palavras_chave para busca geral ou busca_rapida para busca simplificada.
     Datas no formato DD/MM/AAAA.
 
-    Filtros adicionais:
+    Filtros adicionais (REST only):
     - sta_tipo_data: tipo de período — "30" (últimos 30 dias), "60" (últimos 60 dias)
       ou "0" (personalizado, requer data_inicio/data_fim)
     - id_unidade_geradora: id da unidade que gerou o processo (use sei_listar_unidades)
@@ -1607,7 +1667,18 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
     - grupo: id do grupo de acompanhamento (use sei_listar_grupos_acompanhamento)
 
     Paginação: pagina=0 é a primeira página, pagina=1 a segunda, etc.
+
+    Busca via web (instâncias sem mod-wssei, ex: SEI-RO):
+    - Quando REST não está disponível, a busca usa o formulário de pesquisa
+      avançada do SEI via scraping. O retorno inclui "fonte": "web".
+    - Use aspas para frase exata: palavras_chave='"NOME COMPLETO" aposentadoria'
+      é muito mais preciso do que palavras soltas.
+    - A busca web varre todo o SEI (não filtrada por unidade do usuário).
+    - Os filtros estruturais acima são ignorados no caminho web; quando isso
+      ocorre, o campo "aviso" no retorno lista os filtros descartados.
+    - Máximo de 10 resultados por página no caminho web.
     """
+    _rest_unavailable = False
     try:
         client = _get_client(ctx)
         result = await client.pesquisar_processos(
@@ -1624,8 +1695,52 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
             start=pagina,
         )
         return _json(result)
+    except (ValueError, httpx.UnsupportedProtocol):
+        _rest_unavailable = True  # REST não configurado (sem SEI_URL) ou URL inválida
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (404, 501):
+            _rest_unavailable = True  # mod-wssei ausente ou endpoint não encontrado
+        else:
+            return _error(str(exc))
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
+
+    # Fallback via web scraper (instâncias sem mod-wssei)
+    q_web = " ".join(filter(None, [palavras_chave, busca_rapida]))
+    dropped = [n for n, v in [
+        ("sta_tipo_data", sta_tipo_data),
+        ("id_unidade_geradora", id_unidade_geradora),
+        ("id_assunto", id_assunto),
+        ("grupo", grupo),
+    ] if v]
+    try:
+        web = _get_web_client(ctx)
+        items = await web.pesquisar_processos_web(
+            q=q_web,
+            descricao=descricao,
+            data_inicio=data_inicio,
+            data_fim=data_fim,
+            pagina=pagina,
+        )
+        page_items = items[:limit]
+        paged: dict = {
+            "processos": page_items,
+            "pagina_atual": pagina,
+            "itens_pagina": len(page_items),
+            "total_itens": len(page_items),
+            "tem_proxima": len(items) >= 10,  # noqa: PLR2004
+            "fonte": "web",
+        }
+        avisos: list[str] = []
+        if dropped:
+            avisos.append(f"filtros ignorados (não suportados na pesquisa web): {', '.join(dropped)}")
+        if limit < 10 and len(items) > limit:  # noqa: PLR2004
+            avisos.append(f"resultados truncados para limit={limit} (página web retorna até 10)")
+        if avisos:
+            paged["aviso"] = "; ".join(avisos).capitalize()
+        return _json(paged)
+    except Exception as e2:  # noqa: BLE001
+        return _error(f"Web: {e2}")
 
 
 @mcp.tool()

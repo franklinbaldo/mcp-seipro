@@ -180,6 +180,9 @@ class SEIWebClient:
         )
         self._inbox_url: httpx.URL | None = None
         self._unidade_atual: dict[str, str] | None = None
+        self._nome_usuario: str | None = None
+        self._id_usuario: str | None = None
+        self._orgao_usuario: str | None = None
         # cache do form principal de procedimento_controlar (action + hidden fields)
         self._form_action: str | None = None
         self._form_hidden: dict[str, str] = {}
@@ -313,10 +316,11 @@ class SEIWebClient:
         self._arvore_cache.clear()
         # popula cache do form principal e dos links de processos a partir
         # da própria resposta do post-login (já contém o HTML da inbox)
-        self._extract_main_form(post_resp.text)
-        self._extract_pesquisa_rapida(post_resp.text)
-        self._populate_trabalhar_links(post_resp.text)
-        self._extract_unidade_atual(post_resp.text)
+        _soup = BeautifulSoup(post_resp.text, "html.parser")
+        self._extract_main_form(post_resp.text, _soup)
+        self._extract_pesquisa_rapida(post_resp.text, _soup)
+        self._populate_trabalhar_links(post_resp.text, _soup)
+        self._extract_unidade_atual(post_resp.text, _soup)
         logger.info("SEI web login bem-sucedido — inbox capturada")
 
     def _descobrir_sel_orgao(self, login_form, soup) -> str:  # noqa: ANN001
@@ -351,9 +355,10 @@ class SEIWebClient:
                 return v
         raise RuntimeError("Nenhum <option> válido em selOrgao.")  # noqa: EM101, TRY003
 
-    def _extract_pesquisa_rapida(self, html: str) -> None:
+    def _extract_pesquisa_rapida(self, html: str, soup: BeautifulSoup | None = None) -> None:
         """Captura a action do form de pesquisa rápida (protocolo_pesquisa_rapida)."""
-        soup = BeautifulSoup(html, "html.parser")
+        if soup is None:
+            soup = BeautifulSoup(html, "html.parser")
         for f in soup.find_all("form"):
             if not isinstance(f, Tag):
                 continue
@@ -362,13 +367,14 @@ class SEIWebClient:
                 self._pesquisa_rapida_action = action.replace("&amp;", "&")
                 return
 
-    def _extract_main_form(self, html: str) -> None:
+    def _extract_main_form(self, html: str, soup: BeautifulSoup | None = None) -> None:
         """Captura action + hidden fields do form principal de procedimento_controlar.
 
         Esse form tem seu próprio `infra_hash` (diferente da inbox URL) e é
         usado para alternar visualização (resumida↔detalhada) e paginação.
         """
-        soup = BeautifulSoup(html, "html.parser")
+        if soup is None:
+            soup = BeautifulSoup(html, "html.parser")
         for f in soup.find_all("form"):
             if not isinstance(f, Tag):
                 continue
@@ -384,13 +390,14 @@ class SEIWebClient:
                         self._form_hidden[name] = _tag_str(h, "value")
                 return
 
-    def _populate_trabalhar_links(self, inbox_html: str) -> None:
+    def _populate_trabalhar_links(self, inbox_html: str, soup: BeautifulSoup | None = None) -> None:
         """Mapeia protocolo → URL pré-assinada de procedimento_trabalhar.
 
         Sem isso não conseguimos navegar para um processo específico —
         a infra_hash é gerada server-side e não pode ser reconstruída.
         """
-        soup = BeautifulSoup(inbox_html, "html.parser")
+        if soup is None:
+            soup = BeautifulSoup(inbox_html, "html.parser")
         for a in soup.find_all("a", href=re.compile(r"acao=procedimento_trabalhar")):
             if not isinstance(a, Tag):
                 continue
@@ -399,9 +406,10 @@ class SEIWebClient:
             if txt and href:
                 self._trabalhar_links.setdefault(txt, href)
 
-    def _extract_unidade_atual(self, html: str) -> None:
+    def _extract_unidade_atual(self, html: str, soup: BeautifulSoup | None = None) -> None:
         """Extrai a unidade ativa do seletor exibido no cabecalho do SEI."""
-        soup = BeautifulSoup(html, "html.parser")
+        if soup is None:
+            soup = BeautifulSoup(html, "html.parser")
         unit_link = soup.find(
             "a",
             id=re.compile(r"unidade", re.IGNORECASE),
@@ -414,6 +422,17 @@ class SEIWebClient:
         nome = _tag_str(unit_link, "title").strip()
         if not sigla and not nome:
             return
+
+        # Extrai nome, id e órgão do usuário via lnkUsuarioSistema
+        # formato do title: "NOME COMPLETO (ID/SIGLA_ORGAO)"
+        user_link = soup.find("a", id="lnkUsuarioSistema")
+        if isinstance(user_link, Tag):
+            title = _tag_str(user_link, "title").strip()
+            m = re.match(r"^(.+?)\s+\((\d+)/(\w+)\)$", title)
+            if m:
+                self._nome_usuario = m.group(1)
+                self._id_usuario = m.group(2)
+                self._orgao_usuario = m.group(3)
 
         unidade: dict[str, str] = {"sigla": sigla, "nome": nome}
         if self._inbox_url is not None:
@@ -463,9 +482,9 @@ class SEIWebClient:
             raise TypeError(msg)
         return str(response.url), form
 
-    async def listar_unidades(self) -> list[dict[str, str]]:
-        """Lista unidades acessiveis ao usuario pela tela web de troca."""
-        _, form = await self._fetch_unit_switch_form()
+    @staticmethod
+    def _units_from_form(form: Tag) -> list[dict[str, str]]:
+        """Extrai a lista de unidades a partir do formulario de troca de unidade."""
         units: list[dict[str, str]] = []
         for radio in form.find_all("input", attrs={"name": "chkInfraItem"}):
             if not isinstance(radio, Tag):
@@ -478,42 +497,55 @@ class SEIWebClient:
             values = [cell for cell in cells if cell]
             if len(values) < 2:  # noqa: PLR2004
                 continue
-            units.append(
-                {
-                    "id_unidade": id_unidade,
-                    "sigla": values[0],
-                    "nome": values[1],
-                }
-            )
+            units.append({"id_unidade": id_unidade, "sigla": values[0], "nome": values[1]})
         return units
+
+    async def listar_unidades(self) -> list[dict[str, str]]:
+        """Lista unidades acessiveis ao usuario pela tela web de troca."""
+        _, form = await self._fetch_unit_switch_form()
+        return self._units_from_form(form)
+
+    @staticmethod
+    def _build_unit_post(form: Tag, target_id: str) -> dict[str, str]:
+        """Constroi o payload POST para submeter o formulario de troca de unidade."""
+        data: dict[str, str] = {}
+        for field in form.find_all("input"):
+            if not isinstance(field, Tag):
+                continue
+            name = _tag_str(field, "name")
+            if name and _tag_str(field, "type").lower() == "hidden":
+                data[name] = _tag_str(field, "value")
+        data["selInfraUnidades"] = target_id
+        return data
+
+    def _verificar_troca(self, current: dict[str, str], target: dict[str, str]) -> None:
+        """Lanca RuntimeError se o SEI nao confirmou a troca de unidade."""
+        current_id = current.get("id_unidade")
+        if current_id:
+            if current_id != target["id_unidade"]:
+                msg = f"SEI nao confirmou a troca para {target['sigla']}."
+                raise RuntimeError(msg)
+        elif current.get("sigla", "").casefold() != target["sigla"].casefold():
+            # Fallback: verify by sigla when id_unidade is absent from the redirect URL
+            msg = f"SEI nao confirmou a troca para {target['sigla']}."
+            raise RuntimeError(msg)
 
     async def trocar_unidade(self, referencia: str) -> dict[str, str]:
         """Troca a unidade ativa por ID ou sigla usando a interface web."""
-        units = await self.listar_unidades()
+        form_url, form = await self._fetch_unit_switch_form()
+        units = self._units_from_form(form)
+
         ref = referencia.strip().casefold()
         matches = [
-            unit
-            for unit in units
-            if unit["id_unidade"].casefold() == ref or unit["sigla"].casefold() == ref
+            u for u in units if u["id_unidade"].casefold() == ref or u["sigla"].casefold() == ref
         ]
         if not matches:
             msg = f"Unidade {referencia!r} nao encontrada entre as unidades acessiveis."
             raise RuntimeError(msg)
 
         target = matches[0]
-        form_url, form = await self._fetch_unit_switch_form()
-        action = _tag_str(form, "action")
-        post_url = urljoin(form_url, action)
-        data: dict[str, str] = {}
-        for field in form.find_all("input"):
-            if not isinstance(field, Tag):
-                continue
-            name = _tag_str(field, "name")
-            field_type = _tag_str(field, "type").lower()
-            if name and field_type == "hidden":
-                data[name] = _tag_str(field, "value")
-        data["selInfraUnidades"] = target["id_unidade"]
-
+        post_url = urljoin(form_url, _tag_str(form, "action"))
+        data = self._build_unit_post(form, target["id_unidade"])
         response = await self._http.post(post_url, data=data, headers={"Referer": form_url})
         if response.status_code != 200:  # noqa: PLR2004
             msg = f"Troca de unidade retornou {response.status_code}."
@@ -526,15 +558,14 @@ class SEIWebClient:
         self._pesquisa_rapida_action = None
         self._arvore_cache.clear()
         self._unidade_atual = None
-        self._extract_main_form(response.text)
-        self._extract_pesquisa_rapida(response.text)
-        self._populate_trabalhar_links(response.text)
-        self._extract_unidade_atual(response.text)
+        _soup = BeautifulSoup(response.text, "html.parser")
+        self._extract_main_form(response.text, _soup)
+        self._extract_pesquisa_rapida(response.text, _soup)
+        self._populate_trabalhar_links(response.text, _soup)
+        self._extract_unidade_atual(response.text, _soup)
 
         current = await self.unidade_atual()
-        if current.get("id_unidade") != target["id_unidade"]:
-            msg = f"SEI nao confirmou a troca para {target['sigla']}."
-            raise RuntimeError(msg)
+        self._verificar_troca(current, target)
         return current
 
     # ------------------------------------------------------------------
@@ -571,9 +602,10 @@ class SEIWebClient:
             )
             if resp.status_code != 200:  # noqa: PLR2004
                 raise RuntimeError(f"fetch_inbox status={resp.status_code}")  # noqa: EM102, TRY003
-            self._extract_main_form(resp.text)
-            self._populate_trabalhar_links(resp.text)
-            self._extract_unidade_atual(resp.text)
+            _soup = BeautifulSoup(resp.text, "html.parser")
+            self._extract_main_form(resp.text, _soup)
+            self._populate_trabalhar_links(resp.text, _soup)
+            self._extract_unidade_atual(resp.text, _soup)
             return len(resp.content), resp.text
 
         # Precisa do form action — fetch inicial se ainda não temos
@@ -620,10 +652,11 @@ class SEIWebClient:
             )
 
         # atualiza cache do form (action e hashCriterios podem mudar entre páginas)
-        self._extract_main_form(body)
-        self._extract_pesquisa_rapida(body)
-        self._populate_trabalhar_links(body)
-        self._extract_unidade_atual(body)
+        _soup = BeautifulSoup(body, "html.parser")
+        self._extract_main_form(body, _soup)
+        self._extract_pesquisa_rapida(body, _soup)
+        self._populate_trabalhar_links(body, _soup)
+        self._extract_unidade_atual(body, _soup)
         return len(resp.content), body
 
     # ------------------------------------------------------------------
@@ -683,6 +716,149 @@ class SEIWebClient:
             f"Processo {protocolo!r} não encontrado na pesquisa. "  # noqa: EM102
             "Verifique se o número está correto e se você tem acesso."
         )
+
+    async def pesquisar_processos_web(  # noqa: C901, PLR0912, PLR0915
+        self,
+        q: str = "",
+        descricao: str = "",
+        data_inicio: str = "",
+        data_fim: str = "",
+        pagina: int = 0,
+    ) -> list[dict[str, str]]:
+        """Pesquisa processos via formulário web do SEI (sem mod-wssei).
+
+        Parâmetros:
+        - q: texto livre (busca no conteúdo dos documentos indexados)
+        - descricao: texto na especificação/descrição do processo
+        - data_inicio / data_fim: filtro de data de inclusão (DD/MM/AAAA)
+        - pagina: página de resultados (0-indexed, 10 itens/página)
+
+        Retorna lista de dicts com: protocoloFormatado, tipo, trecho, unidade, usuario, inclusao.
+
+        Dicas de uso:
+        - Use aspas para frase exata: q='"NOME COMPLETO" aposentadoria' é muito mais
+          preciso do que palavras soltas — reduz falsos positivos drasticamente.
+        - A busca varre todo o SEI (não filtrada por unidade do usuário).
+        - Máximo de 10 resultados por página; use pagina=1, 2, ... para avançar.
+        """
+        await self.ensure_authenticated()
+
+        if self._pesquisa_rapida_action is None:
+            await self.fetch_inbox(detalhada=False)
+            if self._pesquisa_rapida_action is None:
+                raise RuntimeError("Form de pesquisa rápida não encontrado")  # noqa: EM101, TRY003
+
+        # Passo 1: POST vazio para obter hidden fields com infra_hash válido.
+        # Tenta até 2 vezes em caso de sessão expirada.
+        search_form = None
+        r0 = None
+        for attempt in range(2):
+            r0 = await self._http.post(
+                urljoin(str(self._inbox_url), self._pesquisa_rapida_action),
+                data={"txtPesquisaRapida": ""},
+                headers={"Referer": str(self._inbox_url)},
+            )
+            r0.raise_for_status()
+            soup0 = BeautifulSoup(r0.text, "html.parser")
+            for f in soup0.find_all("form"):
+                if not isinstance(f, Tag):
+                    continue
+                if "acao_origem=protocolo_pesquisa_rapida" in _tag_str(f, "action"):
+                    search_form = f
+                    break
+            if search_form is not None:
+                break
+            if attempt == 0:
+                # Sessão expirada: invalida o cache de sessão para forçar re-login
+                # (ensure_authenticated só re-login quando _inbox_url is None)
+                self._inbox_url = None
+                self._form_action = None
+                self._pesquisa_rapida_action = None
+                await self.ensure_authenticated()
+                await self.fetch_inbox(detalhada=False)
+
+        if search_form is None or r0 is None:
+            raise RuntimeError("Formulário de pesquisa avançada não encontrado")  # noqa: EM101, TRY003
+
+        action = urljoin(
+            str(r0.url),
+            _tag_str(search_form, "action").replace("&amp;", "&").split("#")[0],
+        )
+        hidden = {
+            _tag_str(h, "name"): _tag_str(h, "value")
+            for h in search_form.find_all("input", type="hidden")
+            if isinstance(h, Tag) and _tag_str(h, "name")
+        }
+
+        # Passo 2: submete a busca avançada (SEI exibe 10 resultados/página; hdnInicio = offset)
+        post_data: dict[str, str] = {
+            **hidden,
+            "rdoPesquisarEm": "P",
+            "chkSinConsiderarDocumentos": "S",
+            "q": q,
+            "txtDescricaoPesquisa": descricao,
+            "txtDataInicio": data_inicio,
+            "txtDataFim": data_fim,
+            "hdnInicio": str(pagina * 10),
+        }
+
+        r1 = await self._http.post(action, data=post_data, headers={"Referer": str(r0.url)})
+        r1.raise_for_status()
+        soup1 = BeautifulSoup(r1.text, "html.parser")
+
+        # Passo 3: parse dos resultados.
+        # Âncora: <a href="...procedimento_trabalhar..."> com texto = protocolo.
+        # Para cada protocolo, a <tr> pai é a linha de resultado; os 2 próximos
+        # <tr> irmãos contêm trecho e metadados (unidade/usuário/data).
+        results: list[dict[str, str]] = []
+        seen: set[str] = set()
+
+        for a in soup1.find_all("a", href=re.compile(r"procedimento_trabalhar")):
+            if not isinstance(a, Tag):
+                continue
+            prot = a.get_text(strip=True)
+            if not prot or prot in seen:
+                continue
+            seen.add(prot)
+
+            row0 = a.find_parent("tr")
+            if row0 is None or not isinstance(row0, Tag):
+                continue
+
+            siblings: list[Tag] = []
+            for sib in row0.next_siblings:
+                if not (isinstance(sib, Tag) and sib.name == "tr"):
+                    continue
+                # Para se encontrar a linha de outro resultado (próximo protocolo)
+                if sib.find("a", href=re.compile(r"procedimento_trabalhar")):
+                    break
+                siblings.append(sib)
+                if len(siblings) == 2:  # noqa: PLR2004
+                    break
+
+            tipo_cell = row0.find("td")
+            tipo_text = tipo_cell.get_text(" ", strip=True) if isinstance(tipo_cell, Tag) else ""
+            # tipo_text é "Tipo Nº protocolo" — extrai só o tipo (antes do Nº)
+            tipo = re.sub(r"\s+N[ºo°]?\s*\S+.*$", "", tipo_text).strip()
+
+            trecho = siblings[0].get_text(" ", strip=True) if len(siblings) > 0 else ""
+            meta = siblings[1].get_text(" ", strip=True) if len(siblings) > 1 else ""
+
+            # campo meta: "Unidade: SIGLA Usuário: CPF Inclusão: DD/MM/AAAA"
+            unidade_m  = re.search(r"Unidade:\s*(.+?)(?=\s+Usuário:|\s+Inclusão:|$)", meta)
+            usuario_m  = re.search(r"Usuário:\s*(\S+)", meta)
+            inclusao_m = re.search(r"Inclusão:\s*(\S+)", meta)
+
+            results.append({
+                "protocoloFormatado": prot,
+                "tipo": tipo,
+                "trecho": trecho,
+                "unidade": unidade_m.group(1).strip() if unidade_m else "",
+                "usuario": usuario_m.group(1) if usuario_m else "",
+                "inclusao": inclusao_m.group(1) if inclusao_m else "",
+            })
+
+        return results
 
     async def consultar_processo(self, protocolo_formatado: str) -> dict:  # noqa: C901, PLR0912, PLR0915
         """Busca dados de um processo navegando pela cadeia de páginas web.
@@ -2239,7 +2415,9 @@ class SEIWebClient:
             "total_itens": total_servidor,
             "total_filtrados": len(rows_filtrados),
             "pagina_atual": pagina,
-            "tem_proxima": len(rows) > 0 and (pagina + 1) * max(len(rows), 1) < total_servidor,
+            # hdnDetalhadoNroItens/hdnRecebidosNroItens refletem o cap da página (500),
+            # não o total real. Página cheia = provavelmente tem mais.
+            "tem_proxima": len(rows) >= 500,  # noqa: PLR2004
             "layout": layout,
         }
 
@@ -2495,12 +2673,13 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:  # noqa: C901, PLR0912, PL
 
 
 # Tabelas de listas conhecidas das páginas de consulta — excluídas da
-# extração genérica de pares label/valor de metadados
+# extração genérica de pares label/valor de metadados.
+# Nota: tblSobrestamento é intencionalmente excluída deste conjunto porque
+# documento_consultar usa-a para pares chave/valor de metadados.
 _TABELAS_LISTA = frozenset(
     {
         "tblAssinaturas",
         "tblCiencias",
-        "tblSobrestamento",
         "tblUnidadesProcesso",
         "tblAndamento",
         "tblInteressados",
