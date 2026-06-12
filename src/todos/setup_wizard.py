@@ -80,6 +80,7 @@ def run_setup_wizard():
     login_url = f"{sei_root}/sip/login.php?sigla_orgao_sistema={sigla_orgao_sistema}&sigla_sistema={sigla_sistema}"
 
     organs = []
+    verify_ssl_disabled = False
     print_yellow("[*] Tentando detectar os órgãos disponíveis no SEI...")
     try:
         import httpx
@@ -105,6 +106,7 @@ def run_setup_wizard():
                 .lower()
             )
             if confirm_ssl == "s":
+                verify_ssl_disabled = True
                 with httpx.Client(verify=False, follow_redirects=True, timeout=10.0) as client:  # nosec B501
                     resp = client.get(login_url)
                     resp.raise_for_status()
@@ -180,6 +182,47 @@ def run_setup_wizard():
     if not senha:
         print_red("[ERRO] Senha é obrigatória.")
         sys.exit(1)
+
+    # 2.5 Validar as credenciais efetuando um login de teste
+    print()
+    print_yellow("[*] Validando credenciais com o SEI...")
+    try:
+        import asyncio
+        import logging
+
+        from todos.sei_web_client import SEIWebClient
+
+        # Desativar temporariamente logs verbosos durante a validação
+        logging.getLogger("httpx").setLevel(logging.WARNING)
+        logging.getLogger("todos").setLevel(logging.WARNING)
+
+        web_client = SEIWebClient(
+            sei_web_url=sei_root,
+            sei_usuario=usuario,
+            sei_senha=senha,
+            sei_sigla_orgao=sigla_orgao,
+            sei_sigla_orgao_sistema=sigla_orgao_sistema,
+            sei_sigla_sistema=sigla_sistema,
+            sei_verify_ssl=not verify_ssl_disabled,
+        )
+
+        async def do_test_login() -> None:
+            await web_client.ensure_authenticated()
+            await web_client.close()
+
+        asyncio.run(do_test_login())
+        print_green("[+] Credenciais validadas com sucesso no SEI!")
+    except Exception as e:
+        print_red(f"[ERRO] Falha na validação das credenciais no SEI: {e}")
+        print_yellow(
+            "[!] O login no SEI falhou. Pode ser que o usuário, senha ou órgão estejam incorretos."
+        )
+        confirm_proceed = (
+            input("Deseja gravar as configurações mesmo assim? (s/n): ").strip().lower()
+        )
+        if confirm_proceed != "s":
+            print_red("[ERRO] Configuração cancelada pelo usuário.")
+            sys.exit(1)
 
     # 3. Salvar senha no Keyring do Sistema (serviço: todos-mcp, chave: usuario@host)
     print()
