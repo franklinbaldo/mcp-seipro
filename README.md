@@ -30,17 +30,32 @@ Baixe o arquivo [`todos.mcpb`](https://github.com/franklinbaldo/todos/releases/l
 pip install mcp-sei
 ```
 
-### Opção 3: Instalador interativo
+### Opção 3: Instalador interativo (Recomendado)
 
-```bash
-git clone https://github.com/franklinbaldo/todos.git
-cd todos
-python3 setup_claude.py
-```
+O instalador interativo faz o setup completo do MCP do `todos` em todos os ambientes suportados de forma automática, realizando:
+1. Instalação do gerenciador de pacotes `uv` (se necessário).
+2. Instalação da CLI `todos` globalmente via `uv tool`.
+3. Armazenamento seguro de credenciais no Keyring nativo do OS (sem expor senhas em arquivos).
+4. Registro do servidor MCP automaticamente no **Claude Code**, **Claude Desktop**, **Antigravity IDE** e no workspace local (`.mcp.json`).
 
-O script pergunta suas credenciais, instala o pacote e configura o Claude Desktop automaticamente.
+Para executar a instalação automatizada:
+
+* **No Windows (PowerShell):**
+  ```powershell
+  powershell -ExecutionPolicy Bypass -Command "if (-not (Get-Command 'uv' -ErrorAction SilentlyContinue)) { Write-Host '[*] Instalando uv...'; irm https://astral.sh/uv/install.ps1 | iex; $env:PATH += ';$env:USERPROFILE\.local\bin' }; uv tool install git+https://github.com/franklinbaldo/todos.git --force; $env:PATH += ';$env:USERPROFILE\.local\bin'; todos setup"
+  ```
+
+* **No Linux / macOS (Terminal):**
+  ```bash
+  if ! command -v uv &> /dev/null; then echo "[*] Instalando uv..."; curl -LsSf https://astral.sh/uv/install.sh | sh; source $HOME/.local/bin/env; fi; uv tool install git+https://github.com/franklinbaldo/todos.git --force; export PATH="$HOME/.local/bin:$PATH"; todos setup
+  ```
+
+O assistente interativo solicitará suas credenciais do SEI de forma segura (com a senha oculta) e aplicará as configurações.
 
 ## Configuração
+
+> [!TIP]
+> **Dica de Ouro**: O comando `todos setup` (descrito na Opção 3 de Instalação) já configura automaticamente todos os ambientes abaixo (Claude Code, Claude Desktop, Antigravity IDE e workspace local) e armazena sua senha de forma criptografada no Keyring do sistema. Use as seções abaixo apenas se preferir realizar a configuração manual.
 
 ### Variáveis de ambiente
 
@@ -48,7 +63,7 @@ O script pergunta suas credenciais, instala o pacote e configura o Claude Deskto
 |----------|-------------|-----------|
 | `SEI_URL` | Não | URL base da API mod-wssei v2 (deixe em branco se a instância não tiver mod-wssei) |
 | `SEI_USUARIO` | Sim | Usuário para autenticação |
-| `SEI_SENHA` | Sim | Senha para autenticação |
+| `SEI_SENHA` | Não | Senha para autenticação (deixe em branco se configurou o Keyring via `todos setup`) |
 | `SEI_ORGAO` | Não | Código do órgão (padrão: `0`) |
 | `SEI_CONTEXTO` | Não | Contexto opcional |
 | `SEI_VERIFY_SSL` | Não | `true` (padrão) ou `false` |

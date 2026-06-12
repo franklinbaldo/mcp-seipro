@@ -5,6 +5,7 @@ import base64
 import json
 import logging
 import os
+import sys
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from typing import Literal, cast
@@ -4625,6 +4626,15 @@ async def sei_alterar_anotacao_bloco_assinatura(
 
 
 def main():  # noqa: ANN201, D103
+    if len(sys.argv) > 1 and sys.argv[1] == "setup":
+        if not sys.stdin.isatty():
+            print("Erro: 'todos setup' requer um terminal interativo.", file=sys.stderr)  # noqa: T201
+            sys.exit(1)
+        from todos.setup_wizard import run_setup_wizard  # noqa: PLC0415
+
+        run_setup_wizard()
+        return
+
     if _http_mode:
         from todos.remote import run_remote  # noqa: PLC0415
 
