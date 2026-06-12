@@ -1,5 +1,6 @@
 """Wizard de configuração interativo para o MCP SEI (todos)."""
 
+import contextlib
 import getpass
 import json
 import os
@@ -305,10 +306,8 @@ def run_setup_wizard():
                     "unidade": {},
                 }
                 # unidade_atual é informação de display — não deve bloquear a validação
-                try:
+                with contextlib.suppress(Exception):
                     info["unidade"] = await web_client.unidade_atual()
-                except Exception:
-                    pass
                 return info
             finally:
                 await web_client.close()
