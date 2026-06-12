@@ -28,6 +28,9 @@ def print_red(text):
 
 
 def run_setup_wizard():
+    if not sys.stdin.isatty():
+        print_red("[ERRO] 'todos setup' requer um terminal interativo (stdin não é um TTY).")
+        sys.exit(1)
     print_cyan("=====================================================")
     print_cyan("  Configurador do MCP SEI (todos)")
     print_cyan("=====================================================")
@@ -46,6 +49,9 @@ def run_setup_wizard():
 
     # Tentar detectar órgãos da página de login automaticamente
     parsed = urlparse(web_url_input)
+    if not parsed.netloc or ":" in parsed.netloc:
+        print_red("[ERRO] URL inválida. Use o formato: https://sei.exemplo.gov.br")
+        sys.exit(1)
     sei_root = f"{parsed.scheme}://{parsed.netloc}"
 
     # Extrair parâmetros iniciais da query
@@ -114,6 +120,11 @@ def run_setup_wizard():
                     resp.raise_for_status()
             else:
                 raise
+        except httpx.HTTPStatusError as e:
+            print_yellow(
+                f"[!] SEI retornou HTTP {e.response.status_code} na página de login. "
+                "Continuando sem detecção automática de órgãos."
+            )
 
         # Executa fora do except para abranger o caminho feliz (SSL verificado com sucesso)
         # e o caminho de fallback (SSL desativado com bypass confirmado pelo usuário).
@@ -241,9 +252,20 @@ def run_setup_wizard():
 
     senha_validacao = senha  # fallback: usa senha local se keyring não estiver disponível
     try:
+        import concurrent.futures
+
         import keyring
 
-        keyring.set_password("todos-mcp", keyring_user, senha)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(keyring.set_password, "todos-mcp", keyring_user, senha)
+            try:
+                future.result(timeout=10)
+            except concurrent.futures.TimeoutError as exc:
+                msg = (
+                    "Keyring bloqueou por mais de 10 segundos. "
+                    "Tente: PYTHON_KEYRING_BACKEND=keyring.backends.fail.Keyring todos setup"
+                )
+                raise RuntimeError(msg) from exc
         print_green("[+] Senha armazenada com sucesso no Keyring do Sistema!")
     except Exception as e:
         print_red(f"[ERRO] Falha ao acessar o Keyring do Sistema: {e}")
@@ -347,9 +369,8 @@ def run_setup_wizard():
             sys.exit(1)
 
     # Limpar a senha de validação temporária da memória
-    if "senha_validacao" in locals():
-        senha_validacao = ""
-        del senha_validacao
+    senha_validacao = ""
+    del senha_validacao
 
     # 4. Configurar caminhos dos arquivos MCP por plataforma
     home = Path.home()
@@ -401,9 +422,8 @@ def run_setup_wizard():
 
     # Limpar a variável local de senha da memória; a referência no dicionário
     # todos_mcp_config será zerada/sobrescrita logo após a escrita nos arquivos de configuração.
-    if "senha" in locals():
-        senha = ""
-        del senha
+    senha = ""
+    del senha
 
     # 5. Atualizar as configurações
     print()
