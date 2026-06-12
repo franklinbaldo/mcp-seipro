@@ -41,7 +41,9 @@ class SEIClient:
                 .rstrip("/")
                 .lower()
             )
-            self._keyring_user = f"{self._usuario}@{instance_url}" if instance_url else self._usuario
+            self._keyring_user = (
+                f"{self._usuario}@{instance_url}" if instance_url else self._usuario
+            )
 
         self._orgao = kwargs.get("sei_orgao", os.environ.get("SEI_ORGAO", "0"))
         self._contexto = kwargs.get("sei_contexto", os.environ.get("SEI_CONTEXTO", ""))
@@ -104,7 +106,9 @@ class SEIClient:
                 if senha:
                     self._senha = senha
             except TimeoutError:
-                logger.warning("Timeout ao buscar senha do keyring (>5s); use SEI_SENHA como fallback")
+                logger.warning(
+                    "Timeout ao buscar senha do keyring (>5s); use SEI_SENHA como fallback"
+                )
             except Exception as e:  # noqa: BLE001
                 logger.warning("Não foi possível obter a senha do keyring: %s", e)
 
