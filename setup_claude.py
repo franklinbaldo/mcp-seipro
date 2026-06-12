@@ -36,6 +36,7 @@ VENV_DIR = VENV_HOME / ".venv"
 # Helpers de UI
 # ---------------------------------------------------------------------------
 
+
 def banner():
     print()
     print("=" * 60)
@@ -76,6 +77,7 @@ def confirm(msg: str, default_yes: bool = True) -> bool:
 # Fase 0: Deteccao de ambiente
 # ---------------------------------------------------------------------------
 
+
 def check_python():
     if sys.version_info < MIN_PYTHON:
         error(f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ e necessario.")
@@ -87,7 +89,13 @@ def check_python():
 def get_config_path() -> Path:
     system = platform.system()
     if system == "Darwin":
-        p = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        p = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
     elif system == "Windows":
         appdata = os.environ.get("APPDATA", "")
         if not appdata:
@@ -124,6 +132,7 @@ def detect_repo_root() -> Path | None:
 # ---------------------------------------------------------------------------
 # Fase 1: Prompts interativos
 # ---------------------------------------------------------------------------
+
 
 def prompt_url() -> str:
     print()
@@ -224,6 +233,7 @@ def prompt_ssl() -> str:
 # Fase 2: Instalacao
 # ---------------------------------------------------------------------------
 
+
 def create_venv(uv_path: str | None):
     if VENV_DIR.exists():
         info(f"Ambiente virtual ja existe: {VENV_DIR}")
@@ -295,6 +305,7 @@ def install_package(repo_root: Path | None, uv_path: str | None):
 # Fase 3: Resumo
 # ---------------------------------------------------------------------------
 
+
 def print_summary(config_path: Path, command: str, env: dict, usar_keyring: bool):
     masked_env = {**env}
     if "SEI_SENHA" in masked_env:
@@ -326,10 +337,10 @@ def print_summary(config_path: Path, command: str, env: dict, usar_keyring: bool
     print()
 
 
-
 # ---------------------------------------------------------------------------
 # Fase 4: Escrever configuracao
 # ---------------------------------------------------------------------------
+
 
 def read_config(config_path: Path) -> dict:
     if not config_path.exists():
@@ -383,6 +394,7 @@ def merge_sei_server(config: dict, command: str, env: dict) -> dict:
 # Fase 5: Sucesso
 # ---------------------------------------------------------------------------
 
+
 def print_success(config_path: Path):
     print()
     print("  " + "=" * 56)
@@ -406,6 +418,7 @@ def print_success(config_path: Path):
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main():
     banner()
@@ -465,6 +478,20 @@ def main():
     if usar_keyring:
         info("Salvando senha com segurança no chaveiro do sistema...")
         try:
+            if sei_web_url:
+                sei_root = sei_web_url.rstrip("/")
+            elif sei_url and "/sei/" in sei_url:
+                sei_root = sei_url.split("/sei/", 1)[0]
+            elif sei_url:
+                sei_root = sei_url.rstrip("/")
+            else:
+                sei_root = ""
+
+            instance_url = (
+                sei_root.replace("https://", "").replace("http://", "").strip().rstrip("/").lower()
+            )
+            keyring_user = f"{sei_usuario}@{instance_url}" if instance_url else sei_usuario
+
             # Chama o python do venv para registrar a senha no keyring do sistema
             # Passa a senha via stdin para evitar expor a credencial em processos/logs
             subprocess.run(
@@ -472,7 +499,7 @@ def main():
                     str(venv_python()),
                     "-c",
                     "import sys, keyring; keyring.set_password('todos-mcp', sys.argv[1], sys.stdin.read())",
-                    sei_usuario,
+                    keyring_user,
                 ],
                 input=sei_senha,
                 check=True,

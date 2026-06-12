@@ -122,7 +122,15 @@ class SEIWebClient:
             try:
                 import keyring  # noqa: PLC0415
 
-                senha_keyring = keyring.get_password("todos-mcp", self._usuario)
+                instance_url = (
+                    self.sei_root.replace("https://", "")
+                    .replace("http://", "")
+                    .strip()
+                    .rstrip("/")
+                    .lower()
+                )
+                keyring_user = f"{self._usuario}@{instance_url}" if instance_url else self._usuario
+                senha_keyring = keyring.get_password("todos-mcp", keyring_user)
                 if senha_keyring:
                     senha = senha_keyring
             except Exception as e:  # noqa: BLE001

@@ -20,12 +20,29 @@ class SEIClient:
         self.base_url = kwargs.get("sei_url", os.environ.get("SEI_URL", "")).rstrip("/")
         self._usuario = kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", ""))
 
+        # Resolve o sei_root de forma consistente com SEIWebClient para namespace do keyring
+        sei_web_url = kwargs.get("sei_web_url", os.environ.get("SEI_WEB_URL", ""))
+        if sei_web_url:
+            self.sei_root = sei_web_url.rstrip("/")
+        elif "/sei/" in self.base_url:
+            self.sei_root = self.base_url.split("/sei/", 1)[0]
+        else:
+            self.sei_root = self.base_url.rstrip("/")
+
         senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
         if not senha and self._usuario:
             try:
                 import keyring  # noqa: PLC0415
 
-                senha_keyring = keyring.get_password("todos-mcp", self._usuario)
+                instance_url = (
+                    self.sei_root.replace("https://", "")
+                    .replace("http://", "")
+                    .strip()
+                    .rstrip("/")
+                    .lower()
+                )
+                keyring_user = f"{self._usuario}@{instance_url}" if instance_url else self._usuario
+                senha_keyring = keyring.get_password("todos-mcp", keyring_user)
                 if senha_keyring:
                     senha = senha_keyring
             except Exception as e:  # noqa: BLE001
