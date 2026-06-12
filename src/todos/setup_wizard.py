@@ -51,8 +51,11 @@ def run_setup_wizard():
         from bs4 import BeautifulSoup
         
         # Desabilitar avisos de SSL não verificado para requisições internas
-        import urllib3
-        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        try:
+            import urllib3
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        except ImportError:
+            pass
         
         with httpx.Client(verify=False, follow_redirects=True, timeout=10.0) as client:
             resp = client.get(login_url)
