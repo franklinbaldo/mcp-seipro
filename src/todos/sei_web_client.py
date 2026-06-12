@@ -882,7 +882,8 @@ class SEIWebClient:
         total_itens: int | None = None
         try:
             pattern = re.compile(
-                r"^\s*(?:Resultado\s+da\s+pesquisa:\s*)?(\d+)\s+processo(?:\(s\)|s)?\s+encontrado(?:\(s\)|s)?(?:\.|\s)*$",
+                r"^\s*(?:Resultado\s+da\s+pesquisa:\s*)?(\d+)\s+"
+                r"(?:processo(?:\(s\)|s)?\s+encontrado(?:\(s\)|s)?|resultados?)(?:\.|\s)*$",
                 re.IGNORECASE,
             )
             for el in soup1.find_all(string=pattern):
