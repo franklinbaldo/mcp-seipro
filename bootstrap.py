@@ -45,9 +45,9 @@ def main():
         # No Windows, os.execv cria um processo novo e mata o atual.
         # O cliente MCP monitora o PID original e fecha ao detectar a saída.
         # subprocess.call mantém o processo-pai vivo enquanto o filho roda.
-        sys.exit(subprocess.call([str(TODOS)]))
+        sys.exit(subprocess.call([str(TODOS)] + sys.argv[1:]))
     else:
-        os.execv(str(TODOS), [str(TODOS)])
+        os.execv(str(TODOS), [str(TODOS)] + sys.argv[1:])
 
 
 if __name__ == "__main__":

@@ -85,9 +85,30 @@ def run_setup_wizard():
         import httpx
         from bs4 import BeautifulSoup
 
-        with httpx.Client(verify=False, follow_redirects=True, timeout=10.0) as client:  # nosec B501
-            resp = client.get(login_url)
-            resp.raise_for_status()
+        try:
+            with httpx.Client(verify=True, follow_redirects=True, timeout=10.0) as client:
+                resp = client.get(login_url)
+                resp.raise_for_status()
+        except httpx.RequestError:
+            print_yellow(
+                "[!] Alerta de Segurança: Falha ao estabelecer conexão SSL segura com o SEI."
+            )
+            print_yellow(
+                "    Isso ocorre comumente em redes governamentais com proxies ou certificados internos."
+            )
+            confirm_ssl = (
+                input(
+                    "Deseja tentar a conexão desativando a verificação de certificado SSL? (s/n): "
+                )
+                .strip()
+                .lower()
+            )
+            if confirm_ssl == "s":
+                with httpx.Client(verify=False, follow_redirects=True, timeout=10.0) as client:  # nosec B501
+                    resp = client.get(login_url)
+                    resp.raise_for_status()
+            else:
+                raise
 
             # Detectar parâmetros de query após possíveis redirecionamentos
             parsed_final = urlparse(str(resp.url))
@@ -104,7 +125,7 @@ def run_setup_wizard():
                 for opt in sel.find_all("option"):
                     val = opt.get("value")
                     text = opt.get_text(strip=True)
-                    if val and val != "null":
+                    if val and val != "null" and not text.startswith(("-", "Selecione")):
                         organs.append((val, text))
     except Exception as e:
         print_yellow(f"[!] Não foi possível conectar ao login do SEI para listar órgãos: {e}")
@@ -123,7 +144,8 @@ def run_setup_wizard():
 
         orgao_id, sigla_orgao = organs[selected_idx]
         # Limpar espaços ou traços do nome para ficar limpo (ex: "PGE-RO" -> "PGE")
-        sigla_orgao = sigla_orgao.split("-")[0].strip()
+        parts = [p.strip() for p in sigla_orgao.split("-") if p.strip()]
+        sigla_orgao = min(parts, key=len) if len(parts) > 1 else parts[0]
     else:
         sigla_orgao = input("Digite a sigla do seu órgão no SEI (padrão: PGE): ").strip() or "PGE"
         sigla_orgao_sistema = (
@@ -147,7 +169,7 @@ def run_setup_wizard():
         print_red("[ERRO] Usuário é obrigatório.")
         sys.exit(1)
 
-    senha = getpass.getpass("Digite sua senha do SEI (entrada oculta): ").strip()
+    senha = getpass.getpass("Digite sua senha do SEI (entrada oculta): ")
     if not senha:
         print_red("[ERRO] Senha é obrigatória.")
         sys.exit(1)
@@ -183,11 +205,12 @@ def run_setup_wizard():
     home = Path.home()
     configs_to_update = []
 
-    # Antigravity IDE
-    antigravity_config = home / ".gemini" / "antigravity-ide" / "mcp_config.json"
-    configs_to_update.append(antigravity_config)
+    # Antigravity IDE (apenas se a pasta do gemini existir)
+    if (home / ".gemini").exists():
+        antigravity_config = home / ".gemini" / "antigravity-ide" / "mcp_config.json"
+        configs_to_update.append(antigravity_config)
 
-    # Claude Desktop
+    # Claude Desktop (apenas se o Claude Desktop estiver instalado/diretório existir)
     if sys.platform == "win32":
         appdata = Path(os.environ.get("APPDATA", str(home / "AppData" / "Roaming")))
         claude_desktop = appdata / "Claude" / "claude_desktop_config.json"
@@ -197,19 +220,23 @@ def run_setup_wizard():
         )
     else:  # Linux
         claude_desktop = home / ".config" / "Claude" / "claude_desktop_config.json"
-    configs_to_update.append(claude_desktop)
 
-    # Claude Code (Global)
+    if claude_desktop.parent.exists():
+        configs_to_update.append(claude_desktop)
+
+    # Claude Code (Global) - sempre atualizado na home
     claude_code = home / ".claude.json"
     configs_to_update.append(claude_code)
 
-    # Workspace Local (.mcp.json)
+    # Workspace Local (.mcp.json) - apenas se já existir localmente para evitar lixo no cwd
     local_mcp = Path(".mcp.json")
-    configs_to_update.append(local_mcp)
+    if local_mcp.exists():
+        configs_to_update.append(local_mcp)
 
     # Definição do MCP todos
     todos_mcp_config = {
         "command": "todos",
+        "args": [],
         "env": {
             "SEI_URL": rest_url,
             "SEI_WEB_URL": sei_root,
@@ -222,7 +249,7 @@ def run_setup_wizard():
         },
     }
 
-    # Limpar variáveis sensíveis
+    # Limpar senha local imediatamente da memória
     if "senha" in locals():
         del senha
 
@@ -235,20 +262,28 @@ def run_setup_wizard():
             config_path.parent.mkdir(parents=True, exist_ok=True)
 
             config_data = {"mcpServers": {}}
+            skip_write = False
             if config_path.exists():
                 try:
                     with config_path.open(encoding="utf-8") as f:
-                        config_data = json.load(f)
-                        if not isinstance(config_data, dict):
-                            config_data = {"mcpServers": {}}
-                        if "mcpServers" not in config_data or not isinstance(
-                            config_data["mcpServers"], dict
-                        ):
-                            config_data["mcpServers"] = {}
+                        content = f.read().strip()
+                        if content:
+                            config_data = json.loads(content)
+                            if not isinstance(config_data, dict):
+                                config_data = {"mcpServers": {}}
+                            if "mcpServers" not in config_data or not isinstance(
+                                config_data["mcpServers"], dict
+                            ):
+                                config_data["mcpServers"] = {}
                 except Exception as e_read:
                     print_yellow(
-                        f"[!] Não foi possível ler o arquivo {config_path.name}: {e_read}. Criando um novo."
+                        f"[!] Não foi possível ler o arquivo {config_path.name}: {e_read}. "
+                        "Pulando este arquivo para evitar a perda de dados existentes."
                     )
+                    skip_write = True
+
+            if skip_write:
+                continue
 
             # Mesclar
             config_data["mcpServers"]["todos"] = todos_mcp_config
@@ -259,6 +294,10 @@ def run_setup_wizard():
             print_green(f"[+] Atualizado: {config_path}")
         except Exception as e_write:
             print_yellow(f"[!] Não foi possível atualizar {config_path}: {e_write}")
+
+    # Limpar senha das variáveis de configuração em memória após a escrita
+    if "todos_mcp_config" in locals() and "env" in todos_mcp_config:
+        todos_mcp_config["env"]["SEI_SENHA"] = ""
 
     print()
     print_cyan("=====================================================")
