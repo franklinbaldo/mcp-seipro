@@ -270,7 +270,9 @@ def run_setup_wizard():
                 senha = ""  # keyring tem a senha; não precisamos dela no config
         except Exception:
             # leitura falhou, mas a gravação foi bem-sucedida — usar senha local só para validação
-            print_yellow("[!] Não foi possível ler de volta do Keyring. Usando senha local para validação.")
+            print_yellow(
+                "[!] Não foi possível ler de volta do Keyring. Usando senha local para validação."
+            )
             senha = ""  # keyring tem a senha; não precisamos dela no config
 
     # 3. Validar as credenciais efetuando um login de teste
