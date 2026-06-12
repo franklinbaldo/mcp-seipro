@@ -97,7 +97,7 @@ class SEIClient:
         """Autentica no SEI e obtém token."""
         if not self._senha and self._keyring_user:
             keyring_user = self._keyring_user
-            self._keyring_user = None  # one-shot: don't retry on re-auth
+            self._keyring_user = None  # prevent concurrent / empty-string repeated lookups
             try:
                 import keyring  # noqa: PLC0415
 
@@ -107,11 +107,14 @@ class SEIClient:
                 )
                 if senha:
                     self._senha = senha
+                # _keyring_user stays None: keyring answered definitively (found or not found)
             except TimeoutError:
+                self._keyring_user = keyring_user  # restore: transient timeout, allow retry
                 logger.warning(
                     "Timeout ao buscar senha do keyring (>5s); use SEI_SENHA como fallback"
                 )
             except Exception as e:  # noqa: BLE001
+                self._keyring_user = keyring_user  # restore: transient error, allow retry
                 logger.warning("Não foi possível obter a senha do keyring: %s", e)
 
         resp = await self._client.post(
