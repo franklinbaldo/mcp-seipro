@@ -3,6 +3,7 @@
 import getpass
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -113,6 +114,8 @@ def run_setup_wizard():
             else:
                 raise
 
+        # Executa fora do except para abranger o caminho feliz (SSL verificado com sucesso)
+        # e o caminho de fallback (SSL desativado com bypass confirmado pelo usuário).
         if resp is not None:
             # Detectar parâmetros de query após possíveis redirecionamentos
             parsed_final = urlparse(str(resp.url))
@@ -147,9 +150,51 @@ def run_setup_wizard():
             selected_idx = 0
 
         orgao_id, sigla_orgao = organs[selected_idx]
-        # Limpar espaços ou traços do nome para ficar limpo (ex: "PGE-RO" -> "PGE")
-        parts = [p.strip() for p in sigla_orgao.split(" - ") if p.strip()]
-        sigla_orgao = min(parts, key=len) if len(parts) > 1 else parts[0]
+        # Limpar espaços ou traços do nome para obter apenas a sigla limpa (ex: "PGE-RO" -> "PGE")
+        # 1. Divide por hífen circundado ou não por espaços (cobre " - " e "-")
+        parts = [p.strip() for p in re.split(r"\s*-\s*", sigla_orgao) if p.strip()]
+
+        # 2. Ignora abreviações de estado (UFs com 2 letras maiúsculas) se houver outros segmentos
+        ufs = {
+            "AC",
+            "AL",
+            "AP",
+            "AM",
+            "BA",
+            "CE",
+            "DF",
+            "ES",
+            "GO",
+            "MA",
+            "MT",
+            "MS",
+            "MG",
+            "PA",
+            "PB",
+            "PR",
+            "PE",
+            "PI",
+            "RJ",
+            "RN",
+            "RS",
+            "RO",
+            "RR",
+            "SC",
+            "SP",
+            "SE",
+            "TO",
+        }
+        if len(parts) > 1:
+            parts_without_uf = [p for p in parts if p.upper() not in ufs]
+            if parts_without_uf:
+                parts = parts_without_uf
+
+        # 3. Se houver mais de um segmento sobressalente, prefere siglas (até 6 letras maiúsculas)
+        if len(parts) > 1:
+            acronyms = [p for p in parts if p.isupper() and len(p) <= 6]
+            sigla_orgao = min(acronyms, key=len) if acronyms else min(parts, key=len)
+        else:
+            sigla_orgao = parts[0] if parts else sigla_orgao
     else:
         default_sigla = sigla_orgao_sistema or "PGE"
         sigla_orgao = (
@@ -211,8 +256,12 @@ def run_setup_wizard():
             await web_client.close()
 
         asyncio.run(do_test_login())
+        # Limpar a senha do cliente web imediatamente após o login de teste
+        web_client._senha = ""  # noqa: SLF001
         print_green("[+] Credenciais validadas com sucesso no SEI!")
     except Exception as e:
+        if "web_client" in locals():
+            web_client._senha = ""  # noqa: SLF001
         print_red(f"[ERRO] Falha na validação das credenciais no SEI: {e}")
         print_yellow(
             "[!] O login no SEI falhou. Pode ser que o usuário, senha ou órgão estejam incorretos."
@@ -299,8 +348,10 @@ def run_setup_wizard():
         },
     }
 
-    # Limpar senha local imediatamente da memória
+    # Limpar a variável local de senha da memória; a referência no dicionário
+    # todos_mcp_config será zerada/sobrescrita logo após a escrita nos arquivos de configuração.
     if "senha" in locals():
+        senha = ""
         del senha
 
     # 5. Atualizar as configurações
