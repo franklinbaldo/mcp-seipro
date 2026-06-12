@@ -63,7 +63,7 @@ O assistente interativo solicitará suas credenciais do SEI de forma segura (com
 |----------|-------------|-----------|
 | `SEI_URL` | Não | URL base da API mod-wssei v2 (deixe em branco se a instância não tiver mod-wssei) |
 | `SEI_USUARIO` | Sim | Usuário para autenticação |
-| `SEI_SENHA` | Sim | Senha para autenticação |
+| `SEI_SENHA` | Não | Senha para autenticação (deixe em branco se configurou o Keyring via `todos setup`) |
 | `SEI_ORGAO` | Não | Código do órgão (padrão: `0`) |
 | `SEI_CONTEXTO` | Não | Contexto opcional |
 | `SEI_VERIFY_SSL` | Não | `true` (padrão) ou `false` |
