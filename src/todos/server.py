@@ -30,7 +30,7 @@ from todos.sei_styles import (
     STYLE_SHORTCUTS,
     html_referencia_sei,
 )
-from todos.sei_web_client import SEIWebClient
+from todos.sei_web_client import SEI_WEB_PAGE_SIZE, SEIWebClient
 
 logger = logging.getLogger(__name__)
 
@@ -1732,20 +1732,31 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
     ]
     try:
         web = _get_web_client(ctx)
-        items = await web.pesquisar_processos_web(
+        result_dict = await web.pesquisar_processos_web(
             q=q_web,
             descricao=descricao,
             data_inicio=data_inicio,
             data_fim=data_fim,
             pagina=pagina,
         )
+        items = result_dict["processos"]
+        parsed_total = result_dict.get("total_itens")
+
         page_items = items[:limit]
+
+        if parsed_total is not None:
+            total_itens = parsed_total
+            tem_proxima = total_itens > (pagina + 1) * SEI_WEB_PAGE_SIZE
+        else:
+            total_itens = len(items)
+            tem_proxima = len(items) >= SEI_WEB_PAGE_SIZE
+
         paged: dict = {
             "processos": page_items,
             "pagina_atual": pagina,
             "itens_pagina": len(page_items),
-            "total_itens": len(page_items),
-            "tem_proxima": len(items) >= 10,  # noqa: PLR2004
+            "total_itens": total_itens,
+            "tem_proxima": tem_proxima,
             "fonte": "web",
         }
         avisos: list[str] = []
@@ -1753,8 +1764,10 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
             avisos.append(
                 f"filtros ignorados (não suportados na pesquisa web): {', '.join(dropped)}"
             )
-        if limit < 10 and len(items) > limit:  # noqa: PLR2004
-            avisos.append(f"resultados truncados para limit={limit} (página web retorna até 10)")
+        if limit < SEI_WEB_PAGE_SIZE and len(items) > limit:
+            avisos.append(
+                f"resultados truncados para limit={limit} (página web retorna até {SEI_WEB_PAGE_SIZE})"
+            )
         if avisos:
             paged["aviso"] = "; ".join(avisos).capitalize()
         return _json(paged)
