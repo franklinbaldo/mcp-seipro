@@ -17,6 +17,7 @@ Limitações:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -116,7 +117,22 @@ class SEIWebClient:
             self.sei_root = sei_url.rstrip("/")
 
         self._usuario = kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", ""))
+
         self._senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
+        # Pre-compute keyring key so login() can do the actual lookup in a thread
+        self._keyring_user: str | None = None
+        if not self._senha and self._usuario:
+            instance_url = (
+                self.sei_root.replace("https://", "")
+                .replace("http://", "")
+                .strip()
+                .rstrip("/")
+                .lower()
+            )
+            self._keyring_user = (
+                f"{self._usuario}@{instance_url}" if instance_url else self._usuario
+            )
+
         # SEI_ORGAO no .env é o id da REST (geralmente "0"). O selOrgao do SIP
         # é descoberto dinamicamente do <select> na página de login.
         self._sigla_orgao = kwargs.get(
@@ -189,6 +205,28 @@ class SEIWebClient:
 
     async def login(self) -> None:  # noqa: C901, PLR0912, PLR0915
         """Faz login via formulário SIP e captura a inbox URL com infra_hash."""
+        if not self._senha and self._keyring_user:
+            keyring_user = self._keyring_user
+            self._keyring_user = None  # prevent concurrent / empty-string repeated lookups
+            try:
+                import keyring  # noqa: PLC0415
+
+                senha = await asyncio.wait_for(
+                    asyncio.to_thread(keyring.get_password, "todos-mcp", keyring_user),
+                    timeout=5.0,
+                )
+                if senha:
+                    self._senha = senha
+                # _keyring_user stays None: keyring answered definitively (found or not found)
+            except TimeoutError:
+                self._keyring_user = keyring_user  # restore: transient timeout, allow retry
+                logger.warning(
+                    "Timeout ao buscar senha do keyring (>5s); use SEI_SENHA como fallback"
+                )
+            except Exception as e:  # noqa: BLE001
+                self._keyring_user = keyring_user  # restore: transient error, allow retry
+                logger.warning("Não foi possível obter a senha do keyring: %s", e)
+
         if not self.sei_root:
             raise RuntimeError(  # noqa: TRY003
                 "Nenhuma URL do SEI configurada. Defina SEI_URL (API REST "  # noqa: EM101
@@ -825,18 +863,20 @@ class SEIWebClient:
             meta = siblings[1].get_text(" ", strip=True) if len(siblings) > 1 else ""
 
             # campo meta: "Unidade: SIGLA Usuário: CPF Inclusão: DD/MM/AAAA"
-            unidade_m  = re.search(r"Unidade:\s*(.+?)(?=\s+Usuário:|\s+Inclusão:|$)", meta)
-            usuario_m  = re.search(r"Usuário:\s*(\S+)", meta)
+            unidade_m = re.search(r"Unidade:\s*(.+?)(?=\s+Usuário:|\s+Inclusão:|$)", meta)
+            usuario_m = re.search(r"Usuário:\s*(\S+)", meta)
             inclusao_m = re.search(r"Inclusão:\s*(\S+)", meta)
 
-            results.append({
-                "protocoloFormatado": prot,
-                "tipo": tipo,
-                "trecho": trecho,
-                "unidade": unidade_m.group(1).strip() if unidade_m else "",
-                "usuario": usuario_m.group(1) if usuario_m else "",
-                "inclusao": inclusao_m.group(1) if inclusao_m else "",
-            })
+            results.append(
+                {
+                    "protocoloFormatado": prot,
+                    "tipo": tipo,
+                    "trecho": trecho,
+                    "unidade": unidade_m.group(1).strip() if unidade_m else "",
+                    "usuario": usuario_m.group(1) if usuario_m else "",
+                    "inclusao": inclusao_m.group(1) if inclusao_m else "",
+                }
+            )
 
         return results
 

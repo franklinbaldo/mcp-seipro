@@ -1,5 +1,6 @@
 """Cliente REST genérico para o mod-wssei v2 do SEI."""
 
+import asyncio
 import base64
 import json
 import logging
@@ -19,7 +20,31 @@ class SEIClient:
     def __init__(self, **kwargs):  # noqa: ANN003, ANN204, D107
         self.base_url = kwargs.get("sei_url", os.environ.get("SEI_URL", "")).rstrip("/")
         self._usuario = kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", ""))
+
+        # Resolve o sei_root de forma consistente com SEIWebClient para namespace do keyring
+        sei_web_url = kwargs.get("sei_web_url", os.environ.get("SEI_WEB_URL", ""))
+        if sei_web_url:
+            self.sei_root = sei_web_url.rstrip("/")
+        elif "/sei/" in self.base_url:
+            self.sei_root = self.base_url.split("/sei/", 1)[0]
+        else:
+            self.sei_root = self.base_url.rstrip("/")
+
         self._senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
+        # Pre-compute keyring key so autenticar() can do the actual lookup in a thread
+        self._keyring_user: str | None = None
+        if not self._senha and self._usuario:
+            instance_url = (
+                self.sei_root.replace("https://", "")
+                .replace("http://", "")
+                .strip()
+                .rstrip("/")
+                .lower()
+            )
+            self._keyring_user = (
+                f"{self._usuario}@{instance_url}" if instance_url else self._usuario
+            )
+
         self._orgao = kwargs.get("sei_orgao", os.environ.get("SEI_ORGAO", "0"))
         self._contexto = kwargs.get("sei_contexto", os.environ.get("SEI_CONTEXTO", ""))
         self._token: str | None = None
@@ -70,6 +95,28 @@ class SEIClient:
 
     async def autenticar(self) -> str:
         """Autentica no SEI e obtém token."""
+        if not self._senha and self._keyring_user:
+            keyring_user = self._keyring_user
+            self._keyring_user = None  # prevent concurrent / empty-string repeated lookups
+            try:
+                import keyring  # noqa: PLC0415
+
+                senha = await asyncio.wait_for(
+                    asyncio.to_thread(keyring.get_password, "todos-mcp", keyring_user),
+                    timeout=5.0,
+                )
+                if senha:
+                    self._senha = senha
+                # _keyring_user stays None: keyring answered definitively (found or not found)
+            except TimeoutError:
+                self._keyring_user = keyring_user  # restore: transient timeout, allow retry
+                logger.warning(
+                    "Timeout ao buscar senha do keyring (>5s); use SEI_SENHA como fallback"
+                )
+            except Exception as e:  # noqa: BLE001
+                self._keyring_user = keyring_user  # restore: transient error, allow retry
+                logger.warning("Não foi possível obter a senha do keyring: %s", e)
+
         resp = await self._client.post(
             f"{self.base_url}/autenticar",
             data={

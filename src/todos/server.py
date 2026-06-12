@@ -1707,12 +1707,16 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
 
     # Fallback via web scraper (instâncias sem mod-wssei)
     q_web = " ".join(filter(None, [palavras_chave, busca_rapida]))
-    dropped = [n for n, v in [
-        ("sta_tipo_data", sta_tipo_data),
-        ("id_unidade_geradora", id_unidade_geradora),
-        ("id_assunto", id_assunto),
-        ("grupo", grupo),
-    ] if v]
+    dropped = [
+        n
+        for n, v in [
+            ("sta_tipo_data", sta_tipo_data),
+            ("id_unidade_geradora", id_unidade_geradora),
+            ("id_assunto", id_assunto),
+            ("grupo", grupo),
+        ]
+        if v
+    ]
     try:
         web = _get_web_client(ctx)
         items = await web.pesquisar_processos_web(
@@ -1733,7 +1737,9 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
         }
         avisos: list[str] = []
         if dropped:
-            avisos.append(f"filtros ignorados (não suportados na pesquisa web): {', '.join(dropped)}")
+            avisos.append(
+                f"filtros ignorados (não suportados na pesquisa web): {', '.join(dropped)}"
+            )
         if limit < 10 and len(items) > limit:  # noqa: PLR2004
             avisos.append(f"resultados truncados para limit={limit} (página web retorna até 10)")
         if avisos:

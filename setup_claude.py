@@ -36,6 +36,7 @@ VENV_DIR = VENV_HOME / ".venv"
 # Helpers de UI
 # ---------------------------------------------------------------------------
 
+
 def banner():
     print()
     print("=" * 60)
@@ -76,6 +77,7 @@ def confirm(msg: str, default_yes: bool = True) -> bool:
 # Fase 0: Deteccao de ambiente
 # ---------------------------------------------------------------------------
 
+
 def check_python():
     if sys.version_info < MIN_PYTHON:
         error(f"Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ e necessario.")
@@ -87,7 +89,13 @@ def check_python():
 def get_config_path() -> Path:
     system = platform.system()
     if system == "Darwin":
-        p = Path.home() / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        p = (
+            Path.home()
+            / "Library"
+            / "Application Support"
+            / "Claude"
+            / "claude_desktop_config.json"
+        )
     elif system == "Windows":
         appdata = os.environ.get("APPDATA", "")
         if not appdata:
@@ -124,6 +132,7 @@ def detect_repo_root() -> Path | None:
 # ---------------------------------------------------------------------------
 # Fase 1: Prompts interativos
 # ---------------------------------------------------------------------------
+
 
 def prompt_url() -> str:
     print()
@@ -224,6 +233,7 @@ def prompt_ssl() -> str:
 # Fase 2: Instalacao
 # ---------------------------------------------------------------------------
 
+
 def create_venv(uv_path: str | None):
     if VENV_DIR.exists():
         info(f"Ambiente virtual ja existe: {VENV_DIR}")
@@ -295,8 +305,11 @@ def install_package(repo_root: Path | None, uv_path: str | None):
 # Fase 3: Resumo
 # ---------------------------------------------------------------------------
 
-def print_summary(config_path: Path, command: str, env: dict):
-    masked_env = {**env, "SEI_SENHA": "********"}
+
+def print_summary(config_path: Path, command: str, env: dict, usar_keyring: bool):
+    masked_env = {**env}
+    if "SEI_SENHA" in masked_env:
+        masked_env["SEI_SENHA"] = "********"
 
     print()
     print("  " + "=" * 56)
@@ -309,11 +322,17 @@ def print_summary(config_path: Path, command: str, env: dict):
     print()
     for k, v in masked_env.items():
         print(f"    {k}: {v}")
+    if usar_keyring:
+        print("    SEI_SENHA: [Salva com segurança no Keyring do sistema]")
     print()
     print("  " + "-" * 56)
-    warn("A senha sera armazenada em texto plano no arquivo")
-    warn("de configuracao. Isso e o padrao do Claude Desktop")
-    warn("para variaveis de ambiente de servidores MCP.")
+    if usar_keyring:
+        info("A senha será armazenada de forma criptografada")
+        info("no cofre de credenciais seguro do seu sistema operacional.")
+    else:
+        warn("A senha sera armazenada em texto plano no arquivo")
+        warn("de configuracao. Isso e o padrao do Claude Desktop")
+        warn("para variaveis de ambiente de servidores MCP.")
     print("  " + "-" * 56)
     print()
 
@@ -321,6 +340,7 @@ def print_summary(config_path: Path, command: str, env: dict):
 # ---------------------------------------------------------------------------
 # Fase 4: Escrever configuracao
 # ---------------------------------------------------------------------------
+
 
 def read_config(config_path: Path) -> dict:
     if not config_path.exists():
@@ -374,6 +394,7 @@ def merge_sei_server(config: dict, command: str, env: dict) -> dict:
 # Fase 5: Sucesso
 # ---------------------------------------------------------------------------
 
+
 def print_success(config_path: Path):
     print()
     print("  " + "=" * 56)
@@ -398,6 +419,7 @@ def print_success(config_path: Path):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     banner()
 
@@ -419,9 +441,14 @@ def main():
     sei_orgao = prompt_orgao()
     sei_ssl = prompt_ssl()
 
+    print()
+    print("  [5b/5] Guardar senha de forma segura no cofre do sistema (Keyring)?")
+    print("         Se ativado, a senha não será salva em texto plano no arquivo do Claude.")
+    print()
+    usar_keyring = confirm("Usar Keyring seguro do sistema?", default_yes=True)
+
     env: dict = {
         "SEI_USUARIO": sei_usuario,
-        "SEI_SENHA": sei_senha,
         "SEI_ORGAO": sei_orgao,
         "SEI_VERIFY_SSL": sei_ssl,
     }
@@ -429,6 +456,8 @@ def main():
         env["SEI_URL"] = sei_url
     if sei_web_url:
         env["SEI_WEB_URL"] = sei_web_url
+    if not usar_keyring:
+        env["SEI_SENHA"] = sei_senha
 
     # Fase 2
     print()
@@ -438,17 +467,60 @@ def main():
     command = str(todos_command())
 
     # Fase 3
-    print_summary(config_path, command, env)
+    print_summary(config_path, command, env, usar_keyring)
 
     if not confirm("Confirmar e salvar?"):
         print("  Cancelado.")
         sys.exit(0)
 
-    # Fase 4
+    # Fase 4 — decide overwrite antes de gravar qualquer credencial
     print()
     config = read_config(config_path)
     backup_config(config_path)
-    config = merge_sei_server(config, command, env)
+    config = merge_sei_server(config, command, env)  # pode sys.exit se usuário recusar sobrescrever
+
+    if usar_keyring:
+        info("Salvando senha com segurança no chaveiro do sistema...")
+        try:
+            if sei_web_url:
+                sei_root = sei_web_url.rstrip("/")
+            elif sei_url and "/sei/" in sei_url:
+                sei_root = sei_url.split("/sei/", 1)[0]
+            elif sei_url:
+                sei_root = sei_url.rstrip("/")
+            else:
+                sei_root = ""
+
+            instance_url = (
+                sei_root.replace("https://", "").replace("http://", "").strip().rstrip("/").lower()
+            )
+            keyring_user = f"{sei_usuario}@{instance_url}" if instance_url else sei_usuario
+
+            # Chama o python do venv para registrar a senha no keyring do sistema
+            # Passa a senha via stdin para evitar expor a credencial em processos/logs
+            subprocess.run(
+                [
+                    str(venv_python()),
+                    "-c",
+                    "import sys, keyring; keyring.set_password('todos-mcp', sys.argv[1], sys.stdin.read())",
+                    keyring_user,
+                ],
+                input=sei_senha,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            info("Senha salva com sucesso no cofre do sistema.")
+        except subprocess.TimeoutExpired:
+            error("Timeout ao salvar no chaveiro do sistema (>30s); verifique se o daemon está disponível.")
+            warn("A senha será armazenada em texto plano no arquivo de configuração como fallback.")
+            config["mcpServers"][MCP_SERVER_NAME]["env"]["SEI_SENHA"] = sei_senha
+        except (subprocess.CalledProcessError, OSError) as e:
+            error(f"Erro ao salvar senha no cofre do sistema: {getattr(e, 'stderr', None) or getattr(e, 'stdout', None) or str(e)}")
+            warn("A senha será armazenada em texto plano no arquivo de configuração como fallback.")
+            config["mcpServers"][MCP_SERVER_NAME]["env"]["SEI_SENHA"] = sei_senha
+
     write_config(config_path, config)
 
     # Fase 5
