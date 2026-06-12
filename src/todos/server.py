@@ -1707,33 +1707,50 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
 
     # Fallback via web scraper (instâncias sem mod-wssei)
     q_web = " ".join(filter(None, [palavras_chave, busca_rapida]))
-    dropped = [n for n, v in [
-        ("sta_tipo_data", sta_tipo_data),
-        ("id_unidade_geradora", id_unidade_geradora),
-        ("id_assunto", id_assunto),
-        ("grupo", grupo),
-    ] if v]
+    dropped = [
+        n
+        for n, v in [
+            ("sta_tipo_data", sta_tipo_data),
+            ("id_unidade_geradora", id_unidade_geradora),
+            ("id_assunto", id_assunto),
+            ("grupo", grupo),
+        ]
+        if v
+    ]
     try:
         web = _get_web_client(ctx)
-        items = await web.pesquisar_processos_web(
+        result_dict = await web.pesquisar_processos_web(
             q=q_web,
             descricao=descricao,
             data_inicio=data_inicio,
             data_fim=data_fim,
             pagina=pagina,
         )
+        items = result_dict["processos"]
+        parsed_total = result_dict.get("total_itens")
+
         page_items = items[:limit]
+
+        if parsed_total is not None:
+            total_itens = parsed_total
+            tem_proxima = len(page_items) >= 10 and total_itens > (pagina + 1) * 10  # noqa: PLR2004
+        else:
+            total_itens = len(page_items)
+            tem_proxima = len(items) >= 10  # noqa: PLR2004
+
         paged: dict = {
             "processos": page_items,
             "pagina_atual": pagina,
             "itens_pagina": len(page_items),
-            "total_itens": len(page_items),
-            "tem_proxima": len(items) >= 10,  # noqa: PLR2004
+            "total_itens": total_itens,
+            "tem_proxima": tem_proxima,
             "fonte": "web",
         }
         avisos: list[str] = []
         if dropped:
-            avisos.append(f"filtros ignorados (não suportados na pesquisa web): {', '.join(dropped)}")
+            avisos.append(
+                f"filtros ignorados (não suportados na pesquisa web): {', '.join(dropped)}"
+            )
         if limit < 10 and len(items) > limit:  # noqa: PLR2004
             avisos.append(f"resultados truncados para limit={limit} (página web retorna até 10)")
         if avisos:
