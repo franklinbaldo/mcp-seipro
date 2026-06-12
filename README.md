@@ -36,13 +36,13 @@ O instalador interativo faz o setup completo do MCP do `todos` em todos os ambie
 1. Instalação do gerenciador de pacotes `uv` (se necessário).
 2. Instalação da CLI `todos` globalmente via `uv tool`.
 3. Armazenamento seguro de credenciais no Keyring nativo do OS (sem expor senhas em arquivos).
-4. Registro do servidor MCP automaticamente no **Claude Code**, **Claude Desktop**, **Antigravity IDE** e no workspace local (`.mcp.json`).
+4. Registro do servidor MCP automaticamente no **Claude Code**, **Claude Desktop**, **Antigravity IDE**, **Codex CLI** e no workspace local (`.mcp.json`).
 
 Para executar a instalação automatizada:
 
 * **No Windows (PowerShell):**
   ```powershell
-  powershell -ExecutionPolicy Bypass -Command "if (-not (Get-Command 'uv' -ErrorAction SilentlyContinue)) { Write-Host '[*] Instalando uv...'; irm https://astral.sh/uv/install.ps1 | iex; $env:PATH += ';$env:USERPROFILE\.local\bin' }; uv tool install git+https://github.com/franklinbaldo/todos.git --force; $env:PATH += ';$env:USERPROFILE\.local\bin'; todos setup"
+  powershell -ExecutionPolicy Bypass -Command "if (-not (Get-Command 'uv' -ErrorAction SilentlyContinue)) { Write-Host '[*] Instalando uv...'; irm https://astral.sh/uv/install.ps1 | iex; $env:PATH += \";$env:USERPROFILE\.local\bin\" }; uv tool install git+https://github.com/franklinbaldo/todos.git --force; $env:PATH += \";$env:USERPROFILE\.local\bin\"; todos setup"
   ```
 
 * **No Linux / macOS (Terminal):**
@@ -104,6 +104,8 @@ Adicione ao `.mcp.json` do projeto ou `~/.claude.json` (global):
   }
 }
 ```
+
+> **Dica:** se você configurou o `todos setup`, deixe `SEI_SENHA` vazio (`""`) — a senha fica no Keyring do sistema.
 
 ### Registro no Claude Desktop (manual)
 
