@@ -190,9 +190,10 @@ def run_setup_wizard():
                 parts = parts_without_uf
 
         # 3. Se houver mais de um segmento sobressalente, prefere siglas (até 6 letras maiúsculas)
+        # Preserva a ordem original: o acrônimo do órgão vem antes da UF/sufixo
         if len(parts) > 1:
             acronyms = [p for p in parts if p.isupper() and len(p) <= 6]
-            sigla_orgao = min(acronyms, key=len) if acronyms else min(parts, key=len)
+            sigla_orgao = acronyms[0] if acronyms else parts[0]
         else:
             sigla_orgao = parts[0] if parts else sigla_orgao
     else:
@@ -291,14 +292,17 @@ def run_setup_wizard():
         )
 
         async def do_test_login() -> dict:
-            await web_client.ensure_authenticated()
-            unidade = await web_client.unidade_atual()
-            return {
-                "nome": web_client._nome_usuario,  # noqa: SLF001
-                "id": web_client._id_usuario,  # noqa: SLF001
-                "orgao": web_client._orgao_usuario,  # noqa: SLF001
-                "unidade": unidade,
-            }
+            try:
+                await web_client.ensure_authenticated()
+                unidade = await web_client.unidade_atual()
+                return {
+                    "nome": web_client._nome_usuario,  # noqa: SLF001
+                    "id": web_client._id_usuario,  # noqa: SLF001
+                    "orgao": web_client._orgao_usuario,  # noqa: SLF001
+                    "unidade": unidade,
+                }
+            finally:
+                await web_client.close()
 
         client_info = asyncio.run(do_test_login())
 
