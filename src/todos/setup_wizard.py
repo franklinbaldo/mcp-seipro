@@ -238,25 +238,12 @@ def run_setup_wizard():
     )
     keyring_user = f"{usuario}@{instance_url}" if instance_url else usuario
 
-    senha_validacao = ""
+    senha_validacao = senha  # fallback: usa senha local se keyring não estiver disponível
     try:
         import keyring
 
         keyring.set_password("todos-mcp", keyring_user, senha)
         print_green("[+] Senha armazenada com sucesso no Keyring do Sistema!")
-
-        # Testar a leitura de volta para garantir que o Keyring está funcional e usá-lo para validação
-        senha_validacao = keyring.get_password("todos-mcp", keyring_user)
-        if senha_validacao:
-            print_green("[+] Validação do Keyring concluída com sucesso (leitura OK)!")
-            # Se salvou no keyring com sucesso, não gravamos a senha no arquivo de configuração
-            senha = ""
-        else:
-            print_yellow(
-                "[!] Alerta: O Keyring confirmou a gravação, mas retornou vazio na leitura de teste."
-            )
-            print_yellow("    Usando senha temporária local para a validação.")
-            senha_validacao = senha
     except Exception as e:
         print_red(f"[ERRO] Falha ao acessar o Keyring do Sistema: {e}")
         print_yellow("[!] A senha não pôde ser salva de forma segura no Keyring nativo.")
@@ -266,7 +253,24 @@ def run_setup_wizard():
         if confirm != "s":
             print_red("[ERRO] Cancelado pelo usuário.")
             sys.exit(1)
-        senha_validacao = senha
+    else:
+        # set_password funcionou — tentar ler de volta para confirmar e obter a cópia do keyring
+        try:
+            lida = keyring.get_password("todos-mcp", keyring_user)
+            if lida:
+                print_green("[+] Validação do Keyring concluída com sucesso (leitura OK)!")
+                senha_validacao = lida
+                senha = ""  # não precisamos gravar a senha no arquivo de config
+            else:
+                print_yellow(
+                    "[!] Alerta: O Keyring confirmou a gravação, mas retornou vazio na leitura de teste."
+                )
+                print_yellow("    Usando senha local para a validação.")
+                senha = ""  # keyring tem a senha; não precisamos dela no config
+        except Exception:
+            # leitura falhou, mas a gravação foi bem-sucedida — usar senha local só para validação
+            print_yellow("[!] Não foi possível ler de volta do Keyring. Usando senha local para validação.")
+            senha = ""  # keyring tem a senha; não precisamos dela no config
 
     # 3. Validar as credenciais efetuando um login de teste
     print()
@@ -294,13 +298,18 @@ def run_setup_wizard():
         async def do_test_login() -> dict:
             try:
                 await web_client.ensure_authenticated()
-                unidade = await web_client.unidade_atual()
-                return {
+                info: dict = {
                     "nome": web_client._nome_usuario,  # noqa: SLF001
                     "id": web_client._id_usuario,  # noqa: SLF001
                     "orgao": web_client._orgao_usuario,  # noqa: SLF001
-                    "unidade": unidade,
+                    "unidade": {},
                 }
+                # unidade_atual é informação de display — não deve bloquear a validação
+                try:
+                    info["unidade"] = await web_client.unidade_atual()
+                except Exception:
+                    pass
+                return info
             finally:
                 await web_client.close()
 
