@@ -228,7 +228,46 @@ def run_setup_wizard():
         print_red("[ERRO] Senha é obrigatória.")
         sys.exit(1)
 
-    # 2.5 Validar as credenciais efetuando um login de teste
+    # 2.5 Salvar senha no Keyring do Sistema (serviço: todos-mcp, chave: usuario@host)
+    print()
+    print_yellow("[*] Gravando senha com segurança no Keyring do Sistema...")
+
+    instance_url = (
+        sei_root.replace("https://", "").replace("http://", "").strip().rstrip("/").lower()
+    )
+    keyring_user = f"{usuario}@{instance_url}" if instance_url else usuario
+
+    senha_validacao = ""
+    try:
+        import keyring
+
+        keyring.set_password("todos-mcp", keyring_user, senha)
+        print_green("[+] Senha armazenada com sucesso no Keyring do Sistema!")
+
+        # Testar a leitura de volta para garantir que o Keyring está funcional e usá-lo para validação
+        senha_validacao = keyring.get_password("todos-mcp", keyring_user)
+        if senha_validacao:
+            print_green("[+] Validação do Keyring concluída com sucesso (leitura OK)!")
+            # Se salvou no keyring com sucesso, não gravamos a senha no arquivo de configuração
+            senha = ""
+        else:
+            print_yellow(
+                "[!] Alerta: O Keyring confirmou a gravação, mas retornou vazio na leitura de teste."
+            )
+            print_yellow("    Usando senha temporária local para a validação.")
+            senha_validacao = senha
+    except Exception as e:
+        print_red(f"[ERRO] Falha ao acessar o Keyring do Sistema: {e}")
+        print_yellow("[!] A senha não pôde ser salva de forma segura no Keyring nativo.")
+        confirm = (
+            input("Deseja salvar a senha em texto limpo nas configurações? (s/n): ").strip().lower()
+        )
+        if confirm != "s":
+            print_red("[ERRO] Cancelado pelo usuário.")
+            sys.exit(1)
+        senha_validacao = senha
+
+    # 3. Validar as credenciais efetuando um login de teste
     print()
     print_yellow("[*] Validando credenciais com o SEI...")
     try:
@@ -244,21 +283,41 @@ def run_setup_wizard():
         web_client = SEIWebClient(
             sei_web_url=sei_root,
             sei_usuario=usuario,
-            sei_senha=senha,
+            sei_senha=senha_validacao,
             sei_sigla_orgao=sigla_orgao,
             sei_sigla_orgao_sistema=sigla_orgao_sistema,
             sei_sigla_sistema=sigla_sistema,
             sei_verify_ssl=not verify_ssl_disabled,
         )
 
-        async def do_test_login() -> None:
+        async def do_test_login() -> dict:
             await web_client.ensure_authenticated()
-            await web_client.close()
+            unidade = await web_client.unidade_atual()
+            return {
+                "nome": web_client._nome_usuario,  # noqa: SLF001
+                "id": web_client._id_usuario,  # noqa: SLF001
+                "orgao": web_client._orgao_usuario,  # noqa: SLF001
+                "unidade": unidade,
+            }
 
-        asyncio.run(do_test_login())
+        client_info = asyncio.run(do_test_login())
+
         # Limpar a senha do cliente web imediatamente após o login de teste
         web_client._senha = ""  # noqa: SLF001
+
         print_green("[+] Credenciais validadas com sucesso no SEI!")
+        if client_info:
+            nome_usuario = client_info.get("nome") or usuario
+            id_usuario = client_info.get("id") or "desconhecido"
+            orgao_usuario = client_info.get("orgao") or sigla_orgao
+            unidade = client_info.get("unidade") or {}
+
+            sigla_unid = unidade.get("sigla") or "N/A"
+            nome_unid = unidade.get("nome") or "N/A"
+            id_unid = unidade.get("id_unidade") or "N/A"
+
+            print_green(f"    Usuário: {nome_usuario} (ID: {id_usuario}, Órgão: {orgao_usuario})")
+            print_green(f"    Unidade Ativa: {sigla_unid} - {nome_unid} (ID: {id_unid})")
     except Exception as e:
         if "web_client" in locals():
             web_client._senha = ""  # noqa: SLF001
@@ -273,32 +332,10 @@ def run_setup_wizard():
             print_red("[ERRO] Configuração cancelada pelo usuário.")
             sys.exit(1)
 
-    # 3. Salvar senha no Keyring do Sistema (serviço: todos-mcp, chave: usuario@host)
-    print()
-    print_yellow("[*] Gravando senha com segurança no Keyring do Sistema...")
-
-    instance_url = (
-        sei_root.replace("https://", "").replace("http://", "").strip().rstrip("/").lower()
-    )
-    keyring_user = f"{usuario}@{instance_url}" if instance_url else usuario
-
-    try:
-        import keyring
-
-        keyring.set_password("todos-mcp", keyring_user, senha)
-        print_green("[+] Senha armazenada com sucesso no Keyring do Sistema!")
-    except Exception as e:
-        print_red(f"[ERRO] Falha ao acessar o Keyring do Sistema: {e}")
-        print_yellow("[!] A senha não pôde ser salva de forma segura no Keyring nativo.")
-        confirm = (
-            input("Deseja salvar a senha em texto limpo nas configurações? (s/n): ").strip().lower()
-        )
-        if confirm != "s":
-            print_red("[ERRO] Cancelado pelo usuário.")
-            sys.exit(1)
-    else:
-        # Se salvou no keyring com sucesso, não gravamos a senha no arquivo de configuração
-        senha = ""
+    # Limpar a senha de validação temporária da memória
+    if "senha_validacao" in locals():
+        senha_validacao = ""
+        del senha_validacao
 
     # 4. Configurar caminhos dos arquivos MCP por plataforma
     home = Path.home()
