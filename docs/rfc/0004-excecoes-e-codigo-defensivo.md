@@ -1,6 +1,6 @@
 # RFC 0004 — Hierarquia de exceções + remoção de código defensivo
 
-**Status**: Proposta
+**Status**: Concluído · **Atualizado**: 2026-06-13
 **Data**: 2026-06-13
 **Autores**: Franklin Baldo (com Claude Code)
 
