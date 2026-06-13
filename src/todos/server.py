@@ -1871,7 +1871,7 @@ async def sei_pesquisar_hipoteses_legais(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_tipos_processo(
     filtro: str = "",
     favoritos: str = "",
@@ -1905,7 +1905,7 @@ async def sei_pesquisar_tipos_processo(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_alterar_processo(  # noqa: PLR0913
     processo: str,
     especificacao: str = "",
@@ -1941,7 +1941,7 @@ async def sei_alterar_processo(  # noqa: PLR0913
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_criar_processo(  # noqa: PLR0913
     tipo_processo: str,
     especificacao: str = "",
@@ -1994,7 +1994,7 @@ async def sei_criar_processo(  # noqa: PLR0913
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_enviar_processo(  # noqa: C901, PLR0913
     numero_processo: str,
     unidades_destino: str,
@@ -2091,7 +2091,7 @@ async def sei_enviar_processo(  # noqa: C901, PLR0913
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_marcar_nao_lido(
     numero_processo: str,
     ctx: Context | None = None,
@@ -2125,7 +2125,7 @@ async def sei_marcar_nao_lido(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_concluir_processo(numero_processo: str, ctx: Context | None = None) -> str:
     """Conclui um processo na unidade atual do SEI.
 
@@ -2143,7 +2143,7 @@ async def sei_concluir_processo(numero_processo: str, ctx: Context | None = None
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str:
     """Reabre um processo que foi concluído na unidade.
 
@@ -2163,7 +2163,7 @@ async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_atribuir_processo(  # noqa: C901, PLR0911
     numero_processo: str,
     usuario: str,
@@ -2256,7 +2256,7 @@ async def sei_atribuir_processo(  # noqa: C901, PLR0911
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_cancelar_assinatura(
     id_documento: str,
     ctx: Context | None = None,
@@ -2325,7 +2325,7 @@ async def sei_cancelar_assinatura(
         return _error(msg)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_assinar_documento(
     id_documento: str,
     cargo: str = "",
@@ -2997,7 +2997,7 @@ async def sei_criar_marcador(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DEST)
 async def sei_excluir_marcador(
     ids_marcadores: str,
     ctx: Context | None = None,
@@ -3011,7 +3011,7 @@ async def sei_excluir_marcador(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_marcar_processo(
     processo: str,
     marcador: str,
@@ -3046,7 +3046,7 @@ async def sei_marcar_processo(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_marcadores(
     filtro: str = "",
     limit: int = 50,
@@ -3068,7 +3068,7 @@ async def sei_pesquisar_marcadores(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_consultar_marcador_processo(
     processo: str,
     ctx: Context | None = None,
@@ -3088,7 +3088,7 @@ async def sei_consultar_marcador_processo(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_acompanhar_processo(
     processo: str,
     grupo: str = "",
@@ -3127,7 +3127,7 @@ async def sei_acompanhar_processo(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_remover_acompanhamento(
     processo: str,
     ctx: Context | None = None,
@@ -3153,7 +3153,7 @@ async def sei_remover_acompanhamento(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_criar_grupo_acompanhamento(
     nome: str,
     ctx: Context | None = None,
@@ -3167,7 +3167,7 @@ async def sei_criar_grupo_acompanhamento(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DEST)
 async def sei_excluir_grupo_acompanhamento(
     ids_grupos: str,
     ctx: Context | None = None,
@@ -3181,7 +3181,7 @@ async def sei_excluir_grupo_acompanhamento(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_grupos_acompanhamento(
     filtro: str = "",
     ctx: Context | None = None,
@@ -3200,7 +3200,7 @@ async def sei_listar_grupos_acompanhamento(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_criar_bloco_interno(
     descricao: str,
     ctx: Context | None = None,
@@ -3217,7 +3217,7 @@ async def sei_criar_bloco_interno(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_incluir_processo_bloco_interno(
     id_bloco: str,
     processos: str,
@@ -3236,7 +3236,7 @@ async def sei_incluir_processo_bloco_interno(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DEST)
 async def sei_retirar_processo_bloco_interno(
     id_bloco: str,
     processos: str,
@@ -3260,7 +3260,7 @@ async def sei_retirar_processo_bloco_interno(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_criar_bloco_assinatura(
     descricao: str,
     unidades: str = "",
@@ -3307,7 +3307,7 @@ async def sei_criar_bloco_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_incluir_documento_bloco_assinatura(
     id_bloco: str,
     documentos: str,
@@ -3326,7 +3326,7 @@ async def sei_incluir_documento_bloco_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_disponibilizar_bloco_assinatura(
     id_bloco: str,
     ctx: Context | None = None,
@@ -3347,7 +3347,7 @@ async def sei_disponibilizar_bloco_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_cancelar_disponibilizacao_bloco(
     id_bloco: str,
     ctx: Context | None = None,
@@ -3368,7 +3368,7 @@ async def sei_cancelar_disponibilizacao_bloco(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_blocos_assinatura(
     filtro: str = "",
     limit: int = 50,
@@ -3386,7 +3386,7 @@ async def sei_pesquisar_blocos_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_criar_anotacao(
     processo: str,
     descricao: str,
@@ -3430,7 +3430,7 @@ async def sei_criar_anotacao(
 # -- Sistema / Informações --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_versao(ctx: Context) -> str:
     """Retorna a versão do SEI e do módulo wssei instalado.
 
@@ -3446,7 +3446,7 @@ async def sei_versao(ctx: Context) -> str:
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_orgaos(ctx: Context) -> str:
     """Lista os órgãos cadastrados na instalação do SEI.
 
@@ -3461,7 +3461,7 @@ async def sei_listar_orgaos(ctx: Context) -> str:
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_contextos(id_orgao: str, ctx: Context) -> str:
     """Lista os contextos disponíveis para um órgão.
 
@@ -3479,7 +3479,7 @@ async def sei_listar_contextos(id_orgao: str, ctx: Context) -> str:
 # -- Usuários --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_usuarios(
     filtro: str = "",
     id_orgao: str = "",
@@ -3511,7 +3511,7 @@ async def sei_pesquisar_usuarios(
 # -- Unidades --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_outras_unidades(
     filtro: str = "",
     limit: int = 50,
@@ -3538,7 +3538,7 @@ async def sei_pesquisar_outras_unidades(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_textos_padrao(
     filtro: str = "",
     limit: int = 50,
@@ -3569,7 +3569,7 @@ async def sei_pesquisar_textos_padrao(
 # -- Documentos --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_consultar_documento_externo(
     id_documento: str,
     processo: str | None = None,
@@ -3650,7 +3650,7 @@ async def sei_consultar_documento_externo(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_alterar_documento_interno(
     id_documento: str,
     descricao: str = "",
@@ -3682,7 +3682,7 @@ async def sei_alterar_documento_interno(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_alterar_documento_externo(  # noqa: PLR0913
     id_documento: str,
     descricao: str = "",
@@ -3716,7 +3716,7 @@ async def sei_alterar_documento_externo(  # noqa: PLR0913
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_tipos_conferencia(
     filtro: str = "",
     limit: int = 50,
@@ -3744,7 +3744,7 @@ async def sei_pesquisar_tipos_conferencia(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_sugestao_assuntos_documento(
     id_serie: str,
     ctx: Context | None = None,
@@ -3763,7 +3763,7 @@ async def sei_sugestao_assuntos_documento(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_blocos_documento(
     id_documento: str,
     ctx: Context | None = None,
@@ -3781,7 +3781,7 @@ async def sei_listar_blocos_documento(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_tipos_documento_externo(
     filtro: str = "",
     limit: int = 50,
@@ -3809,7 +3809,7 @@ async def sei_pesquisar_tipos_documento_externo(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_parametros_upload(ctx: Context) -> str:
     """Retorna parâmetros de upload do SEI (extensões permitidas, tamanhos máximos).
 
@@ -3828,7 +3828,7 @@ async def sei_parametros_upload(ctx: Context) -> str:
 # -- Processos: assuntos, atribuição, acesso, relacionamentos --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_assuntos(
     filtro: str = "",
     limit: int = 50,
@@ -3853,7 +3853,7 @@ async def sei_pesquisar_assuntos(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_sugestao_assuntos_processo(
     id_tipo_processo: str,
     ctx: Context | None = None,
@@ -3872,7 +3872,7 @@ async def sei_sugestao_assuntos_processo(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_consultar_atribuicao(
     processo: str,
     ctx: Context | None = None,
@@ -3895,7 +3895,7 @@ async def sei_consultar_atribuicao(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_verificar_acesso(
     processo: str,
     ctx: Context | None = None,
@@ -3919,7 +3919,7 @@ async def sei_verificar_acesso(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_relacionamentos(
     processo: str,
     ctx: Context | None = None,
@@ -3938,7 +3938,7 @@ async def sei_listar_relacionamentos(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_atividades(
     processo: str,
     ctx: Context | None = None,
@@ -3959,7 +3959,7 @@ async def sei_listar_atividades(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_gerar_pdf_processo(
     processo: str,
     ctx: Context | None = None,
@@ -4011,7 +4011,7 @@ async def sei_gerar_pdf_processo(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_gerar_zip_processo(
     processo: str,
     ctx: Context | None = None,
@@ -4060,7 +4060,7 @@ async def sei_gerar_zip_processo(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_incluir_documento_externo(  # noqa: PLR0913
     processo: str,
     arquivo_path: str = "",
@@ -4137,7 +4137,7 @@ async def sei_incluir_documento_externo(  # noqa: PLR0913
 # -- Acompanhamento: meus, da unidade, alterar --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_meus_acompanhamentos(
     limit: int = 50,
     pagina: int = 0,
@@ -4160,7 +4160,7 @@ async def sei_listar_meus_acompanhamentos(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_acompanhamentos_unidade(
     limit: int = 50,
     pagina: int = 0,
@@ -4183,7 +4183,7 @@ async def sei_listar_acompanhamentos_unidade(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_alterar_acompanhamento(
     processo: str,
     grupo: str = "",
@@ -4215,7 +4215,7 @@ async def sei_alterar_acompanhamento(
 # -- Credenciamento (processos sigilosos) --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_credenciamentos(
     processo: str,
     ctx: Context | None = None,
@@ -4234,7 +4234,7 @@ async def sei_listar_credenciamentos(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_conceder_credenciamento(
     processo: str,
     id_usuario: str,
@@ -4254,7 +4254,7 @@ async def sei_conceder_credenciamento(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DEST)
 async def sei_renunciar_credenciamento(
     processo: str,
     ctx: Context | None = None,
@@ -4274,7 +4274,7 @@ async def sei_renunciar_credenciamento(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DEST)
 async def sei_cassar_credenciamento(
     processo: str,
     id_usuario: str,
@@ -4297,7 +4297,7 @@ async def sei_cassar_credenciamento(
 # -- Assinantes e Observação --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_assinantes(ctx: Context) -> str:
     """Lista signatários (cargos/funções) disponíveis na unidade atual.
 
@@ -4313,7 +4313,7 @@ async def sei_listar_assinantes(ctx: Context) -> str:
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_orgaos_assinante(ctx: Context) -> str:
     """Lista órgãos disponíveis para assinatura.
 
@@ -4328,7 +4328,7 @@ async def sei_listar_orgaos_assinante(ctx: Context) -> str:
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_criar_observacao(
     processo: str,
     descricao: str,
@@ -4350,7 +4350,7 @@ async def sei_criar_observacao(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_criar_contato(
     nome: str,
     tipo: str = "",
@@ -4374,7 +4374,7 @@ async def sei_criar_contato(
 # -- Modelos de documento --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_grupos_modelos(
     limit: int = 50,
     pagina: int = 0,
@@ -4397,7 +4397,7 @@ async def sei_listar_grupos_modelos(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_modelos(
     id_grupo: str = "",
     filtro: str = "",
@@ -4430,7 +4430,7 @@ async def sei_listar_modelos(
 # -- Marcador: desativar, reativar, histórico --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_desativar_marcador(
     ids_marcadores: str,
     ctx: Context | None = None,
@@ -4448,7 +4448,7 @@ async def sei_desativar_marcador(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_reativar_marcador(
     ids_marcadores: str,
     ctx: Context | None = None,
@@ -4462,7 +4462,7 @@ async def sei_reativar_marcador(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_historico_marcador_processo(
     processo: str,
     ctx: Context | None = None,
@@ -4485,7 +4485,7 @@ async def sei_historico_marcador_processo(
 # -- Bloco Interno: operações adicionais --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_processos_bloco_interno(
     id_bloco: str,
     ctx: Context | None = None,
@@ -4503,7 +4503,7 @@ async def sei_listar_processos_bloco_interno(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_alterar_bloco_interno(
     id_bloco: str,
     descricao: str,
@@ -4522,7 +4522,7 @@ async def sei_alterar_bloco_interno(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DEST)
 async def sei_excluir_bloco_interno(
     ids_blocos: str,
     ctx: Context | None = None,
@@ -4540,7 +4540,7 @@ async def sei_excluir_bloco_interno(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_concluir_bloco_interno(
     ids_blocos: str,
     ctx: Context | None = None,
@@ -4558,7 +4558,7 @@ async def sei_concluir_bloco_interno(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_reabrir_bloco_interno(
     id_bloco: str,
     ctx: Context | None = None,
@@ -4576,7 +4576,7 @@ async def sei_reabrir_bloco_interno(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_anotar_processo_bloco_interno(
     id_bloco: str,
     processo: str,
@@ -4597,7 +4597,7 @@ async def sei_anotar_processo_bloco_interno(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_alterar_anotacao_bloco_interno(
     id_bloco: str,
     processo: str,
@@ -4621,7 +4621,7 @@ async def sei_alterar_anotacao_bloco_interno(
 # -- Bloco de Assinatura: operações adicionais --
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_documentos_bloco_assinatura(
     id_bloco: str,
     ctx: Context | None = None,
@@ -4638,7 +4638,7 @@ async def sei_listar_documentos_bloco_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DEST)
 async def sei_retirar_documentos_bloco_assinatura(
     id_bloco: str,
     documentos: str,
@@ -4669,7 +4669,7 @@ async def sei_retirar_documentos_bloco_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_alterar_bloco_assinatura(
     id_bloco: str,
     descricao: str,
@@ -4692,7 +4692,7 @@ async def sei_alterar_bloco_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_DEST)
 async def sei_excluir_bloco_assinatura(
     ids_blocos: str,
     ctx: Context | None = None,
@@ -4721,7 +4721,7 @@ async def sei_excluir_bloco_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_concluir_bloco_assinatura(
     ids_blocos: str,
     ctx: Context | None = None,
@@ -4750,7 +4750,7 @@ async def sei_concluir_bloco_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_reabrir_bloco_assinatura(
     id_bloco: str,
     ctx: Context | None = None,
@@ -4772,7 +4772,7 @@ async def sei_reabrir_bloco_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_retornar_bloco_assinatura(
     id_bloco: str,
     ctx: Context | None = None,
@@ -4794,7 +4794,7 @@ async def sei_retornar_bloco_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_anotar_documento_bloco_assinatura(
     id_bloco: str,
     documento: str,
@@ -4822,7 +4822,7 @@ async def sei_anotar_documento_bloco_assinatura(
         raise ToolError(str(e)) from e
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_alterar_anotacao_bloco_assinatura(
     id_bloco: str,
     documento: str,
