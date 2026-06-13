@@ -46,6 +46,9 @@ logger = logging.getLogger(__name__)
 
 MAX_BINARY_SIZE = 10 * 1024 * 1024  # 10 MB
 _MIN_DOC_CONTENT_LENGTH = 10  # minimum bytes for a non-empty internal document
+_MAX_GRUPO_INLINE = 20  # show process list inline only for small groups
+_MAX_PDF_MB = 50.0  # refuse to embed PDFs larger than this
+_MAX_ZIP_MB = 200.0  # refuse to embed ZIPs larger than this
 
 # Detecta modo HTTP (Railway injeta PORT)
 _http_mode = bool(os.environ.get("PORT"))
@@ -101,9 +104,9 @@ def _get_client(ctx: Context | None) -> SEIClient:
         raise ValueError("Contexto MCP nao disponivel.")
 
     if _http_mode:
-        from fastmcp.server.dependencies import get_access_token  # noqa: PLC0415
+        from fastmcp.server.dependencies import get_access_token
 
-        from todos.auth import get_sei_credentials_from_token  # noqa: PLC0415
+        from todos.auth import get_sei_credentials_from_token
 
         access_token = get_access_token()
         if not access_token:
@@ -136,9 +139,9 @@ def _get_web_client(ctx: Context | None) -> SEIWebClient:
         raise ValueError("Contexto MCP nao disponivel.")
 
     if _http_mode:
-        from fastmcp.server.dependencies import get_access_token  # noqa: PLC0415
+        from fastmcp.server.dependencies import get_access_token
 
-        from todos.auth import get_sei_credentials_from_token  # noqa: PLC0415
+        from todos.auth import get_sei_credentials_from_token
 
         access_token = get_access_token()
         if not access_token:
@@ -607,7 +610,7 @@ async def _resolver_processo(client: SEIClient, referencia: str) -> str:
     return referencia
 
 
-def _json(data) -> str:  # noqa: ANN001
+def _json(data: object) -> str:
     return json.dumps(data, ensure_ascii=False, indent=2)
 
 
@@ -1518,7 +1521,7 @@ async def sei_editar_secao(
     """
     try:
         client = _get_client(ctx)
-        import html as html_module  # noqa: PLC0415
+        import html as html_module
 
         # Buscar todas as seções atuais do documento
         secoes_data = await client.listar_secao_documento(id_documento)
@@ -1799,10 +1802,10 @@ async def sei_resumo_processos(
         for p in todos:
             a = p.get("atributos", {})
             s = a.get("status", {})
-            chave1 = cast(Callable[..., str], campo1["extract"])(a, s)  # noqa: TC006
+            chave1 = cast(Callable[..., str], campo1["extract"])(a, s)
 
             if campo2:
-                chave2 = cast(Callable[..., str], campo2["extract"])(a, s)  # noqa: TC006
+                chave2 = cast(Callable[..., str], campo2["extract"])(a, s)
                 chave = f"{chave1} | {chave2}"
             else:
                 chave = chave1
@@ -1818,13 +1821,13 @@ async def sei_resumo_processos(
             g = grupos[chave]
             item = {"grupo": chave, "quantidade": g["quantidade"]}
             # Incluir lista de processos se grupo pequeno (≤ 20)
-            if g["quantidade"] <= 20:  # noqa: PLR2004
+            if g["quantidade"] <= _MAX_GRUPO_INLINE:
                 item["processos"] = g["processos"]
             resumo.append(item)
 
-        header = cast(str, campo1["desc"])  # noqa: TC006
+        header = cast(str, campo1["desc"])
         if campo2:
-            header += f" × {cast(str, campo2['desc'])}"  # noqa: TC006
+            header += f" × {cast(str, campo2['desc'])}"
 
         return _json(
             {
@@ -2396,7 +2399,7 @@ async def sei_cancelar_assinatura(
     """
     try:
         client = _get_client(ctx)
-        import html as html_module  # noqa: PLC0415
+        import html as html_module
 
         # Resolver número SEI → id interno
         doc_id = id_documento.strip()
@@ -3729,7 +3732,7 @@ async def sei_consultar_documento_externo(
                         id_documento = doc_id
                         result = await client.consultar_documento_externo(id_documento)
                     else:
-                        raise primeira  # noqa: TRY201, TRY301
+                        raise primeira
                 except Exception:
                     return _json(
                         {
@@ -4091,7 +4094,7 @@ async def sei_gerar_pdf_processo(
     Nota: o processo precisa estar aberto na caixa da unidade atual.
     Para processos de outras unidades, use sei_trocar_unidade primeiro.
     """
-    import tempfile  # noqa: PLC0415
+    import tempfile
 
     try:
         web = _get_web_client(ctx)
@@ -4103,12 +4106,12 @@ async def sei_gerar_pdf_processo(
             await ctx.report_progress(100, 100)
 
         tamanho_mb = len(pdf_bytes) / 1024 / 1024
-        if tamanho_mb > 50:  # noqa: PLR2004
+        if tamanho_mb > _MAX_PDF_MB:
             return _error(f"PDF muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI.")
 
         protocolo_safe = processo.replace("/", "-")
-        pdf_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.pdf")  # noqa: PTH118
-        with open(pdf_path, "wb") as f:  # noqa: ASYNC230, PTH123
+        pdf_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.pdf")
+        with open(pdf_path, "wb") as f:
             f.write(pdf_bytes)
 
         return _json(
@@ -4140,7 +4143,7 @@ async def sei_gerar_zip_processo(
 
     Retorna base64 do ZIP, tamanho e caminho do arquivo salvo em disco.
     """
-    import tempfile  # noqa: PLC0415
+    import tempfile
 
     try:
         web = _get_web_client(ctx)
@@ -4152,12 +4155,12 @@ async def sei_gerar_zip_processo(
             await ctx.report_progress(100, 100)
 
         tamanho_mb = len(zip_bytes) / 1024 / 1024
-        if tamanho_mb > 200:  # noqa: PLR2004
+        if tamanho_mb > _MAX_ZIP_MB:
             return _error(f"ZIP muito grande ({tamanho_mb:.1f} MB). Baixe manualmente pelo SEI.")
 
         protocolo_safe = processo.replace("/", "-")
-        zip_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.zip")  # noqa: PTH118
-        with open(zip_path, "wb") as f:  # noqa: ASYNC230, PTH123
+        zip_path = os.path.join(tempfile.gettempdir(), f"SEI_{protocolo_safe}.zip")
+        with open(zip_path, "wb") as f:
             f.write(zip_bytes)
 
         return _json(
@@ -4766,13 +4769,11 @@ async def sei_retirar_documentos_bloco_assinatura(
         if backend.has_rest:
             result = await backend.rest.retirar_documento_bloco_assinatura(id_bloco, documentos)
         else:
-            resultados = []
-            for id_doc in documentos.split(","):
-                id_doc = id_doc.strip()  # noqa: PLW2901
-                if id_doc:
-                    resultados.append(
-                        await backend.web.retirar_documento_bloco_assinatura_web(id_bloco, id_doc)
-                    )
+            resultados = [
+                await backend.web.retirar_documento_bloco_assinatura_web(id_bloco, id_doc)
+                for id_doc in (d.strip() for d in documentos.split(","))
+                if id_doc
+            ]
             result = (
                 resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
             )
@@ -4820,11 +4821,11 @@ async def sei_excluir_bloco_assinatura(
         if backend.has_rest:
             result = await backend.rest.excluir_blocos_assinatura(ids_blocos)
         else:
-            resultados = []
-            for id_bloco in ids_blocos.split(","):
-                id_bloco = id_bloco.strip()  # noqa: PLW2901
-                if id_bloco:
-                    resultados.append(await backend.web.excluir_bloco_assinatura_web(id_bloco))
+            resultados = [
+                await backend.web.excluir_bloco_assinatura_web(id_bloco)
+                for id_bloco in (b.strip() for b in ids_blocos.split(","))
+                if id_bloco
+            ]
             result = (
                 resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
             )
@@ -4849,11 +4850,11 @@ async def sei_concluir_bloco_assinatura(
         if backend.has_rest:
             result = await backend.rest.concluir_blocos_assinatura(ids_blocos)
         else:
-            resultados = []
-            for id_bloco in ids_blocos.split(","):
-                id_bloco = id_bloco.strip()  # noqa: PLW2901
-                if id_bloco:
-                    resultados.append(await backend.web.concluir_bloco_assinatura_web(id_bloco))
+            resultados = [
+                await backend.web.concluir_bloco_assinatura_web(id_bloco)
+                for id_bloco in (b.strip() for b in ids_blocos.split(","))
+                if id_bloco
+            ]
             result = (
                 resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
             )
@@ -4965,15 +4966,15 @@ async def sei_alterar_anotacao_bloco_assinatura(
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "setup":
         if not sys.stdin.isatty():
-            print("Erro: 'todos setup' requer um terminal interativo.", file=sys.stderr)  # noqa: T201
+            sys.stderr.write("Erro: 'todos setup' requer um terminal interativo.\n")
             sys.exit(1)
-        from todos.setup_wizard import run_setup_wizard  # noqa: PLC0415
+        from todos.setup_wizard import run_setup_wizard
 
         run_setup_wizard()
         return
 
     if _http_mode:
-        from todos.remote import run_remote  # noqa: PLC0415
+        from todos.remote import run_remote
 
         run_remote(mcp, port=_http_port)
     else:

@@ -336,19 +336,19 @@ def _mcp_add_via_cli(
     cmd = [claude_cli, "mcp", "add", "-s", scope, *env_args, "todos", todos_cmd]
     cwd_str = str(cwd or Path.cwd())
     try:
-        _sp.run(cmd, check=True, capture_output=True, text=True, cwd=cwd_str)  # noqa: S603
+        _sp.run(cmd, check=True, capture_output=True, text=True, cwd=cwd_str)
     except _sp.CalledProcessError as e:
         if "already exists" not in (e.stderr or "") and "already exists" not in (e.stdout or ""):
             return False
         with contextlib.suppress(_sp.CalledProcessError):
-            _sp.run(  # noqa: S603
+            _sp.run(
                 [claude_cli, "mcp", "remove", "-s", scope, "todos"],
                 check=True,
                 capture_output=True,
                 text=True,
                 cwd=cwd_str,
             )
-            _sp.run(cmd, check=True, capture_output=True, text=True, cwd=cwd_str)  # noqa: S603
+            _sp.run(cmd, check=True, capture_output=True, text=True, cwd=cwd_str)
             return True
         return False
     except OSError:
@@ -474,17 +474,17 @@ def _update_codex_via_cli(codex_cli: str, todos_cmd: str, mcp_env: dict[str, str
     env_args = [item for k, v in mcp_env.items() for item in ("--env", f"{k}={v}")]
     cmd_codex = [codex_cli, "mcp", "add", "todos", *env_args, "--", todos_cmd]
     try:
-        _sp.run(cmd_codex, check=True, capture_output=True, text=True)  # noqa: S603
+        _sp.run(cmd_codex, check=True, capture_output=True, text=True)
     except _sp.CalledProcessError as e:
         if "already" in (e.stderr or "") or "already" in (e.stdout or ""):
             with contextlib.suppress(_sp.CalledProcessError):
-                _sp.run(  # noqa: S603
+                _sp.run(
                     [codex_cli, "mcp", "remove", "todos"],
                     check=True,
                     capture_output=True,
                     text=True,
                 )
-                _sp.run(cmd_codex, check=True, capture_output=True, text=True)  # noqa: S603
+                _sp.run(cmd_codex, check=True, capture_output=True, text=True)
                 print_green("[+] Atualizado: Codex (global) via `codex mcp add`")
                 return True
         return False

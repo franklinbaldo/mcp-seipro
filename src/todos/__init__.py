@@ -1,1 +1,3 @@
-__version__ = "0.1.0"  # noqa: D104
+"""todos — TOdos DOmina O SEI: MCP server for SEI (Sistema Eletrônico de Informações)."""
+
+__version__ = "0.1.0"

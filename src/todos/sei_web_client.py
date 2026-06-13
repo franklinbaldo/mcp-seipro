@@ -125,24 +125,37 @@ class SEIWebClient:
     ~3 s mas listagens subsequentes custam ~600 ms cada.
     """
 
-    def __init__(self, **kwargs: Any) -> None:  # noqa: ANN401, D107
+    def __init__(
+        self,
+        *,
+        sei_url: str = "",
+        sei_web_url: str = "",
+        sei_usuario: str = "",
+        sei_senha: str = "",
+        sei_orgao: str = "",
+        sei_sigla_orgao: str = "",
+        sei_sigla_sistema: str = "",
+        sei_sigla_orgao_sistema: str = "",
+        sei_verify_ssl: str | bool | None = None,
+    ) -> None:
+        """Initialise from keyword args (sei_web_url, sei_usuario, sei_senha, …) or env vars."""
         # Reusa as mesmas env vars do SEIClient REST
-        sei_url = kwargs.get("sei_url", os.environ.get("SEI_URL", ""))
+        _sei_url = sei_url or os.environ.get("SEI_URL", "")
         # SEI_WEB_URL permite modo web-only (sem mod-wssei) apontando direto para
         # a raiz do SEI (ex: https://sei.orgao.gov.br). Tem precedência sobre SEI_URL.
-        sei_web_url = kwargs.get("sei_web_url", os.environ.get("SEI_WEB_URL", ""))
-        if sei_web_url:
-            self.sei_root = sei_web_url.rstrip("/")
-        elif "/sei/" in sei_url:
+        _sei_web_url = sei_web_url or os.environ.get("SEI_WEB_URL", "")
+        if _sei_web_url:
+            self.sei_root = _sei_web_url.rstrip("/")
+        elif "/sei/" in _sei_url:
             # Deriva raiz a partir da URL da REST
             # Ex: https://sei.antaq.gov.br/sei/modulos/wssei/... → https://sei.antaq.gov.br
-            self.sei_root = sei_url.split("/sei/", 1)[0]
+            self.sei_root = _sei_url.split("/sei/", 1)[0]
         else:
-            self.sei_root = sei_url.rstrip("/")
+            self.sei_root = _sei_url.rstrip("/")
 
-        self._usuario = kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", ""))
+        self._usuario = sei_usuario or os.environ.get("SEI_USUARIO", "")
 
-        self._senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
+        self._senha = sei_senha or os.environ.get("SEI_SENHA", "")
         # Pre-compute keyring key so login() can do the actual lookup in a thread
         self._keyring_user: str | None = None
         if not self._senha and self._usuario:
@@ -159,24 +172,26 @@ class SEIWebClient:
 
         # SEI_ORGAO no .env é o id da REST (geralmente "0"). O selOrgao do SIP
         # é descoberto dinamicamente do <select> na página de login.
-        self._sigla_orgao = kwargs.get(
-            "sei_sigla_orgao", os.environ.get("SEI_SIGLA_ORGAO", "ANTAQ")
-        )
-        self._sigla_sistema = kwargs.get(
-            "sei_sigla_sistema", os.environ.get("SEI_SIGLA_SISTEMA", "SEI")
-        )
+        self._sigla_orgao = sei_sigla_orgao or os.environ.get("SEI_SIGLA_ORGAO", "ANTAQ")
+        self._sigla_sistema = sei_sigla_sistema or os.environ.get("SEI_SIGLA_SISTEMA", "SEI")
         # SEI_SIGLA_ORGAO_SISTEMA: parâmetro da URL do SIP login (ex: "RO" para Rondônia).
         # Quando não definido, usa SEI_SIGLA_ORGAO (mantém compatibilidade p/ instâncias
         # onde sigla_orgao_sistema == sigla do órgão no selOrgao, ex: ANTAQ).
-        _sigla_orgao_sistema = kwargs.get(
-            "sei_sigla_orgao_sistema",
-            os.environ.get("SEI_SIGLA_ORGAO_SISTEMA", self._sigla_orgao),
+        _sigla_orgao_sistema = (
+            sei_sigla_orgao_sistema
+            or os.environ.get("SEI_SIGLA_ORGAO_SISTEMA", "")
+            or self._sigla_orgao
         )
 
-        verify_ssl = kwargs.get("sei_verify_ssl", os.environ.get("SEI_VERIFY_SSL", "true"))
-        if isinstance(verify_ssl, str):
-            verify_ssl = verify_ssl.lower() != "false"
-        if not verify_ssl:
+        _raw_verify: str | bool = (
+            sei_verify_ssl
+            if sei_verify_ssl is not None
+            else os.environ.get("SEI_VERIFY_SSL", "true")
+        )
+        _verify: bool = (
+            _raw_verify.lower() != "false" if isinstance(_raw_verify, str) else _raw_verify
+        )
+        if not _verify:
             warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
         self.login_url = (
@@ -185,7 +200,7 @@ class SEIWebClient:
         )
 
         self._http = httpx.AsyncClient(
-            verify=verify_ssl,
+            verify=_verify,
             follow_redirects=True,
             timeout=httpx.Timeout(60.0, connect=10.0, read=45.0),
             headers={
@@ -244,7 +259,8 @@ class SEIWebClient:
         """Sobrescreve a senha em memória após uso."""
         self._senha = ""
 
-    async def close(self) -> None:  # noqa: D102
+    async def close(self) -> None:
+        """Close the underlying HTTP client."""
         await self._http.aclose()
 
     async def ensure_authenticated(self) -> None:
@@ -256,13 +272,13 @@ class SEIWebClient:
     # Login flow
     # ------------------------------------------------------------------
 
-    async def login(self) -> None:  # noqa: C901, PLR0912, PLR0915
+    async def login(self) -> None:
         """Faz login via formulário SIP e captura a inbox URL com infra_hash."""
         if not self._senha and self._keyring_user:
             keyring_user = self._keyring_user
             self._keyring_user = None  # prevent concurrent / empty-string repeated lookups
             try:
-                import keyring  # noqa: PLC0415
+                import keyring
 
                 senha = await asyncio.wait_for(
                     asyncio.to_thread(keyring.get_password, "todos-mcp", keyring_user),
@@ -276,7 +292,7 @@ class SEIWebClient:
                 logger.warning(
                     "Timeout ao buscar senha do keyring (>5s); use SEI_SENHA como fallback"
                 )
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 self._keyring_user = keyring_user  # restore: transient error, allow retry
                 logger.warning("Não foi possível obter a senha do keyring: %s", e)
 
@@ -392,7 +408,7 @@ class SEIWebClient:
         self._extract_unidade_atual(post_resp.text, _soup)
         logger.info("SEI web login bem-sucedido — inbox capturada")
 
-    def _descobrir_sel_orgao(self, login_form, soup) -> str:  # noqa: ANN001
+    def _descobrir_sel_orgao(self, login_form: Tag, soup: BeautifulSoup) -> str:
         """Descobre o value do <select selOrgao> que corresponde ao órgão.
 
         Estratégia: option já selecionado → option com texto contendo a sigla
@@ -407,7 +423,7 @@ class SEIWebClient:
         # 1) option já selecionado
         for opt in sel.find_all("option"):
             if opt.get("selected") is not None and opt.get("value") and opt.get("value") != "null":
-                return opt["value"]
+                return str(opt["value"])
         # 2) option cujo texto contém a sigla do órgão (ex: ANTAQ)
         sigla_upper = self._sigla_orgao.upper()
         for opt in sel.find_all("option"):
@@ -416,12 +432,12 @@ class SEIWebClient:
                 and opt.get("value")
                 and opt.get("value") != "null"
             ):
-                return opt["value"]
+                return str(opt["value"])
         # 3) primeiro option válido
         for opt in sel.find_all("option"):
             v = opt.get("value")
             if v and v != "null":
-                return v
+                return str(v)
         raise SEIParseError("Nenhum <option> válido em selOrgao.")
 
     def _extract_pesquisa_rapida(self, html: str, soup: BeautifulSoup | None = None) -> None:
@@ -550,7 +566,7 @@ class SEIWebClient:
                 continue
             cells = [" ".join(td.get_text(" ", strip=True).split()) for td in row.find_all("td")]
             values = [cell for cell in cells if cell]
-            if len(values) < 2:  # noqa: PLR2004
+            if len(values) < 2:
                 continue
             units.append({"id_unidade": id_unidade, "sigla": values[0], "nome": values[1]})
         return units
@@ -765,7 +781,7 @@ class SEIWebClient:
             "Verifique se o número está correto e se você tem acesso."
         )
 
-    async def pesquisar_processos_web(  # noqa: C901, PLR0912, PLR0915
+    async def pesquisar_processos_web(
         self,
         q: str = "",
         descricao: str = "",
@@ -874,7 +890,7 @@ class SEIWebClient:
                 if sib.find("a", href=re.compile(r"procedimento_trabalhar")):
                     break
                 siblings.append(sib)
-                if len(siblings) == 2:  # noqa: PLR2004
+                if len(siblings) == 2:
                     break
 
             tipo_cell = row0.find("td")
@@ -914,12 +930,12 @@ class SEIWebClient:
                 if m:
                     total_itens = int(m.group(1))
                     break
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.debug("Falha ao parsear total de itens da pesquisa", exc_info=True)
 
         return {"processos": results, "total_itens": total_itens}
 
-    async def consultar_processo(self, protocolo_formatado: str) -> dict:  # noqa: C901, PLR0915
+    async def consultar_processo(self, protocolo_formatado: str) -> dict:
         """Busca dados de um processo navegando pela cadeia de páginas web.
 
         Fluxo:
@@ -1021,7 +1037,7 @@ class SEIWebClient:
                     "link": n.get("link", ""),
                 }
                 for n in nos[1:]
-                if n.get("tipo_no") not in ("PASTA",)  # noqa: FURB171
+                if n.get("tipo_no") != "PASTA"
             ]
             result["documentos"] = docs
             result["total_documentos"] = len(docs)
@@ -1214,7 +1230,7 @@ class SEIWebClient:
             "protocolo": protocolo,
         }
 
-    async def obter_form_acao(  # noqa: C901
+    async def obter_form_acao(
         self,
         protocolo: str,
         nome_acao: str,
@@ -1428,16 +1444,16 @@ class SEIWebClient:
             raise SEIConnectionError(f"procedimento_consultar: {erro}")
         return _parse_procedimento_consultar(html, protocolo)
 
-    async def _gerar_arquivo_processo(self, protocolo_formatado: str, acao: str) -> bytes:  # noqa: C901, PLR0915
-        """Helper compartilhado para gerar_pdf_processo e gerar_zip_processo.
+    async def _gerar_arquivo_processo(self, protocolo_formatado: str, acao: str) -> bytes:
+        """Generate a PDF or ZIP archive for a process (shared by gerar_pdf/zip_processo).
 
-        Fluxo de 5 etapas (igual para PDF e ZIP):
+        Five-step flow (identical for PDF and ZIP):
         1. procedimento_trabalhar → frameset com ifrArvore
         2. arvore_montar → busca link da ação (procedimento_gerar_pdf/zip)
         3. GET form de opções
         4. POST com hdnFlagGerar=1 → HTML com ifrDownload.src
         5. GET exibir_arquivo → bytes do arquivo
-        """  # noqa: D401
+        """
 
         def _find_link(proto: str) -> str | None:
             if proto in self._trabalhar_links:
@@ -1488,7 +1504,7 @@ class SEIWebClient:
         _check(r3)
 
         soup3 = BeautifulSoup(r3.content.decode("iso-8859-1", "replace"), "html.parser")
-        form = soup3.find("form", id=re.compile(r"frmProcedimento(Pdf|Zip)", re.I))  # noqa: FURB167
+        form = soup3.find("form", id=re.compile(r"(?i)frmProcedimento(Pdf|Zip)"))
         if not form:
             raise SEIParseError("Formulário frmProcedimento(Pdf|Zip) não encontrado")
         form_action = _tag_str(form, "action").replace("&amp;", "&")
@@ -1609,7 +1625,7 @@ class SEIWebClient:
         if tbl:
             for tr in tbl.find_all("tr")[1:]:  # pula header
                 tds = tr.find_all("td")
-                if len(tds) >= 4:  # noqa: PLR2004
+                if len(tds) >= 4:
                     andamentos.append(
                         {
                             "data_hora": tds[0].get_text(" ", strip=True),
@@ -1648,7 +1664,7 @@ class SEIWebClient:
             return []
         try:
             raw = r.json()
-        except Exception:  # noqa: BLE001
+        except Exception:
             return []
         results = []
         for item in raw if isinstance(raw, list) else []:
@@ -1663,7 +1679,7 @@ class SEIWebClient:
             )
         return results
 
-    async def enviar_processo_web(  # noqa: C901, PLR0912, PLR0913
+    async def enviar_processo_web(
         self,
         protocolo: str,
         unidades_ids: list[str],
@@ -1865,7 +1881,7 @@ class SEIWebClient:
         if tbl is not None:
             for tr in tbl.find_all("tr")[1:]:
                 tds = tr.find_all("td")
-                if len(tds) < 2:  # noqa: PLR2004
+                if len(tds) < 2:
                     continue
                 descricao = tds[1].get_text(" ", strip=True)
                 if filtro and filtro.lower() not in descricao.lower():
@@ -1876,7 +1892,7 @@ class SEIWebClient:
                     if mb:
                         id_bloco = mb.group(1)
                         break
-                estado = tds[2].get_text(" ", strip=True) if len(tds) > 2 else ""  # noqa: PLR2004
+                estado = tds[2].get_text(" ", strip=True) if len(tds) > 2 else ""
                 blocos.append({"idBloco": id_bloco, "descricao": descricao, "estado": estado})
                 if len(blocos) >= limit:
                     break
@@ -1923,7 +1939,7 @@ class SEIWebClient:
             )
         return urljoin(sei_base, m.group(1).replace("&amp;", "&"))
 
-    async def criar_bloco_assinatura_web(self, descricao: str) -> dict:  # noqa: C901
+    async def criar_bloco_assinatura_web(self, descricao: str) -> dict:
         """Cria um bloco de assinatura via scraper web."""
         await self.ensure_authenticated()
         sei_base = f"{self.sei_root}/sei/"
@@ -2072,7 +2088,7 @@ class SEIWebClient:
         if tbl is not None:
             for tr in tbl.find_all("tr")[1:]:
                 tds = tr.find_all("td")
-                if len(tds) < 2:  # noqa: PLR2004
+                if len(tds) < 2:
                     continue
                 tipo = tds[0].get_text(" ", strip=True)
                 num = tds[1].get_text(" ", strip=True)
@@ -2147,7 +2163,7 @@ class SEIWebClient:
             return []
         try:
             raw = r.json()
-        except Exception:  # noqa: BLE001
+        except Exception:
             return []
         return raw if isinstance(raw, list) else []
 
@@ -2289,10 +2305,10 @@ class SEIWebClient:
 
         acoes_html = ""
         for pat in (
-            r"Nos\[0\]\.acoes\s*=\s*'((?:[^'\\]|\\.)*)'",
-            r'Nos\[0\]\.acoes\s*=\s*"((?:[^"\\]|\\.)*)"',
+            r"(?s)Nos\[0\]\.acoes\s*=\s*'((?:[^'\\]|\\.)*)'",
+            r'(?s)Nos\[0\]\.acoes\s*=\s*"((?:[^"\\]|\\.)*)"',
         ):
-            m = re.search(pat, html_arvore, re.S)  # noqa: FURB167
+            m = re.search(pat, html_arvore)
             if m:
                 acoes_html = (
                     m.group(1).replace("\\'", "'").replace('\\"', '"').replace("\\\\", "\\")
@@ -2376,7 +2392,7 @@ class SEIWebClient:
                 tipos.append({"id": v, "nome": t})
         return {"tipos": tipos, "total_itens": len(tipos)}
 
-    async def criar_processo_web(  # noqa: C901, PLR0912, PLR0913, PLR0915
+    async def criar_processo_web(
         self,
         tipo_processo: str,
         especificacao: str = "",
@@ -2471,7 +2487,7 @@ class SEIWebClient:
             "mensagem": "Processo criado com sucesso.",
         }
 
-    async def criar_documento_interno_web(  # noqa: C901, PLR0912, PLR0915
+    async def criar_documento_interno_web(
         self,
         protocolo: str,
         id_serie: str,
@@ -2628,7 +2644,7 @@ class SEIWebClient:
 
     MAX_UPLOAD_BYTES = 100 * 1024 * 1024  # limite de segurança (o SEI rejeita antes)
 
-    async def incluir_documento_externo(  # noqa: C901, PLR0912, PLR0913, PLR0915
+    async def incluir_documento_externo(
         self,
         protocolo_formatado: str,
         arquivo_path: str | None = None,
@@ -2655,9 +2671,9 @@ class SEIWebClient:
             {"sucesso": True, "url_final": str}
             ou {"tipos_disponiveis": [{id, nome}, ...]} se id_serie=None
         """
-        import mimetypes  # noqa: PLC0415
-        import os as _os  # noqa: PLC0415
-        from datetime import date as _date  # noqa: PLC0415
+        import mimetypes
+        import os as _os
+        from datetime import date as _date
 
         await self.ensure_authenticated()
 
@@ -2697,10 +2713,10 @@ class SEIWebClient:
 
         acoes_html = ""
         for pat in (
-            r"Nos\[0\]\.acoes\s*=\s*'((?:[^'\\]|\\.)*)'",
-            r'Nos\[0\]\.acoes\s*=\s*"((?:[^"\\]|\\.)*)"',
+            r"(?s)Nos\[0\]\.acoes\s*=\s*'((?:[^'\\]|\\.)*)'",
+            r'(?s)Nos\[0\]\.acoes\s*=\s*"((?:[^"\\]|\\.)*)"',
         ):
-            m = re.search(pat, r2.text, re.S)  # noqa: FURB167
+            m = re.search(pat, r2.text)
             if m:
                 acoes_html = (
                     m.group(1).replace("\\'", "'").replace('\\"', '"').replace("\\\\", "\\")
@@ -2806,14 +2822,14 @@ class SEIWebClient:
         else:
             if not arquivo_path:
                 raise ValueError("Informe arquivo_path ou conteudo")
-            if not _os.path.isfile(arquivo_path):  # noqa: ASYNC240, PTH113
+            if not _os.path.isfile(arquivo_path):
                 raise ValueError(f"Arquivo não encontrado ou não é regular: {arquivo_path}")
-            if _os.path.getsize(arquivo_path) > self.MAX_UPLOAD_BYTES:  # noqa: ASYNC240, PTH202
+            if _os.path.getsize(arquivo_path) > self.MAX_UPLOAD_BYTES:
                 raise ValueError(
                     f"Arquivo excede o limite de {self.MAX_UPLOAD_BYTES // 1024 // 1024} MB"
                 )
-            nome = nome_arquivo or _os.path.basename(arquivo_path)  # noqa: PTH119
-            with open(arquivo_path, "rb") as f:  # noqa: ASYNC230, PTH123
+            nome = nome_arquivo or _os.path.basename(arquivo_path)
+            with open(arquivo_path, "rb") as f:
                 file_bytes = f.read(self.MAX_UPLOAD_BYTES + 1)
         if len(file_bytes) > self.MAX_UPLOAD_BYTES:
             raise ValueError(
@@ -2822,7 +2838,7 @@ class SEIWebClient:
         mime = mimetypes.guess_type(nome)[0] or "application/octet-stream"
 
         tam_int = len(file_bytes)
-        if tam_int < 1024:  # noqa: PLR2004
+        if tam_int < 1024:
             tamanho_fmt = f"{tam_int} B"
         elif tam_int < 1024 * 1024:
             tamanho_fmt = f"{tam_int / 1024:.1f} KB"
@@ -2847,11 +2863,11 @@ class SEIWebClient:
 
         # Upload response: pipe-separated fields — nome_upload, nome, mime, tamanho, data_hora
         up_parts = r5.text.strip().rstrip("#").split("#")
-        if len(up_parts) < 2:  # noqa: PLR2004
+        if len(up_parts) < 2:
             raise SEIParseError(f"Resposta de upload inesperada: {r5.text!r}")
         nome_upload = up_parts[0]
-        upload_dh = up_parts[4] if len(up_parts) > 4 else ""  # noqa: PLR2004
-        upload_tam = up_parts[3] if len(up_parts) > 3 else str(tam_int)  # noqa: PLR2004
+        upload_dh = up_parts[4] if len(up_parts) > 4 else ""
+        upload_tam = up_parts[3] if len(up_parts) > 3 else str(tam_int)
 
         # Extrai usuario e unidade da linha JS objTabelaAnexos.adicionar([..., 'CPF', 'SIGLA'])
         m_add = re.search(
@@ -2859,16 +2875,16 @@ class SEIWebClient:
             body4,
             re.DOTALL,
         )
-        usuario = m_add.group(1) if m_add else self._usuario
+        usuario = m_add.group(1) if m_add else str(self._usuario)
         unidade = m_add.group(2) if m_add else ""
 
         # --- Step 7: POST frmDocumentoCadastro com hdnAnexos ---
         # SEI Pro extension usa ± (U+00B1) como separador, com encodeURIComponent
         # e remoção do byte alto UTF-8 (%C2) para manter %B1 (ISO-8859-1 ±).
         # O PHP servidor divide hdnAnexos em \xB1.
-        import urllib.parse as _up  # noqa: PLC0415
+        import urllib.parse as _up
 
-        _SEP = "%B1"  # ± URL-encoded como ISO-8859-1 (PHP split target)  # noqa: N806
+        _sep = "%B1"  # ± URL-encoded como ISO-8859-1 (PHP split target)
 
         def _qpart(s: str) -> str:
             # '+' fora do safe → vira %2B ('+' literal no nome não pode chegar
@@ -2876,7 +2892,7 @@ class SEIWebClient:
             # espaço → %20 → '+' (convenção form-urlencoded)
             return _up.quote(s, safe="-.!~*'()_").replace("%20", "+")
 
-        hdn_anexos = _SEP.join(
+        hdn_anexos = _sep.join(
             [
                 _qpart(nome_upload),
                 _qpart(nome),
@@ -2892,7 +2908,7 @@ class SEIWebClient:
         form4_data["hdnAnexos"] = ""  # placeholder — substituído abaixo
         form4_data["hdnIdSerie"] = id_serie
         form4_data["selSerie"] = id_serie
-        form4_data["txtDataElaboracao"] = data_elaboracao or _date.today().strftime("%d/%m/%Y")  # noqa: DTZ011
+        form4_data["txtDataElaboracao"] = data_elaboracao or _date.today().strftime("%d/%m/%Y")
         form4_data["hdnStaNivelAcessoLocal"] = nivel_acesso
         form4_data["rdoNivelAcesso"] = nivel_acesso
         if hipotese_legal and nivel_acesso in ("1", "2"):
@@ -3017,7 +3033,7 @@ class SEIWebClient:
             "pagina_atual": pagina,
             # hdnDetalhadoNroItens/hdnRecebidosNroItens refletem o cap da página (500),
             # não o total real. Página cheia = provavelmente tem mais.
-            "tem_proxima": len(rows) >= 500,  # noqa: PLR2004
+            "tem_proxima": len(rows) >= 500,
             "layout": layout,
         }
 
@@ -3051,7 +3067,7 @@ class SEIWebClient:
         """Verifica se o usuário tem acesso a um processo via scraper web."""
         try:
             await self._garantir_link_trabalhar(protocolo)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return {"temAcesso": False, "protocolo": protocolo}
         return {"temAcesso": True, "protocolo": protocolo}
 
@@ -3064,7 +3080,7 @@ class SEIWebClient:
         return BeautifulSoup(r.content.decode("iso-8859-1", "replace"), "html.parser")
 
     @staticmethod
-    def _parse_acompanhamento_tabela(tbl: Tag | None, limit: int) -> list[dict]:  # noqa: C901
+    def _parse_acompanhamento_tabela(tbl: Tag | None, limit: int) -> list[dict]:
         """Extrai lista de processos de uma tabela da página acompanhamento_listar."""
         processos: list[dict] = []
         if tbl is None:
@@ -3090,9 +3106,9 @@ class SEIWebClient:
                 txt = tds[0].get_text(" ", strip=True)
                 if txt:
                     entrada["protocoloFormatado"] = txt
-            if len(tds) >= 2:  # noqa: PLR2004
+            if len(tds) >= 2:
                 entrada["tipo"] = tds[1].get_text(" ", strip=True)
-            if len(tds) >= 3:  # noqa: PLR2004
+            if len(tds) >= 3:
                 entrada["observacao"] = tds[2].get_text(" ", strip=True)
             if entrada:
                 processos.append(entrada)
@@ -3130,7 +3146,7 @@ class SEIWebClient:
             "mensagem": "Acompanhamento alterado com sucesso.",
         }
 
-    async def listar_grupos_modelos_web(self, filtro: str = "") -> dict:  # noqa: C901
+    async def listar_grupos_modelos_web(self, filtro: str = "") -> dict:
         """Lista grupos de modelos de documento via scraper web."""
         await self.ensure_authenticated()
         lista_url: str | None = None
@@ -3168,9 +3184,7 @@ class SEIWebClient:
                 grupos.append({"id": id_grupo, "nome": nome})
         return {"grupos": grupos, "total_itens": len(grupos)}
 
-    async def listar_modelos_web(  # noqa: C901, PLR0912
-        self, filtro: str = "", id_grupo: str = ""
-    ) -> dict:
+    async def listar_modelos_web(self, filtro: str = "", id_grupo: str = "") -> dict:
         """Lista modelos de documento via scraper web."""
         await self.ensure_authenticated()
         lista_url: str | None = None
@@ -3316,7 +3330,7 @@ class SEIWebClient:
 # ---------------------------------------------------------------------------
 
 
-def parse_arvore_nos(html: str) -> list[dict]:  # noqa: C901
+def parse_arvore_nos(html: str) -> list[dict]:
     """Extrai o array `Nos[]` do JS de arvore_montar.php.
 
     Cada nó é construído como `Nos[i] = new infraArvoreNo(tipo, id, pai, link,
@@ -3326,9 +3340,8 @@ def parse_arvore_nos(html: str) -> list[dict]:  # noqa: C901
     """
     out: list[dict] = []
     for m in re.finditer(
-        r"Nos\[\d+\]\s*=\s*new infraArvoreNo\(([^;]*?)\);",
+        r"(?s)Nos\[\d+\]\s*=\s*new infraArvoreNo\(([^;]*?)\);",
         html,
-        re.S,  # noqa: FURB167
     ):
         args_str = m.group(1)
         # tokenizer simples: separa por vírgula respeitando aspas
@@ -3361,7 +3374,7 @@ def parse_arvore_nos(html: str) -> list[dict]:  # noqa: C901
                 return s[1:-1]
             return s
 
-        if len(args) >= 7:  # noqa: PLR2004
+        if len(args) >= 7:
             out.append(
                 {
                     "tipo_no": unquote(args[0]),
@@ -3371,7 +3384,7 @@ def parse_arvore_nos(html: str) -> list[dict]:  # noqa: C901
                     "target": unquote(args[4]),
                     "label": unquote(args[5]),
                     "tooltip": unquote(args[6]),
-                    "icone": unquote(args[7]) if len(args) > 7 else "",  # noqa: PLR2004
+                    "icone": unquote(args[7]) if len(args) > 7 else "",
                 }
             )
     return out
@@ -3436,7 +3449,7 @@ def _parse_doc_label(label: str) -> dict:
     return result
 
 
-def _extract_tooltip(link_tag, row: dict) -> None:  # noqa: ANN001
+def _extract_tooltip(link_tag: Tag, row: dict) -> None:
     """Extrai especificacao e tipo do onmouseover do link do processo.
 
     O SEI renderiza um tooltip JS em TODOS os links de processo da inbox:
@@ -3445,7 +3458,7 @@ def _extract_tooltip(link_tag, row: dict) -> None:  # noqa: ANN001
     Esse tooltip contém a especificação INDEPENDENTE de a coluna estar
     habilitada no painel — é sempre renderizado.
     """
-    mouseover = link_tag.get("onmouseover", "")
+    mouseover = str(link_tag.get("onmouseover", ""))
     m = _RE_TOOLTIP.search(mouseover)
     if m:
         especificacao = m.group(1).strip()
@@ -3456,7 +3469,7 @@ def _extract_tooltip(link_tag, row: dict) -> None:  # noqa: ANN001
             row["tipo"] = tipo_tooltip
 
 
-def parse_inbox(html: str) -> tuple[str, list[dict]]:  # noqa: C901, PLR0912, PLR0915
+def parse_inbox(html: str) -> tuple[str, list[dict]]:
     """Parseia o HTML de procedimento_controlar.php e extrai lista de processos.
 
     Suporta dois layouts:
@@ -3498,7 +3511,7 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:  # noqa: C901, PLR0912, PL
                 # Tooltip do link: onmouseover com infraTooltipMostrar(Especificação, Tipo).
                 # Disponível INDEPENDENTE de a coluna estar habilitada no painel.
                 _extract_tooltip(link, row)
-            if len(tds) >= 2:  # noqa: PLR2004
+            if len(tds) >= 2:
                 icones = []
                 for img in tds[1].find_all("img"):
                     title = _tag_str(img, "title") or _tag_str(img, "alt")
@@ -3538,7 +3551,7 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:  # noqa: C901, PLR0912, PL
             if link is not None:
                 row["protocolo"] = link.get_text(" ", strip=True)
                 _extract_tooltip(link, row)
-            if len(tds) >= 2:  # noqa: PLR2004
+            if len(tds) >= 2:
                 icones = []
                 for img in tds[1].find_all("img"):
                     title = _tag_str(img, "title") or _tag_str(img, "alt")
@@ -3546,7 +3559,7 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:  # noqa: C901, PLR0912, PL
                         icones.append(title.strip())
                 if icones:
                     row["icones"] = icones
-            if len(tds) >= 4:  # noqa: PLR2004
+            if len(tds) >= 4:
                 atrib_text = _RE_PARENS.sub("", tds[-1].get_text(" ", strip=True)).strip()
                 if atrib_text:
                     row["atribuicao"] = atrib_text
@@ -3587,13 +3600,13 @@ def _extrair_metadados_tabelas(soup: BeautifulSoup, result: dict[str, object]) -
             continue
         for tr in tbl.find_all("tr"):
             cels = tr.find_all(["th", "td"])
-            if len(cels) != 2:  # noqa: PLR2004
+            if len(cels) != 2:
                 continue
             if cels[0].name == "th" and cels[1].name == "th":
                 continue  # linha de cabeçalho, não par label/valor
             k = cels[0].get_text(" ", strip=True).rstrip(":").lower()
             v = cels[1].get_text(" ", strip=True)
-            if k and v and len(k) < 60:  # noqa: PLR2004
+            if k and v and len(k) < 60:
                 result[k.replace(" ", "_").replace("/", "_")] = v
 
 
@@ -3610,7 +3623,7 @@ def _parse_documento_consultar(html: str, id_documento: str) -> dict:
     if tbl_ass is not None:
         for tr in tbl_ass.find_all("tr")[1:]:
             tds = tr.find_all("td")
-            if len(tds) >= 3:  # noqa: PLR2004
+            if len(tds) >= 3:
                 assinaturas.append(
                     {
                         "assinante": tds[0].get_text(" ", strip=True),
@@ -3626,7 +3639,7 @@ def _parse_documento_consultar(html: str, id_documento: str) -> dict:
     if tbl_cien is not None:
         for tr in tbl_cien.find_all("tr")[1:]:
             tds = tr.find_all("td")
-            if len(tds) >= 3:  # noqa: PLR2004
+            if len(tds) >= 3:
                 ciencias.append(
                     {
                         "usuario": tds[0].get_text(" ", strip=True),
@@ -3639,7 +3652,7 @@ def _parse_documento_consultar(html: str, id_documento: str) -> dict:
     return result
 
 
-def _parse_procedimento_consultar(html: str, protocolo: str) -> dict:  # noqa: C901, PLR0912
+def _parse_procedimento_consultar(html: str, protocolo: str) -> dict:
     """Extrai unidades abertas, interessados e sobrestamento de procedimento_consultar."""
     soup = BeautifulSoup(html, "html.parser")
     result: dict[str, object] = {"protocolo": protocolo}
@@ -3656,7 +3669,7 @@ def _parse_procedimento_consultar(html: str, protocolo: str) -> dict:  # noqa: C
             tds = tr.find_all("td")
             if tds:
                 entry: dict[str, str] = {"unidade": tds[0].get_text(" ", strip=True)}
-                if len(tds) >= 2:  # noqa: PLR2004
+                if len(tds) >= 2:
                     entry["situacao"] = tds[1].get_text(" ", strip=True)
                 unidades.append(entry)
     # Fallback: procura qualquer link de unidade
@@ -3687,7 +3700,7 @@ def _parse_procedimento_consultar(html: str, protocolo: str) -> dict:  # noqa: C
     if tbl_sob is not None:
         for tr in tbl_sob.find_all("tr")[1:]:
             tds = tr.find_all("td")
-            if len(tds) >= 2:  # noqa: PLR2004
+            if len(tds) >= 2:
                 sobrestamentos.append(
                     {
                         "motivo": tds[0].get_text(" ", strip=True),

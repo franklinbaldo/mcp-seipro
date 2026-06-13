@@ -17,6 +17,7 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 CATALOG_CACHE_TTL = 24 * 60 * 60
+_SWEEP_PROBABILITY = 0.05  # probabilistic expired-row sweep: run on ~5% of writes
 
 
 class CatalogCache:
@@ -54,15 +55,15 @@ class CatalogCache:
         )
         return hashlib.sha256(payload.encode()).hexdigest()
 
-    async def get(self, namespace: dict[str, str], key: str) -> Any:  # noqa: ANN401
+    async def get(self, namespace: dict[str, str], key: str) -> Any:
         """Retorna um valor válido ou None em miss/falha do cache (executado em thread worker)."""
         try:
             return await asyncio.to_thread(self._get_sync, namespace, key)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("Falha ao ler cache de catalogos", exc_info=True)
         return None
 
-    def _get_sync(self, namespace: dict[str, str], key: str) -> Any:  # noqa: ANN401
+    def _get_sync(self, namespace: dict[str, str], key: str) -> Any:
         db_key = self.make_key(namespace, key)
         now = time.time()
         with sqlite3.connect(self.db_path) as conn:
@@ -79,14 +80,14 @@ class CatalogCache:
                 conn.execute("DELETE FROM catalogs WHERE key = ?", (db_key,))
         return None
 
-    async def set(self, namespace: dict[str, str], key: str, value: Any) -> None:  # noqa: ANN401
+    async def set(self, namespace: dict[str, str], key: str, value: Any) -> None:
         """Persista uma resposta bem-sucedida pelo TTL padrão (executado em thread worker)."""
         try:
             await asyncio.to_thread(self._set_sync, namespace, key, value)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("Falha ao gravar cache de catalogos", exc_info=True)
 
-    def _set_sync(self, namespace: dict[str, str], key: str, value: Any) -> None:  # noqa: ANN401
+    def _set_sync(self, namespace: dict[str, str], key: str, value: Any) -> None:
         db_key = self.make_key(namespace, key)
         val_str = json.dumps(value, ensure_ascii=False)
         now = time.time()
@@ -100,14 +101,14 @@ class CatalogCache:
                 (db_key, val_str, expires_at),
             )
             # Probabilistic sweep: purge all expired rows ~5% of writes
-            if random.random() < 0.05:  # noqa: PLR2004, S311
+            if random.random() < _SWEEP_PROBABILITY:
                 conn.execute("DELETE FROM catalogs WHERE expires_at < ?", (now,))
 
     async def ttl(self, namespace: dict[str, str], key: str) -> float | None:
         """Retorne o TTL restante de uma entrada (executado em thread worker)."""
         try:
             return await asyncio.to_thread(self._ttl_sync, namespace, key)
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.warning("Falha ao consultar TTL do cache de catalogos", exc_info=True)
         return None
 

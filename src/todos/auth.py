@@ -38,7 +38,7 @@ TOKEN_TTL = 86400 * 30  # 30 dias
 
 def _sign(payload: dict) -> str:
     """Cria um token JWT-like: base64(payload).base64(signature)."""
-    import base64  # noqa: PLC0415
+    import base64
 
     raw = base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     sig = hmac.new(_JWT_SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
@@ -47,10 +47,10 @@ def _sign(payload: dict) -> str:
 
 def _verify(token: str) -> dict | None:
     """Verifica e decodifica um token. Retorna None se invalido."""
-    import base64  # noqa: PLC0415
+    import base64
 
     parts = token.split(".")
-    if len(parts) != 2:  # noqa: PLR2004
+    if len(parts) != 2:
         return None
     raw, sig = parts
     expected = hmac.new(_JWT_SECRET.encode(), raw.encode(), hashlib.sha256).hexdigest()
@@ -59,7 +59,7 @@ def _verify(token: str) -> dict | None:
     try:
         padded = raw + "=" * (-len(raw) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded))
-    except Exception:  # noqa: BLE001
+    except Exception:
         return None
     if payload.get("exp", 0) < time.time():
         return None
@@ -84,7 +84,7 @@ class SEIProOAuthProvider(OAuthProvider):
 
     def __init__(self, base_url: str) -> None:
         """Configura os endpoints OAuth para a URL pública do servidor."""
-        from mcp.server.auth.settings import (  # noqa: PLC0415
+        from mcp.server.auth.settings import (
             ClientRegistrationOptions,
             RevocationOptions,
         )
@@ -99,20 +99,23 @@ class SEIProOAuthProvider(OAuthProvider):
 
     # -- Client registration (Dynamic Client Registration) --
 
-    async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:  # noqa: D102
+    async def get_client(self, client_id: str) -> OAuthClientInformationFull | None:
+        """Look up a registered OAuth client by ID."""
         return _clients.get(client_id)
 
-    async def register_client(self, client_info: OAuthClientInformationFull) -> None:  # noqa: D102
+    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        """Persist a dynamically-registered OAuth client in memory."""
         if client_info.client_id:
             _clients[client_info.client_id] = client_info
 
     # -- Authorization --
 
-    async def authorize(  # noqa: D102
+    async def authorize(
         self,
         client: OAuthClientInformationFull,
         params: AuthorizationParams,
     ) -> str:
+        """Start the authorization flow; return the URL of the login page."""
         # Salva os params e redireciona para a página de login
         temp_id = secrets.token_urlsafe(32)
         _auth_codes[f"pending:{temp_id}"] = {
@@ -121,11 +124,12 @@ class SEIProOAuthProvider(OAuthProvider):
         }
         return f"{self.public_base_url}/login?session={temp_id}"
 
-    async def load_authorization_code(  # noqa: D102
+    async def load_authorization_code(
         self,
         client: OAuthClientInformationFull,
         authorization_code: str,
     ) -> AuthorizationCode | None:
+        """Retrieve a pending authorization code; returns None if not found or client mismatch."""
         data = _auth_codes.get(f"code:{authorization_code}")
         if not data or data["client_id"] != client.client_id:
             return None
@@ -141,14 +145,15 @@ class SEIProOAuthProvider(OAuthProvider):
             resource=p.get("resource"),
         )
 
-    async def exchange_authorization_code(  # noqa: D102
+    async def exchange_authorization_code(
         self,
         client: OAuthClientInformationFull,
         authorization_code: AuthorizationCode,
     ) -> OAuthToken:
+        """Consume an auth code and return a signed access + refresh token pair."""
         data = _auth_codes.pop(f"code:{authorization_code.code}", None)
         if not data:
-            from mcp.server.auth.provider import TokenError  # noqa: PLC0415
+            from mcp.server.auth.provider import TokenError
 
             raise TokenError(error="invalid_grant", error_description="Code not found")
 
@@ -180,17 +185,18 @@ class SEIProOAuthProvider(OAuthProvider):
         return OAuthToken(
             access_token=access_token,
             refresh_token=refresh_token,
-            token_type="Bearer",  # noqa: S106
+            token_type="Bearer",
             expires_in=int(TOKEN_TTL),
         )
 
     # -- Refresh --
 
-    async def load_refresh_token(  # noqa: D102
+    async def load_refresh_token(
         self,
         client: OAuthClientInformationFull,
         refresh_token: str,
     ) -> RefreshToken | None:
+        """Verify and decode a refresh token; returns None if invalid or expired."""
         payload = _verify(refresh_token)
         if not payload or payload.get("type") != "refresh":
             return None
@@ -203,15 +209,16 @@ class SEIProOAuthProvider(OAuthProvider):
             expires_at=int(payload.get("exp", 0)),
         )
 
-    async def exchange_refresh_token(  # noqa: D102
+    async def exchange_refresh_token(
         self,
         client: OAuthClientInformationFull,
         refresh_token: RefreshToken,
         scopes: list[str],
     ) -> OAuthToken:
+        """Issue a new access + refresh token pair from a valid refresh token."""
         payload = _verify(refresh_token.token)
         if not payload:
-            from mcp.server.auth.provider import TokenError  # noqa: PLC0415
+            from mcp.server.auth.provider import TokenError
 
             raise TokenError(error="invalid_grant", error_description="Invalid refresh token")
 
@@ -243,13 +250,14 @@ class SEIProOAuthProvider(OAuthProvider):
         return OAuthToken(
             access_token=new_access,
             refresh_token=new_refresh,
-            token_type="Bearer",  # noqa: S106
+            token_type="Bearer",
             expires_in=int(TOKEN_TTL),
         )
 
     # -- Token verification --
 
-    async def load_access_token(self, token: str) -> AccessToken | None:  # noqa: D102
+    async def load_access_token(self, token: str) -> AccessToken | None:
+        """Verify and decode an access token; returns None if invalid or expired."""
         payload = _verify(token)
         if not payload or payload.get("type") != "access":
             return None
@@ -262,8 +270,8 @@ class SEIProOAuthProvider(OAuthProvider):
 
     # -- Revocation (no-op, tokens são stateless) --
 
-    async def revoke_token(self, token: AccessToken | RefreshToken) -> None:  # noqa: D102
-        pass  # Tokens stateless — expiram naturalmente
+    async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+        """No-op: tokens are stateless and expire naturally."""
 
 
 # ---------------------------------------------------------------------------
@@ -333,7 +341,7 @@ async def login_page(request: Request) -> HTMLResponse:
     return HTMLResponse(_LOGIN_HTML.replace("{session}", session))
 
 
-async def login_submit(request: Request):  # noqa: ANN201
+async def login_submit(request: Request) -> HTMLResponse:
     """POST /login — recebe credenciais, gera auth code, redireciona de volta ao Claude."""
     form = await request.form()
     session_id = str(form.get("session", ""))
