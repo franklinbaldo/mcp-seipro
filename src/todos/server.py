@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from todos import access_control
 from todos.catalog_cache import get_catalog_cache
+from todos.exceptions import SEINotFoundError
 from todos.html_utils import (
     html_to_markdown,
     html_to_text,
@@ -88,7 +89,7 @@ def _store_session_client(clients: dict, session_id: str, client: object) -> Non
 def _get_client(ctx: Context | None) -> SEIClient:
     """Obtém o SEIClient REST, criando sob demanda em modo HTTP."""
     if ctx is None:
-        raise ValueError("Contexto MCP nao disponivel.")  # noqa: EM101, TRY003
+        raise ValueError("Contexto MCP nao disponivel.")
 
     if _http_mode:
         from fastmcp.server.dependencies import get_access_token  # noqa: PLC0415
@@ -97,10 +98,10 @@ def _get_client(ctx: Context | None) -> SEIClient:
 
         access_token = get_access_token()
         if not access_token:
-            raise ValueError("Autenticacao necessaria. Reconecte o MCP.")  # noqa: EM101, TRY003
+            raise ValueError("Autenticacao necessaria. Reconecte o MCP.")
         creds = get_sei_credentials_from_token(access_token.token)
         if not creds:
-            raise ValueError("Token invalido ou expirado. Reconecte o MCP.")  # noqa: EM101, TRY003
+            raise ValueError("Token invalido ou expirado. Reconecte o MCP.")
 
         clients = ctx.lifespan_context["sei_by_session"]
         client = clients.get(ctx.session_id)
@@ -113,7 +114,7 @@ def _get_client(ctx: Context | None) -> SEIClient:
     client = ctx.lifespan_context.get("sei")
     if client is not None:
         return client
-    raise ValueError("SEIClient nao configurado. Verifique as variaveis de ambiente.")  # noqa: EM101, TRY003
+    raise ValueError("SEIClient nao configurado. Verifique as variaveis de ambiente.")
 
 
 def _get_web_client(ctx: Context | None) -> SEIWebClient:
@@ -123,7 +124,7 @@ def _get_web_client(ctx: Context | None) -> SEIWebClient:
     instanciado uma vez por contexto, não por chamada.
     """
     if ctx is None:
-        raise ValueError("Contexto MCP nao disponivel.")  # noqa: EM101, TRY003
+        raise ValueError("Contexto MCP nao disponivel.")
 
     if _http_mode:
         from fastmcp.server.dependencies import get_access_token  # noqa: PLC0415
@@ -132,10 +133,10 @@ def _get_web_client(ctx: Context | None) -> SEIWebClient:
 
         access_token = get_access_token()
         if not access_token:
-            raise ValueError("Autenticacao necessaria. Reconecte o MCP.")  # noqa: EM101, TRY003
+            raise ValueError("Autenticacao necessaria. Reconecte o MCP.")
         creds = get_sei_credentials_from_token(access_token.token)
         if not creds:
-            raise ValueError("Token invalido ou expirado. Reconecte o MCP.")  # noqa: EM101, TRY003
+            raise ValueError("Token invalido ou expirado. Reconecte o MCP.")
 
         clients = ctx.lifespan_context["sei_web_by_session"]
         client = clients.get(ctx.session_id)
@@ -148,7 +149,7 @@ def _get_web_client(ctx: Context | None) -> SEIWebClient:
     client = ctx.lifespan_context.get("sei_web")
     if client is not None:
         return client
-    raise ValueError("SEIWebClient nao configurado.")  # noqa: EM101, TRY003
+    raise ValueError("SEIWebClient nao configurado.")
 
 
 def _get_backend(ctx: Context | None) -> SEIBackend:
@@ -992,8 +993,8 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
     # Não tentar como externo automaticamente — risco alto de confusão id/proto
     # O fallback para externo só deve ser usado com id_procedimento conhecido
 
-    raise Exception(  # noqa: TRY002, TRY003
-        f"Documento '{referencia}' não encontrado via pesquisa. "  # noqa: EM102
+    raise SEINotFoundError(
+        f"Documento '{referencia}' não encontrado via pesquisa. "
         "Se é um documento recém-criado, o Solr pode não ter indexado ainda. "
         "Use sei_arvore_processo com o protocolo do processo para encontrá-lo."
     )

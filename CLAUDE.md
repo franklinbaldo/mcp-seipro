@@ -79,6 +79,33 @@ Opera via scraper HTTP do frontend web + REST mod-wssei v2 quando disponível. F
 - Colunas da Detalhada dependem da configuração do painel do usuário (mas especificação sempre vem do tooltip)
 - `sei_listar_documentos` e `sei_arvore_processo` via web não retornam flags de status (assinado, cancelado, etc.) — para isso usar `sei_consultar_documento_externo` ou `sei_consultar_documento_interno` (REST) por documento
 
+## Qualidade de código
+
+### Regras absolutas — ruff
+- **Proibido `# noqa`** — nunca suprima uma violação com `# noqa` ou `# type: ignore`. Se o ruff sinalizar, corrija o padrão.
+- **Proibido descartar** — nunca classifique uma violação como "puramente estilística", "opcional" ou "não se aplica a CLIs". Toda violação é um code smell.
+- **Verificação obrigatória** — após qualquer edição em Python, rode `uv run ruff check .` e `uv run ruff format --check .` antes de encerrar o turno.
+- **Formatação** — rode `uv run ruff format .` se houver divergência de formatação; nunca ajuste manualmente o estilo.
+
+### Receitas para violações comuns
+
+| Violação | Solução correta |
+|---|---|
+| `BLE001` blind `except Exception` | Use exceções específicas: `httpx.HTTPError`, `OSError`, `RuntimeError`, `ValueError`, etc. |
+| `T201` `print()` | `sys.stdout.write(...)` para saída normal; `sys.stderr.write(...)` para erros/logs |
+| `FBT001/002` bool posicional | Adicione `*` antes do parâmetro bool para forçar keyword-only |
+| `C901/PLR0912/PLR0915` complexidade | Extraia funções auxiliares; cada função deve ter responsabilidade única |
+| `SLF001` acesso a `_privado` | Adicione propriedade pública ao objeto; não acesse `_attr` de fora da classe |
+| `PLR2004` magic value | Declare constante nomeada no topo do módulo |
+| `ANN` annotation faltando | Anote todos os parâmetros e retornos; use `X \| None` em vez de `Optional[X]` |
+| `UP` sintaxe legada | Use `list[str]` não `List[str]`; `X \| None` não `Optional[X]`; `datetime.UTC` não `timezone.utc` |
+| `TC001/TC002` import de tipo | Mova para bloco `if TYPE_CHECKING:` quando usado apenas em anotações |
+| `PLC0415` import dentro de função | Mova para o topo do módulo; use `sys.path.insert` antes se necessário |
+| `D1xx` docstring faltando | Toda função/classe pública precisa de docstring (uma linha basta para funções simples) |
+| `S110/S112` except+pass | Substitua por `contextlib.suppress(ExcType)` |
+| `PERF401` loop com append | Substitua por list comprehension ou `list.extend(...)` |
+| `ERA001` código comentado | Delete — histórico fica no git, não no fonte |
+
 ## Ambientes testados
 
 - Produção ANTAQ: https://sei.antaq.gov.br/sei/modulos/wssei/controlador_ws.php/api/v2
