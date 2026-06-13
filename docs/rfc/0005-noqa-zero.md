@@ -111,12 +111,11 @@ Parâmetros bool devem ser keyword-only (adicionar `*` antes deles).
 
 ## 2. Proposta
 
-### 2.1 `r.raise_for_status()` inline + ampliar `_to_tool_error` (Phase A)
+### 2.1 `r.raise_for_status()` em `sei_web_client.py` + deletar catch-alls em `server.py` (Phase A)
 
-`httpx.Response.raise_for_status()` já existe e faz exatamente isso: lança
-`httpx.HTTPStatusError` para qualquer resposta não-2xx. Não precisamos de nenhum
-wrapper — basta substituir as verificações inline e ampliar o único lugar onde
-exceções já são mapeadas: `_to_tool_error` em `server.py`.
+`httpx.Response.raise_for_status()` já faz a verificação. O mapeamento
+`httpx.HTTPStatusError` → `SEIError` fica em `sei_web_client.py`, onde o erro
+ocorre — não em `server.py`.
 
 **`sei_web_client.py`** — substituição direta (45 ocorrências):
 
@@ -126,30 +125,38 @@ if r.status_code != 200:   # noqa: PLR2004
     raise SEIConnectionError(f"Falha: {r.status_code}")
 
 # Depois
-r.raise_for_status()
+try:
+    r.raise_for_status()
+except httpx.HTTPStatusError as exc:
+    status = exc.response.status_code
+    if status in (401, 403):
+        raise SEIAuthError(str(exc)) from exc
+    if status == 404:
+        raise SEINotFoundError(str(exc)) from exc
+    raise SEIConnectionError(str(exc)) from exc
 ```
 
-**`server.py`** — ampliar o catch e `_to_tool_error`:
+Para evitar repetição, este bloco pode viver em uma função de módulo privada
+`_check(r)` usada só dentro de `sei_web_client.py` — mas não exposta externamente.
+
+**`server.py`** — deletar os blocos `except Exception` não-específicos:
 
 ```python
-# catch em cada tool
-except (SEIError, httpx.HTTPStatusError) as e:
+# Antes (em cada uma das 121 tools)
+except SEIError as e:
     raise _to_tool_error(e) from e
+except Exception as e:           # ← não-específico, candidato a deleção
+    raise ToolError(str(e)) from e
 
-# _to_tool_error recebe Union
-def _to_tool_error(e: SEIError | httpx.HTTPStatusError) -> ToolError:
-    if isinstance(e, httpx.HTTPStatusError):
-        status = e.response.status_code
-        if status in (401, 403):
-            return ToolError(f"Sessão SEI expirada ou acesso negado (HTTP {status}).")
-        if status == 404:
-            return ToolError(f"Recurso não encontrado no SEI (HTTP 404).")
-        return ToolError(f"SEI retornou HTTP {status}.")
-    # ... ramos SEIError existentes ...
+# Depois
+except SEIError as e:
+    raise _to_tool_error(e) from e
 ```
 
-Nenhum código novo em `sei_web_client.py` além de deletar as verificações
-manuais. O mapeamento fica no único lugar onde já vive.
+Se `sei_web_client.py` sempre levanta `SEIError`, o fallback genérico nunca
+dispara para erros de domínio. Exceções verdadeiramente inesperadas (bugs de
+programação) devem propagar — FastMCP as captura e devolve como erro de
+ferramenta sem quebrar a sessão MCP.
 
 Para comparações de comprimento (`len(tds) >= 4`, etc.) onde o valor representa
 um invariante de layout HTML documentável, definir constantes nomeadas:
@@ -300,7 +307,7 @@ Verificar e atualizar call sites para passar como keyword args.
 
 | Fase | Alvo | Noqa removidos | Esforço |
 |---|---|---|---|
-| **A** | `r.raise_for_status()` inline + ampliar `_to_tool_error` para `httpx.HTTPStatusError` | ~80 PLR2004 | 45 min |
+| **A** | `r.raise_for_status()` em `sei_web_client.py` + deletar 121 `except Exception` em `server.py` | ~80 PLR2004 + BLE001 | 60 min |
 | **B** | Acessadores públicos em `SEIWebClient` | 7 SLF001 | 30 min |
 | **C** | Decomposição de `sei_ler_documento` | PLR0911/PLR0913/PLR0915 + 2 FBT | 90 min |
 | **D** | G004 + S110/S112 + ERA001 + FBT em métodos públicos do web client | ~20 | 45 min |
@@ -310,6 +317,7 @@ em docstrings de `sei_client.py` e condicionais de dependências opcionais).
 
 ## 5. Critérios de aceitação
 
+- [ ] Nenhum `except Exception` genérico em `server.py` (deletados os ~121 catch-alls).
 - [ ] `uv run ruff check .` passa sem novos `# noqa` introduzidos.
 - [ ] `uv run ruff format --check .` passa.
 - [ ] `uv run pytest tests/ -q` — 181 testes passam sem regressões.
