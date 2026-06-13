@@ -28,8 +28,8 @@ ROTULOS = {
 Decisao = Literal["liberar", "bloquear"]
 
 
-def normalizar_nivel(valor) -> str | None:  # noqa: ANN001
-    """Converte o valor cru de nivelAcesso para uma string '0'/'1'/'2' ou None."""  # noqa: D401
+def normalizar_nivel(valor: object) -> str | None:
+    """Convert raw nivelAcesso value to a canonical '0', '1', or '2' string (or None)."""
     if valor is None:
         return None
     s = str(valor).strip()
@@ -38,8 +38,8 @@ def normalizar_nivel(valor) -> str | None:  # noqa: ANN001
     return None
 
 
-def precisa_disclaimer(nivel_acesso) -> bool:  # noqa: ANN001
-    """True quando o nível de acesso é restrito ou sigiloso."""  # noqa: D401
+def precisa_disclaimer(nivel_acesso: object) -> bool:
+    """Return True when the access level is restricted or classified."""
     return normalizar_nivel(nivel_acesso) in (RESTRITO, SIGILOSO)
 
 
@@ -181,7 +181,7 @@ def construir_disclaimer_acompanhante(
 
 
 def avaliar_acesso(
-    nivel_acesso,  # noqa: ANN001
+    nivel_acesso: object,
     hipotese_legal: str | None = None,
     *,
     confirmou: bool,
@@ -215,8 +215,7 @@ def prefixar_markdown(disclaimer: dict, conteudo: str) -> str:
         linhas.append(f"> Hipótese legal: {disclaimer['hipotese_legal']}")
     linhas.append(">")
     linhas.append("> Riscos:")
-    for r in disclaimer["riscos"]:
-        linhas.append(f"> - {r}")  # noqa: PERF401
+    linhas.extend(f"> - {r}" for r in disclaimer["riscos"])
     return "\n".join(linhas) + "\n\n" + conteudo
 
 
@@ -230,8 +229,7 @@ def prefixar_texto(disclaimer: dict, conteudo: str) -> str:
     if disclaimer.get("hipotese_legal"):
         linhas.append(f"Hipótese legal: {disclaimer['hipotese_legal']}")
     linhas.append("Riscos:")
-    for r in disclaimer["riscos"]:
-        linhas.append(f"  - {r}")  # noqa: PERF401
+    linhas.extend(f"  - {r}" for r in disclaimer["riscos"])
     linhas.append("=" * 70)
     return "\n".join(linhas) + "\n\n" + conteudo
 

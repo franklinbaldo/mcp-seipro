@@ -18,7 +18,8 @@ logger = logging.getLogger(__name__)
 class SEIClient:
     """Cliente REST assíncrono para qualquer instância do SEI com mod-wssei v2."""
 
-    def __init__(self, **kwargs):  # noqa: ANN003, ANN204, D107
+    def __init__(self, **kwargs: object) -> None:
+        """Initialise from keyword args (sei_url, sei_usuario, sei_senha, …) or env vars."""
         self.base_url = kwargs.get("sei_url", os.environ.get("SEI_URL", "")).rstrip("/")
         self._usuario = kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", ""))
 
@@ -103,11 +104,11 @@ class SEIClient:
         await self._get_headers()
         return self._id_usuario or ""
 
-    async def _cache_get(self, key: str) -> Any:  # noqa: ANN401
+    async def _cache_get(self, key: str) -> Any:
         """Retorna um catálogo persistido ou None."""
         return await self._catalog_cache.get(self._cache_namespace, key)
 
-    async def _cache_set(self, key: str, val: Any) -> None:  # noqa: ANN401
+    async def _cache_set(self, key: str, val: Any) -> None:
         """Persista um catálogo retornado com sucesso pelo SEI."""
         await self._catalog_cache.set(self._cache_namespace, key, val)
 
@@ -116,7 +117,7 @@ class SEIClient:
             await self.autenticar()
         return {"token": self._token}
 
-    async def _request(self, method: str, path: str, **kwargs) -> httpx.Response:  # noqa: ANN003
+    async def _request(self, method: str, path: str, **kwargs: object) -> httpx.Response:
         """Faz request com re-autenticação automática em caso de 401/403."""
         headers = await self._get_headers()
         kwargs.setdefault("headers", {}).update(headers)
@@ -129,7 +130,7 @@ class SEIClient:
                 resp = await self._client.request(method, f"{self.base_url}{path}", **kwargs)
             if resp.status_code in (401, 403):
                 raise SEIAuthError("Sessão SEI expirada ou inválida após re-autenticação.")
-            if resp.status_code == 404:  # noqa: PLR2004
+            if resp.status_code == httpx.codes.NOT_FOUND:
                 raise SEINotFoundError(f"Recurso não encontrado: {method} {path}")
             resp.raise_for_status()
         except (httpx.TimeoutException, httpx.ConnectError) as e:
@@ -146,7 +147,7 @@ class SEIClient:
             keyring_user = self._keyring_user
             self._keyring_user = None  # prevent concurrent / empty-string repeated lookups
             try:
-                import keyring  # noqa: PLC0415
+                import keyring
 
                 senha = await asyncio.wait_for(
                     asyncio.to_thread(keyring.get_password, "todos-mcp", keyring_user),
@@ -160,7 +161,7 @@ class SEIClient:
                 logger.warning(
                     "Timeout ao buscar senha do keyring (>5s); use SEI_SENHA como fallback"
                 )
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 self._keyring_user = keyring_user  # restore: transient error, allow retry
                 logger.warning("Não foi possível obter a senha do keyring: %s", e)
 
@@ -286,7 +287,7 @@ class SEIClient:
     ) -> list[dict]:
         """Lista documentos de um processo.
         Retorna array de: {id, atributos: {tipoDocumento, tipo, protocoloFormatado, ...}}
-        """  # noqa: D205, D400, D415
+        """
         resp = await self._request(
             "GET",
             f"/documento/listar/{id_procedimento}",
@@ -300,7 +301,7 @@ class SEIClient:
     async def consultar_documento_interno(self, id_documento: str) -> dict:
         """Consulta metadados de um documento interno pelo id.
         Retorna: id, tipo, unidade geradora, assinaturas, etc.
-        """  # noqa: D205
+        """
         resp = await self._request("GET", f"/documento/interno/consultar/{id_documento}")
         data = resp.json()
         if not data.get("sucesso"):
@@ -310,7 +311,7 @@ class SEIClient:
     async def consultar_documento_externo(self, id_documento: str) -> dict:
         """Consulta metadados de um documento externo pelo id.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("GET", f"/documento/externo/consultar/{id_documento}")
         data = resp.json()
         if not data.get("sucesso"):
@@ -328,7 +329,7 @@ class SEIClient:
     ) -> dict:
         """Altera metadados de um documento interno (não o conteúdo).
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         payload: dict = {}
         if descricao:
             payload["descricao"] = descricao
@@ -354,7 +355,7 @@ class SEIClient:
     ) -> dict:
         """Altera metadados de um documento externo (e opcionalmente substitui o arquivo).
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         payload: dict = {}
         if descricao:
             payload["descricao"] = descricao
@@ -364,15 +365,15 @@ class SEIClient:
             payload["idHipoteseLegal"] = id_hipotese_legal
 
         if arquivo_path:
-            import os  # noqa: PLC0415
+            import os
 
             headers = await self._get_headers()
-            with open(arquivo_path, "rb") as f:  # noqa: ASYNC230, PTH123
+            with open(arquivo_path, "rb") as f:
                 resp = await self._client.post(
                     f"{self.base_url}/documento/externo/{id_documento}/alterar",
                     headers=headers,
                     data=payload,
-                    files={"anexo": (os.path.basename(arquivo_path), f)},  # noqa: PTH119
+                    files={"anexo": (os.path.basename(arquivo_path), f)},
                 )
         else:
             resp = await self._request(
@@ -388,7 +389,7 @@ class SEIClient:
     ) -> dict:
         """Pesquisa tipos de conferência para documentos externos.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         params: dict = {"limit": limit, "start": start}
         if filtro:
             params["filter"] = filtro
@@ -401,7 +402,7 @@ class SEIClient:
     async def sugestao_assuntos_documento(self, id_serie: str) -> list[dict]:
         """Lista sugestões de assuntos para um tipo de documento (série).
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("GET", f"/documento/assunto/sugestao/{id_serie}/listar")
         data = resp.json()
         if not data.get("sucesso"):
@@ -411,7 +412,7 @@ class SEIClient:
     async def listar_blocos_documento(self, id_documento: str) -> list[dict]:
         """Lista blocos de assinatura em que um documento está incluído.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("GET", f"/documento/{id_documento}/bloco/assinatura/listar")
         data = resp.json()
         if not data.get("sucesso"):
@@ -423,7 +424,7 @@ class SEIClient:
     ) -> dict:
         """Pesquisa tipos de documento para documentos externos (séries externas).
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         params: dict = {"limit": limit, "start": start}
         if filtro:
             params["filter"] = filtro
@@ -436,7 +437,7 @@ class SEIClient:
     async def parametros_upload(self) -> dict:
         """Retorna parâmetros de upload (extensões permitidas, tamanhos máximos).
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("GET", "/upload/parametros")
         data = resp.json()
         if not data.get("sucesso"):
@@ -470,7 +471,7 @@ class SEIClient:
             return base64.b64decode(data["data"])
         return resp.content
 
-    async def criar_documento_interno(  # noqa: PLR0913
+    async def criar_documento_interno(
         self,
         id_procedimento: str,
         id_serie: str,
@@ -481,7 +482,7 @@ class SEIClient:
     ) -> dict:
         """Cria documento interno (nativo) em um processo SEI.
         Retorna: {idDocumento, protocoloDocumentoFormatado}
-        """  # noqa: D205, D400, D415
+        """
         resp = await self._request(
             "POST",
             f"/documento/{id_procedimento}/interno/criar",
@@ -512,7 +513,7 @@ class SEIClient:
     async def listar_secao_documento(self, id_documento: str) -> dict:
         """Lista seções de um documento interno.
         Retorna: {secoes: [{id, idSecaoModelo, conteudo, ...}], ultimaVersaoDocumento: N}
-        """  # noqa: D205, D400, D415
+        """
         resp = await self._request(
             "GET",
             "/documento/secao/listar",
@@ -533,7 +534,7 @@ class SEIClient:
     ) -> dict:
         """Altera conteúdo HTML das seções de um documento interno.
         secoes: [{id, idSecaoModelo, conteudo}, ...]
-        """  # noqa: D205, D400, D415
+        """
         secoes_json = json.dumps(secoes)
         resp = await self._request(
             "POST",
@@ -557,7 +558,7 @@ class SEIClient:
 
     async def listar_unidades_usuario(self) -> list[dict]:
         """Lista unidades às quais o usuário autenticado tem acesso.
-        Resultado cacheado por 24 horas em disco (raramente muda)."""  # noqa: D205, D209
+        Resultado cacheado por 24 horas em disco (raramente muda)."""
         cached = await self._cache_get("unidades_usuario")
         if cached is not None:
             return cached
@@ -576,7 +577,7 @@ class SEIClient:
         Diferente de listar_usuarios que filtra client-side — este usa
         o endpoint /usuario/pesquisar que busca no servidor.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         params: dict = {"limit": limit, "start": start}
         if filtro:
             params["filter"] = filtro
@@ -613,7 +614,7 @@ class SEIClient:
     ) -> dict:
         """Pesquisa unidades excluindo a unidade atual.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         params: dict = {"limit": limit, "start": start}
         if filtro:
             params["filter"] = filtro
@@ -629,7 +630,7 @@ class SEIClient:
         """Pesquisa textos padrão internos disponíveis na unidade.
         Textos padrão são modelos reutilizáveis para preencher documentos.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         params: dict = {"limit": limit, "start": start}
         if filtro:
             params["filter"] = filtro
@@ -684,7 +685,7 @@ class SEIClient:
     # Processos — listar, pesquisar, criar, enviar, concluir, reabrir, atribuir
     # ------------------------------------------------------------------
 
-    async def listar_processos(  # noqa: PLR0913
+    async def listar_processos(
         self,
         limit: int = 50,
         start: int = 0,
@@ -695,7 +696,7 @@ class SEIClient:
     ) -> dict:
         """Lista processos da caixa da unidade atual.
         Retorna: {data: [...], total: N}
-        """  # noqa: D205, D400, D415
+        """
         params: dict = {"limit": limit, "start": start}
         if tipo:
             params["tipo"] = tipo
@@ -711,7 +712,7 @@ class SEIClient:
             raise SEIError(f"Erro ao listar processos: {data.get('mensagem')}")
         return self._paginated(data, "processos", data.get("data", []), start, limit)
 
-    async def pesquisar_processos(  # noqa: C901, PLR0913
+    async def pesquisar_processos(
         self,
         palavras_chave: str = "",
         descricao: str = "",
@@ -727,7 +728,7 @@ class SEIClient:
     ) -> dict:
         """Pesquisa processos via busca textual (Solr).
         Retorna: {data: [...], total: N}
-        """  # noqa: D205, D400, D415
+        """
         params: dict = {"limit": limit, "start": start}
         if palavras_chave:
             params["palavrasChave"] = palavras_chave
@@ -763,7 +764,7 @@ class SEIClient:
     ) -> dict:
         """Altera metadados de um processo (especificação, nível de acesso, etc.).
         A API exige todos os campos — busca os atuais e sobrescreve os alterados.
-        """  # noqa: D205
+        """
         # Buscar dados atuais do processo
         proc = await self.consultar_processo_por_id(id_procedimento)
 
@@ -823,7 +824,7 @@ class SEIClient:
         self, filtro: str = "", favoritos: str = "", limit: int = 50, start: int = 0
     ) -> dict:
         """Pesquisa tipos de processo disponíveis.
-        Resultado cacheado por 24 horas em disco quando chamado sem filtros."""  # noqa: D205, D209
+        Resultado cacheado por 24 horas em disco quando chamado sem filtros."""
         cache_key = f"tipos_processo:{filtro}:{favoritos}:{limit}:{start}"
         if not filtro and not favoritos:
             cached = await self._cache_get(cache_key)
@@ -843,7 +844,7 @@ class SEIClient:
             await self._cache_set(cache_key, result)
         return result
 
-    async def criar_processo(  # noqa: PLR0913
+    async def criar_processo(
         self,
         tipo_processo: str,
         especificacao: str = "",
@@ -857,7 +858,7 @@ class SEIClient:
         assuntos e interessados devem ser JSON arrays de objetos com campo "id".
         Ex: '[{"id":"876"}]'
         Retorna: {IdProcedimento, ProtocoloFormatado}
-        """  # noqa: D205, D400, D415
+        """
         # Converter IDs simples para formato JSON esperado pela API
         if assuntos and not assuntos.startswith("["):
             ids = [a.strip() for a in assuntos.split(",")]
@@ -885,7 +886,7 @@ class SEIClient:
             raise SEIError(f"Erro ao criar processo: {data.get('mensagem')}")
         return data["data"]
 
-    async def enviar_processo(  # noqa: PLR0913
+    async def enviar_processo(
         self,
         numero_processo: str,
         unidades_destino: str,
@@ -951,7 +952,7 @@ class SEIClient:
     # Documentos — assinar, pesquisar tipos
     # ------------------------------------------------------------------
 
-    async def assinar_documento(  # noqa: PLR0913
+    async def assinar_documento(
         self,
         id_documento: str,
         login: str,
@@ -990,7 +991,7 @@ class SEIClient:
     ) -> dict:
         """Pesquisa tipos de documento (séries) disponíveis.
         Retorna: {data: [{id, nome}, ...], total: N}
-        """  # noqa: D205, D400, D415
+        """
         cache_key = f"tipos_documento:{filtro}:{favoritos}:{aplicabilidade}:{limit}:{start}"
         if not filtro and not favoritos:
             cached = await self._cache_get(cache_key)
@@ -1325,7 +1326,7 @@ class SEIClient:
     async def listar_processos_bloco_interno(self, id_bloco: str, limit: int = 200) -> list[dict]:
         """Lista processos de um bloco interno.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request(
             "GET",
             f"/bloco/interno/{id_bloco}/processos/listar",
@@ -1339,7 +1340,7 @@ class SEIClient:
     async def alterar_bloco_interno(self, id_bloco: str, descricao: str) -> dict:
         """Altera descrição de um bloco interno.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request(
             "POST",
             f"/bloco/interno/{id_bloco}/alterar",
@@ -1353,7 +1354,7 @@ class SEIClient:
     async def excluir_blocos_internos(self, ids: str) -> dict:
         """Exclui bloco(s) interno(s). IDs separados por vírgula.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("POST", "/bloco/interno/excluir", data={"blocos": ids})
         data = resp.json()
         if not data.get("sucesso"):
@@ -1363,7 +1364,7 @@ class SEIClient:
     async def concluir_blocos_internos(self, ids: str) -> dict:
         """Conclui bloco(s) interno(s). IDs separados por vírgula.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("POST", "/bloco/interno/concluir", data={"blocos": ids})
         data = resp.json()
         if not data.get("sucesso"):
@@ -1373,7 +1374,7 @@ class SEIClient:
     async def reabrir_bloco_interno(self, id_bloco: str) -> dict:
         """Reabre bloco interno concluído.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("POST", f"/bloco/interno/{id_bloco}/reabrir")
         data = resp.json()
         if not data.get("sucesso"):
@@ -1385,7 +1386,7 @@ class SEIClient:
     ) -> dict:
         """Cria anotação em processo dentro de um bloco interno.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request(
             "POST",
             "/bloco/interno/anotacao/cadastrar",
@@ -1401,7 +1402,7 @@ class SEIClient:
     ) -> dict:
         """Altera anotação de processo em um bloco interno.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request(
             "POST",
             "/bloco/interno/anotacao/alterar",
@@ -1512,7 +1513,7 @@ class SEIClient:
     async def alterar_bloco_assinatura(self, id_bloco: str, descricao: str) -> dict:
         """Altera descrição de um bloco de assinatura.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request(
             "POST",
             f"/bloco/assinatura/{id_bloco}/alterar",
@@ -1526,7 +1527,7 @@ class SEIClient:
     async def excluir_blocos_assinatura(self, ids: str) -> dict:
         """Exclui bloco(s) de assinatura. IDs separados por vírgula.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("POST", "/bloco/assinatura/excluir", data={"blocos": ids})
         data = resp.json()
         if not data.get("sucesso"):
@@ -1536,7 +1537,7 @@ class SEIClient:
     async def concluir_blocos_assinatura(self, ids: str) -> dict:
         """Conclui bloco(s) de assinatura. IDs separados por vírgula.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("POST", "/bloco/assinatura/concluir", data={"blocos": ids})
         data = resp.json()
         if not data.get("sucesso"):
@@ -1546,7 +1547,7 @@ class SEIClient:
     async def reabrir_bloco_assinatura(self, id_bloco: str) -> dict:
         """Reabre bloco de assinatura concluído.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("POST", f"/bloco/assinatura/{id_bloco}/reabrir")
         data = resp.json()
         if not data.get("sucesso"):
@@ -1556,7 +1557,7 @@ class SEIClient:
     async def retornar_bloco_assinatura(self, id_bloco: str) -> dict:
         """Retorna bloco de assinatura para a unidade de origem.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("POST", f"/bloco/assinatura/{id_bloco}/retornar")
         data = resp.json()
         if not data.get("sucesso"):
@@ -1568,7 +1569,7 @@ class SEIClient:
     ) -> dict:
         """Cria anotação em documento dentro de um bloco de assinatura.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request(
             "POST",
             "/bloco/assinatura/anotacao/cadastrar",
@@ -1584,7 +1585,7 @@ class SEIClient:
     ) -> dict:
         """Altera anotação de documento em um bloco de assinatura.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request(
             "POST",
             "/bloco/assinatura/anotacao/alterar",
@@ -1625,7 +1626,7 @@ class SEIClient:
     # Documento externo (upload)
     # ------------------------------------------------------------------
 
-    async def criar_documento_externo(  # noqa: PLR0913
+    async def criar_documento_externo(
         self,
         id_procedimento: str,
         id_serie: str,
@@ -1637,18 +1638,18 @@ class SEIClient:
         """Cria documento externo com upload de arquivo em um processo SEI.
         arquivo_path: caminho local do arquivo (PDF, imagem, etc.)
         Retorna: {idDocumento, protocoloDocumentoFormatado}
-        """  # noqa: D205, D400, D415
-        import os  # noqa: PLC0415
-        from datetime import datetime  # noqa: PLC0415
+        """
+        import os
+        from datetime import datetime
 
-        if not os.path.exists(arquivo_path):  # noqa: ASYNC240, PTH110
+        if not os.path.exists(arquivo_path):
             raise SEIError(f"Arquivo não encontrado: {arquivo_path}")
 
-        nome_arquivo = os.path.basename(arquivo_path)  # noqa: PTH119
-        data_hoje = datetime.now().strftime("%d/%m/%Y")  # noqa: DTZ005
+        nome_arquivo = os.path.basename(arquivo_path)
+        data_hoje = datetime.now().strftime("%d/%m/%Y")
         headers = await self._get_headers()
 
-        with open(arquivo_path, "rb") as f:  # noqa: ASYNC230, PTH123
+        with open(arquivo_path, "rb") as f:
             resp = await self._client.post(
                 f"{self.base_url}/documento/{id_procedimento}/externo/criar",
                 headers=headers,
@@ -1676,7 +1677,7 @@ class SEIClient:
         if resp.status_code in (401, 403):
             await self.autenticar()
             headers = {"token": self._token or ""}
-            with open(arquivo_path, "rb") as f:  # noqa: ASYNC230, PTH123
+            with open(arquivo_path, "rb") as f:
                 resp = await self._client.post(
                     f"{self.base_url}/documento/{id_procedimento}/externo/criar",
                     headers=headers,
@@ -1762,7 +1763,7 @@ class SEIClient:
     async def pesquisar_assuntos(self, filtro: str = "", limit: int = 50, start: int = 0) -> dict:
         """Pesquisa assuntos disponíveis para processos.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         params: dict = {"limit": limit, "start": start}
         if filtro:
             params["filter"] = filtro
@@ -1775,7 +1776,7 @@ class SEIClient:
     async def sugestao_assuntos_processo(self, id_tipo_processo: str) -> list[dict]:
         """Lista sugestões de assuntos para um tipo de processo.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("GET", f"/processo/assunto/sugestao/{id_tipo_processo}/listar")
         data = resp.json()
         if not data.get("sucesso"):
@@ -1785,7 +1786,7 @@ class SEIClient:
     async def consultar_atribuicao(self, id_procedimento: str) -> dict:
         """Consulta atribuição atual de um processo.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("GET", f"/processo/{id_procedimento}/consultar/atribuicao")
         data = resp.json()
         if not data.get("sucesso"):
@@ -1795,7 +1796,7 @@ class SEIClient:
     async def verificar_acesso(self, id_procedimento: str) -> dict:
         """Verifica se o usuário tem acesso a um processo.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         resp = await self._request("GET", f"/processo/verifica/acesso/{id_procedimento}")
         data = resp.json()
         if not data.get("sucesso"):
@@ -1805,7 +1806,7 @@ class SEIClient:
     async def listar_relacionamentos(self, id_procedimento: str) -> list[dict]:
         """Lista processos relacionados.
         REQUER mod-wssei 3.0.2+ (SEI 5.0.x). Não disponível em versões anteriores.
-        """  # noqa: D205
+        """
         resp = await self._request("GET", f"/processo/{id_procedimento}/relacionamentos")
         data = resp.json()
         if not data.get("sucesso"):
@@ -1815,7 +1816,7 @@ class SEIClient:
     async def listar_meus_acompanhamentos(self, limit: int = 50, start: int = 0) -> dict:
         """Lista processos acompanhados pelo usuário.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         params: dict = {"limit": limit, "start": start}
         resp = await self._request("GET", "/processo/listar/meus/acompanhamentos", params=params)
         data = resp.json()
@@ -1826,7 +1827,7 @@ class SEIClient:
     async def listar_acompanhamentos_unidade(self, limit: int = 50, start: int = 0) -> dict:
         """Lista processos acompanhados na unidade atual.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         params: dict = {"limit": limit, "start": start}
         resp = await self._request("GET", "/processo/listar/acompanhamentos", params=params)
         data = resp.json()
@@ -1839,7 +1840,7 @@ class SEIClient:
     ) -> dict:
         """Altera acompanhamento especial de um processo.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         payload: dict = {"protocolo": id_procedimento}
         if id_grupo:
             payload["grupo"] = id_grupo
@@ -1905,7 +1906,7 @@ class SEIClient:
     ) -> dict:
         """Lista histórico de atividades/andamentos de um processo.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         params: dict = {"protocolo": id_procedimento, "limit": limit, "start": start}
         resp = await self._request("GET", "/atividade/listar", params=params)
         data = resp.json()
@@ -1945,7 +1946,7 @@ class SEIClient:
     ) -> dict:
         """Cria novo contato no SEI.
         Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
-        """  # noqa: D205
+        """
         payload: dict = {"nome": nome}
         if tipo:
             payload["tipo"] = tipo
@@ -1988,7 +1989,7 @@ class SEIClient:
     async def criar_observacao(self, id_procedimento: str, descricao: str) -> dict:
         """Cria observação da unidade em um processo (diferente de anotação).
         Observação é visível apenas para a unidade, anotação é post-it individual.
-        """  # noqa: D205
+        """
         resp = await self._request(
             "POST",
             "/observacao/",
@@ -2045,7 +2046,7 @@ class SEIClient:
     # Bloco de assinatura — assinar
     # ------------------------------------------------------------------
 
-    async def assinar_bloco(  # noqa: PLR0913
+    async def assinar_bloco(
         self,
         id_bloco: str,
         login: str,
@@ -2069,7 +2070,7 @@ class SEIClient:
             raise SEIError(f"Erro ao assinar bloco: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
-    async def assinar_documentos_bloco(  # noqa: PLR0913
+    async def assinar_documentos_bloco(
         self,
         login: str,
         senha: str,
@@ -2094,5 +2095,6 @@ class SEIClient:
             raise SEIError(f"Erro ao assinar documentos: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
-    async def close(self):  # noqa: ANN201, D102
+    async def close(self) -> None:
+        """Close the underlying HTTP client."""
         await self._client.aclose()

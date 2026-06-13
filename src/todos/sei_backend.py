@@ -17,7 +17,8 @@ if TYPE_CHECKING:
 class SEIBackend:
     """Wrapper que encapsula REST + web e expõe qual está disponível."""
 
-    def __init__(self, rest: SEIClient, web: SEIWebClient) -> None:  # noqa: D107
+    def __init__(self, rest: SEIClient, web: SEIWebClient) -> None:
+        """Store the REST and web clients; has_rest reflects REST availability."""
         self.rest = rest
         self.web = web
 
