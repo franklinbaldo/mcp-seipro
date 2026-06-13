@@ -3537,10 +3537,18 @@ async def sei_pesquisar_textos_padrao(
     automaticamente ao criar um novo documento interno.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (AJAX autocomplete).
+    No modo web, pagina é ignorado.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_textos_padrao(filtro=filtro, limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_textos_padrao(
+                filtro=filtro, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.pesquisar_textos_padrao_web(filtro=filtro, limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3819,10 +3827,16 @@ async def sei_pesquisar_assuntos(
     Use o ID retornado no campo 'assuntos' ao criar processos.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (AJAX autocomplete).
+    No modo web, filtro é obrigatório e pagina é ignorado.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_assuntos(filtro=filtro, limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_assuntos(filtro=filtro, limit=limit, start=pagina)
+        else:
+            result = await backend.web.pesquisar_assuntos_web(filtro=filtro, limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3856,11 +3870,17 @@ async def sei_consultar_atribuicao(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (form atribuicao_salvar).
+    No modo web, lê o campo selected do select de usuários.
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.consultar_atribuicao(id_proc)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.consultar_atribuicao(id_proc)
+        else:
+            result = await backend.web.consultar_atribuicao_web(processo)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))

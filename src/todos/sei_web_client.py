@@ -2035,6 +2035,109 @@ class SEIWebClient:
             "mensagem": "Disponibilização cancelada com sucesso.",
         }
 
+    async def _autocomplete_ajax(
+        self, acao_ajax: str, termo: str, campo: str = "termo"
+    ) -> list[dict]:
+        """Chama endpoint AJAX genérico controlador_ajax.php e retorna lista de itens."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        r = await self._http.get(
+            f"{sei_base}controlador_ajax.php",
+            params={"acao_ajax": acao_ajax, campo: termo},
+            headers={"Referer": str(self._inbox_url)},
+        )
+        if r.status_code != 200:  # noqa: PLR2004
+            return []
+        try:
+            raw = r.json()
+        except Exception:  # noqa: BLE001
+            return []
+        return raw if isinstance(raw, list) else []
+
+    async def pesquisar_assuntos_web(self, filtro: str = "", limit: int = 50) -> dict:
+        """Pesquisa assuntos via AJAX assunto_auto_completar."""
+        if not filtro:
+            return {
+                "assuntos": [],
+                "total_itens": 0,
+                "_aviso": "Em modo web, filtro é obrigatório (mínimo 1 caractere).",
+            }
+        raw = await self._autocomplete_ajax("assunto_auto_completar", filtro)
+        assuntos: list[dict[str, str]] = []
+        for item in raw[:limit]:
+            if not isinstance(item, dict):
+                continue
+            assuntos.append(
+                {
+                    "id": str(item.get("id", item.get("value", ""))),
+                    "nome": str(item.get("nome", item.get("descricao", item.get("label", "")))),
+                    "codigo": str(item.get("codigo", "")),
+                }
+            )
+        return {"assuntos": assuntos, "total_itens": len(assuntos)}
+
+    async def pesquisar_textos_padrao_web(self, filtro: str = "", limit: int = 50) -> dict:
+        """Pesquisa textos padrão via AJAX texto_padrao_auto_completar."""
+        raw = await self._autocomplete_ajax(
+            "texto_padrao_auto_completar", filtro or "", campo="str_texto_padrao"
+        )
+        if not raw:
+            raw = await self._autocomplete_ajax("texto_padrao_pesquisar", filtro or "")
+        textos: list[dict[str, str]] = []
+        for item in raw[:limit]:
+            if not isinstance(item, dict):
+                continue
+            textos.append(
+                {
+                    "id": str(item.get("id", item.get("value", ""))),
+                    "nome": str(item.get("nome", item.get("descricao", item.get("label", "")))),
+                }
+            )
+        return {"textos": textos, "total_itens": len(textos)}
+
+    async def consultar_atribuicao_web(self, protocolo: str) -> dict:
+        """Retorna o usuário atualmente atribuído ao processo via form atribuicao_salvar."""
+        await self.ensure_authenticated()
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+        m = re.search(
+            r"(controlador\.php\?acao=atribuicao_salvar[^\"'\s]*infra_hash=[a-f0-9]+)",
+            html_arvore,
+        )
+        if not m:
+            return {
+                "id_usuario": "",
+                "nome": "",
+                "_aviso": "Ação atribuicao_salvar não disponível para este processo.",
+            }
+        acao_url = urljoin(sei_base, m.group(1).replace("&amp;", "&"))
+        r = await self._http.get(acao_url, headers={"Referer": url_arvore})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"GET atribuicao_salvar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body, "html.parser")
+        form = soup.find("form")
+        if not isinstance(form, Tag):
+            return {"id_usuario": "", "nome": ""}
+        sel = form.find("select", {"name": "selAtribuicao"})
+        if not isinstance(sel, Tag):
+            return {"id_usuario": "", "nome": ""}
+        selected_opt = sel.find("option", {"selected": True})
+        if selected_opt is None:
+            selected_opt = sel.find("option", {"selected": "selected"})
+        if not isinstance(selected_opt, Tag):
+            return {"id_usuario": "", "nome": "", "_aviso": "Processo não atribuído."}
+        v = _tag_str(selected_opt, "value")
+        t = selected_opt.get_text(strip=True)
+        mb = re.match(r"^(.+?)\s*\(([^)]+)\)\s*$", t)
+        if mb:
+            nome = mb.group(1).strip()
+            sigla = mb.group(2).strip()
+        else:
+            nome = t.strip()
+            sigla = ""
+        return {"id_usuario": v, "nome": nome, "sigla": sigla}
+
     async def pesquisar_hipoteses_legais_web(self, filtro: str = "") -> dict:
         """Extrai hipóteses legais do select selHipoteseLegal em procedimento_cadastrar."""
         await self.ensure_authenticated()
