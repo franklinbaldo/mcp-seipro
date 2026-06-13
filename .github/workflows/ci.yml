@@ -40,6 +40,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - run: uv run --with bandit bandit -r src/ -ll --skip B101,B104 -x src/todos/sei_styles.py
 
+  test:
+    name: Tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv run --with pytest pytest tests/ -v
+
   audit:
     name: Dependency audit (pip-audit)
     runs-on: ubuntu-latest

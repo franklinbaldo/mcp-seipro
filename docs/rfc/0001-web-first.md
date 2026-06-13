@@ -1,16 +1,16 @@
 # RFC 0001 — Web-first: paridade funcional para instâncias SEI sem mod-wssei
 
-**Status**: Em implementação
-**Data**: 2026-06-11 · **Atualizado**: 2026-06-12
+**Status**: Concluído
+**Data**: 2026-06-11 · **Atualizado**: 2026-06-13
 **Autores**: Franklin Baldo (com Claude Code)
 
-## 0. Estado atual (2026-06-12)
+## 0. Estado atual (2026-06-13)
 
-A implementação avançou muito além do planejado originalmente. Todas as fases de PR #2 a PR #5 estão **concluídas**. O resumo abaixo reflete o que foi efetivamente entregue.
+Implementação completa. Todas as fases (PRs #2 a #16) estão **concluídas**.
 
 ### ✅ Concluído
 
-| Fase | Conteúdo | PR / Commit |
+| Fase | Conteúdo | PR |
 |---|---|---|
 | Fundações | `executar_acao_processo`, `obter_form_acao`, `SEIBackend`, `smoke_web.py` | merged |
 | Ações simples | `concluir`, `reabrir`, `dar_ciencia`, `receber`, `remover_atribuicao` | merged |
@@ -18,12 +18,18 @@ A implementação avançou muito além do planejado originalmente. Todas as fase
 | Read scrapers | `consultar_documento_web`, `listar_assinaturas_web`, `listar_ciencias_web`, `visualizar_documento_interno_web`, `baixar_documento_externo_web`, `consultar_processo_detalhe` | merged |
 | Forms complexos | `enviar_processo_web`, `criar_processo_web`, `criar_documento_interno_web`, `incluir_documento_externo` | merged |
 | Read fallbacks | `listar_unidades_processo`, `listar_interessados`, `listar_sobrestamentos` via `consultar_processo_detalhe` | merged |
+| Fase 6 | `sei_listar_usuarios`, `sei_pesquisar_tipos_processo`, `sei_pesquisar_blocos_assinatura` | #16 |
+| Fase 7 | `sei_pesquisar_hipoteses_legais`, `sei_pesquisar_tipos_documento`, `sei_pesquisar_tipos_conferencia`, `sei_pesquisar_marcadores` | #16 |
+| Fase 8 | `sei_pesquisar_outras_unidades`, `sei_criar_bloco_assinatura`, `sei_disponibilizar_bloco_assinatura`, `sei_cancelar_disponibilizacao_bloco` | #16 |
+| Fase 9 | `sei_pesquisar_assuntos`, `sei_pesquisar_textos_padrao`, `sei_consultar_atribuicao` | #16 |
+| Fase 10 | `sei_concluir_bloco_assinatura`, `sei_excluir_bloco_assinatura`, `sei_reabrir_bloco_assinatura`, `sei_retornar_bloco_assinatura`, `sei_listar_documentos_bloco_assinatura`, `sei_alterar_bloco_assinatura` | #16 |
+| Fase 11 | `sei_pesquisar_usuarios`, `sei_pesquisar_tipos_documento_externo`, `sei_verificar_acesso`, `sei_listar_meus_acompanhamentos`, `sei_listar_acompanhamentos_unidade`, `sei_alterar_acompanhamento`, `sei_listar_grupos_modelos`, `sei_listar_modelos`, `sei_retirar_documentos_bloco_assinatura`, `sei_anotar_documento_bloco_assinatura`, `sei_alterar_anotacao_bloco_assinatura` | #16 |
 
-**106 tools** no total — **53 com chamadas web** no caminho de execução.
+**121 tools** no total — **~80 com fallback web** no caminho de execução.
 
-### 🔲 Ainda a fazer (Fase 6)
+### 🔒 Permanentemente REST-only (sem plano de web)
 
-Ver §4.6 abaixo.
+Ver §4.6. Em instância sem mod-wssei, essas tools retornam erro explicativo.
 
 ## 1. Problema
 
@@ -52,6 +58,8 @@ Tornar o web scraper um **backend completo**, não um acelerador do REST:
 
 Fora de escopo: assinatura digital (PKI no navegador), pesquisa Solr completa,
 funções administrativas (órgãos, contextos).
+
+**Objetivo atingido** — todas as tools de fluxo cotidiano têm fallback web.
 
 ## 3. Fundamento técnico — o padrão universal do SEI
 
@@ -102,217 +110,91 @@ Três projetos open-source documentam o comportamento real do SEI sem depender d
 | Usuario/unidade p/ anexo | Extraídos do literal JS `objTabelaAnexos.adicionar([..., 'CPF', 'SIGLA'])` |
 | Visualização Detalhada | Requer `hdnTipoVisualizacao=D` no POST do form `procedimento_controlar` |
 | Sucesso de POST | Verificar `acao=arvore_visualizar` (ou equivalente) na URL final, não status 200 |
+| Catálogos via AJAX | `controlador_ajax.php?acao_ajax=<nome>&termo=<filtro>` retorna JSON `[{id, nome, ...}]`; nomes: `usuario_auto_completar`, `assunto_auto_completar`, `texto_padrao_auto_completar`, `unidade_auto_completar` |
+| Blocos: URL assinada | Ação em bloco específico requer encontrar URL com `acao=<acao>&id_bloco=<id>&infra_hash=<hash>` na página `bloco_assinatura_listar` — o hash é único por bloco/sessão |
 
-## 4. Proposta
+## 4. Implementação entregue
 
-### 4.1 Camada de roteamento por capacidade
-
-```python
-class SEIBackend:
-    """Resolve qual implementação atende cada operação."""
-
-    def __init__(self, rest: SEIClient | None, web: SEIWebClient) -> None:
-        self._rest = rest
-        self._web = web
-        self._has_rest = rest is not None
-
-    async def detect(self) -> None:
-        # 1 chamada no startup: GET /api/v2/versao (ou /autenticar)
-        # 404 → rest = None; tudo roteia para web
-        ...
-
-    async def listar_processos(self, ...) -> list[dict]:
-        # web é sempre mais rápido para listagem
-        return await self._web.listar_processos(...)
-
-    async def incluir_documento_interno(self, ...) -> dict:
-        if self._has_rest:
-            return await self._rest.incluir_documento_interno(...)
-        return await self._web.incluir_documento_interno(...)  # fase 3
-```
-
-Cada tool declara preferência: `prefer="web"`, `prefer="rest"`, ou
-`prefer="hybrid"`. Quando o backend preferido não existe, cai no outro; quando
-nenhum suporta, erro claro ("esta operação requer mod-wssei, não disponível
-nesta instância").
-
-### 4.2 Primitiva genérica de ação
-
-O coração da proposta — um método único que executa o padrão universal:
+### 4.1 Camada de roteamento por capacidade (`SEIBackend`)
 
 ```python
-async def executar_acao_processo(
-    self,
-    protocolo: str,
-    acao: str,                            # ex. "procedimento_concluir"
-    campos: dict[str, str] | None = None, # campos do form a sobrescrever
-    confirmar: bool = True,               # False = dry-run (retorna campos sem POSTar)
-) -> dict:
-    """trabalhar → arvore → Nos[0].acoes → link acao= → GET form → POST."""
-    ...
+backend = _get_backend(ctx)   # retorna SEIBackend com .rest e .web
+if backend.has_rest:
+    result = await backend.rest.method(...)
+else:
+    result = await backend.web.method_web(...)
 ```
 
-Na primitiva interna, `confirmar=True` é o default (os wrappers mapeados como
-`concluir_processo` executam de verdade). Na **tool MCP genérica**
-`sei_executar_acao`, o default inverte para `confirmar=False` (dry-run) — ver
-Decisão 1 na §9.
+`_get_backend` detecta no startup se mod-wssei responde (via GET `/api/v2/versao`
+ou `/autenticar`). 404 → `has_rest=False`; tudo roteia para web.
 
-`incluir_documento_externo` vira um caso especializado dessa primitiva
-(precisa do upload em duas fases). As ações simples viram one-liners:
+### 4.2 Helpers genéricos implementados
 
-```python
-async def concluir_processo(self, protocolo):
-    return await self.executar_acao_processo(protocolo, "procedimento_concluir")
-```
+| Helper | Localização | O que faz |
+|---|---|---|
+| `executar_acao_processo` | `SEIWebClient` | trabalhar → arvore → Nos[0].acoes → link acao= → GET form → POST |
+| `obter_form_acao` | `SEIWebClient` | Retorna `{campos, selects, textareas}` de qualquer form de processo |
+| `_obter_link_toolbar` | `SEIWebClient` | URL assinada de ação na toolbar (não dependente de processo) |
+| `_autocomplete_ajax` | `SEIWebClient` | Wrapper genérico para `controlador_ajax.php` |
+| `_obter_acao_bloco_url` | `SEIWebClient` | URL assinada de ação em bloco específico |
+| `_executar_acao_bloco` | `SEIWebClient` | Executa ação simples de bloco via GET |
+| `_extrair_erro_sei` | módulo | Extrai mensagem de erro de `alert()`/`infraMsg` no HTML |
+| `_extrair_submit_btn` | módulo | Captura par `name=value` do botão submit do form |
 
-### 4.3 Cache de catálogos (substituto dos dropdowns SIP)
+### 4.3 Técnicas web por categoria de tool
 
-Tipos de documento, hipóteses legais, unidades etc. vêm de autocompletes SIP
-no web — mas **também aparecem como `<select>` em forms** (ex.: `selSerie` com
-415 opções em `documento_receber`). Estratégia:
+| Categoria | Técnica | Exemplos |
+|---|---|---|
+| Ações de processo | `executar_acao_processo` | concluir, reabrir, enviar, dar_ciencia, atribuir |
+| Catálogos de form | Scrape de `<select>` via toolbar | tipos_processo, hipoteses_legais, marcadores |
+| Catálogos AJAX | `_autocomplete_ajax` | pesquisar_usuarios, pesquisar_assuntos, pesquisar_outras_unidades |
+| Blocos (listagem) | Scrape de `bloco_assinatura_listar` | pesquisar_blocos_assinatura |
+| Blocos (ações) | `_obter_acao_bloco_url` + GET | disponibilizar, concluir, excluir, retirar_documento |
+| Blocos (forms) | GET detail → POST | criar_bloco, alterar_bloco, anotar_documento_bloco |
+| Leitura de dados | Scrape de página de detalhe | consultar_processo, listar_assinaturas, arvore_processo |
+| Verificação de acesso | `_garantir_link_trabalhar` | verificar_acesso |
+| Acompanhamento | `executar_acao_processo` + scrape | alterar_acompanhamento, listar_meus_acompanhamentos |
 
-- Extrair catálogos dos selects dos forms quando o fluxo passar por eles
-  (custo zero) e cachear com TTL 24h em disco (`~/.cache/todos/`).
-- `sei_pesquisar_tipos_documento` etc. consultam o cache; se vazio, fazem um
-  GET do form que contém o select e populam.
+### 4.4 Ferramentas permanentemente REST-only
 
-### 4.4 Sequência de PRs
-
-Cada PR depende da anterior. O critério de aceite de cada uma é o
-`scripts/smoke_web.py` passar contra SEI-RO (e não regredir na ANTAQ).
-
----
-
-**PR #1 — RFC + renaming + SEI_WEB_URL** ✅ *merged*
-Renomear mcp-seipro → todos, criar este RFC, adicionar suporte a
-`SEI_WEB_URL` no `SEIWebClient`, `auth.py` e `setup_claude.py`.
-
----
-
-**PR #2 — Fundações: `smoke_web.py`, `SEIBackend`, `executar_acao_processo` + 5 ações simples**
-
-*Depende de: PR #1*
-
-- `scripts/smoke_web.py` — login + 1 ação de cada categoria; é o critério
-  de aceite de tudo que vier depois
-- `SEIBackend` em `sei_backend.py` com `detect()` no startup
-- `executar_acao_processo` em `SEIWebClient`:
-  `trabalhar → arvore → Nos[0].acoes → link → GET form → POST`
-- `_extrair_erro_sei` extraído de `incluir_documento_externo` como helper
-  compartilhado
-- Tools migradas para web via `executar_acao_processo`:
-  `sei_concluir_processo`, `sei_reabrir_processo`, `sei_receber_processo`,
-  `sei_remover_atribuicao`, `sei_dar_ciencia`
-- Tool MCP genérica `sei_executar_acao` com `confirmar=False` por padrão
-  (dry-run — ver Decisão 1)
-
-Critério: as 5 tools + smoke test funcionam em SEI-RO sem mod-wssei.
-
----
-
-**PR #3 — Forms com campos**
-
-*Depende de: PR #2 (`executar_acao_processo` disponível)*
-
-- `sei_registrar_andamento` (campo `txtDescricao`)
-- `sei_criar_anotacao` (campos `txaDescricao`, `selPrioridade`)
-- `sei_marcar_processo` (campos `selMarcador` + texto)
-- `sei_sobrestar_processo` / `sei_remover_sobrestamento`
-- `sei_atribuir_processo` (campo `selUsuario` — select no form, não autocomplete)
-- `sei_acompanhar_processo` / `sei_remover_acompanhamento`
-
-Critério: todas as 7 tools funcionam em SEI-RO; smoke test passa.
-
----
-
-**PR #4 — Read scrapers**
-
-*Depende de: PR #2 (sessão web e helpers de parse disponíveis)*
-
-- `sei_consultar_documento_externo` (page `documento_consultar`)
-- `sei_listar_assinaturas`, `sei_listar_ciencias` (tabelas na mesma página)
-- `sei_listar_unidades_processo`, `sei_listar_interessados`,
-  `sei_listar_sobrestamentos`
-- `sei_baixar_anexo` / `sei_ler_documento` via link
-  `documento_download_anexo` da árvore
-- Cache de catálogos em disco (`~/.cache/todos/`, TTL 24h) — ✅ implementado
-  com `DiskStore` do ecossistema FastMCP; ver Decisão 2
-
-Critério: todas as tools retornam dados corretos em SEI-RO; smoke test passa.
-
----
-
-**PR #5 — Forms complexos (sob demanda)**
-
-*Depende de: PR #3 + PR #4*
-
-- `sei_enviar_processo`: autocomplete de unidades via
-  `controlador_ajax.php?acao_ajax=unidade_auto_completar`
-- `sei_criar_processo`: tipo via `<select>`, interessados via AJAX
-- `sei_criar_documento` (interno): POST direto ao `documento_gerar`
-  pulando o CKEditor (editor é só UI; submit é form normal com `txaEditor_*`);
-  requer engenharia reversa do form `editor_montar`
-
-Critério: as 3 tools funcionam em SEI-RO; smoke test passa.
-
----
-
-**Permanente — não migrar**
-
-Assinatura (PKI), cancelar assinatura, Solr (`sei_pesquisar_processos`),
-admin (órgãos/contextos), sugestões de assunto. Em instância sem REST,
-essas tools retornam erro explicativo com alternativa quando houver.
-
----
-
-**PR #6 — Catálogos web + listar_usuarios + bloco_assinatura web** *(planejado)*
-
-*Depende de: PR #2–#5 (fundações concluídas)*
-
-Grupo A — **Catálogos via select de form** (extraídos uma vez e cacheados em disco TTL 24h):
-- `sei_pesquisar_tipos_documento`: select `selSerie` em `documento_receber`
-- `sei_pesquisar_tipos_processo`: select `selTipoProcedimento` em `procedimento_iniciar`
-- `sei_pesquisar_hipoteses_legais`: select `selHipoteseLegal` em forms de sigilo
-- `sei_pesquisar_tipos_conferencia`: select `selTipoConferencia` em `documento_receber`
-
-Grupo B — **listar_usuarios via form de atribuição**:
-- `sei_listar_usuarios`: extrair select `selUsuario` de `atribuicao_alterar`
-  (já implementado para atribuição, apenas expor como list separado)
-
-Grupo C — **Bloco de assinatura via web**:
-- `sei_pesquisar_blocos_assinatura`: listar via `bloco_assinatura_listar`
-- `sei_incluir_documento_bloco_assinatura`, `sei_disponibilizar_bloco_assinatura`:
-  ações simples via `executar_acao_processo` com `acao=bloco_assinatura_*`
-
-Critério: todas as tools do grupo A funcionam sem REST; grupo B e C passam no smoke test.
-
-### 4.6 Ferramentas permanentemente REST-only (sem plano de web)
-
-Por restrição técnica ou escopo (PKI server-side, API admin):
+Por restrição técnica ou escopo (PKI server-side, API admin, cross-nav complexa):
 
 | Tool | Razão |
 |---|---|
 | `sei_assinar_documento`, `sei_assinar_bloco` | PKI — chave privada no browser/token do usuário |
-| `sei_cancelar_assinatura` | Não exposta nem via web |
-| `sei_versao`, `sei_listar_orgaos`, `sei_listar_contextos` | APIs de administração do SIP |
-| `sei_listar_credenciamentos` e família | Processos sigilosos — funcionalidade desativável por órgão |
-| `sei_listar_relacionamentos` | Requer mod-wssei ≥ 3.0.2 mesmo via REST |
-| `sei_alterar_processo`, `sei_alterar_documento_*` | Forms com muitos campos interdependentes — alto custo, baixo uso |
-| `sei_criar_observacao`, `sei_criar_contato` | Baixa prioridade; sem referência nos repos de extensão |
+| `sei_cancelar_assinatura` | Função `cancelarAssinaturaInternoControlado` existe no core SEI mas não está exposta via web nem REST |
+| `sei_versao` | Endpoint REST puro sem equivalente web |
+| `sei_listar_orgaos`, `sei_listar_contextos` | APIs de administração do SIP |
+| `sei_listar_credenciamentos` e família | Processos sigilosos — funcionalidade desativável por órgão; scraping dependeria de UI que pode não existir |
+| `sei_listar_relacionamentos` | Requer mod-wssei ≥ 3.0.2; sem equivalente no frontend SEI 4.x |
+| `sei_sugestao_assuntos_documento` | Requer cross-navegação tipo→assuntos via API; sem page equivalente no web |
+| `sei_listar_blocos_documento` | Cross-navegação: precisaria buscar em todos os blocos o documento — alto custo |
+| `sei_alterar_processo` | Form com muitos campos interdependentes e validação client-side complexa |
 
 ### 4.5 Robustez
 
-- **Teste de fumaça por instância**: script `scripts/smoke_web.py` que roda
-  login + 1 ação de cada categoria contra uma instância alvo, para validar
-  compatibilidade antes de ativar (variações de versão SEI 4.0/4.1/5.0 mudam
-  detalhes do HTML).
-- **Versão do SEI**: extrair do rodapé do login (`v4.x.x`) e gatear parsers
-  por versão quando divergirem.
-- **Falha legível**: todo POST valida a URL final e extrai `alert()`/`infraMsg`
-  do HTML de resposta para reportar o erro real do SEI (já implementado em
-  `incluir_documento_externo` — extrair para helper `_extrair_erro_sei`).
-- **Sessão**: re-login automático ao detectar `txtUsuario` na resposta (já
-  implementado; manter no helper genérico).
+- **Smoke test por instância**: `scripts/smoke_web.py` — login + ações de cada
+  categoria; critério de aceite de cada fase (variações de versão SEI 4.0/4.1/5.0).
+- **Testes unitários**: `tests/test_parsers.py` — testa parsers HTML com
+  amostras sem precisar de servidor SEI (ver §4.6).
+- **Erro legível**: todo POST valida URL final e extrai `alert()`/`infraMsg`
+  via `_extrair_erro_sei` — erro real do SEI é propagado.
+- **Re-login automático**: detectado por `txtUsuario` na resposta; re-autentica
+  e repete a requisição.
+- **Graceful fallback**: tools AJAX com filtro obrigatório retornam
+  `{"_aviso": "filtro obrigatório"}` em vez de erro.
+
+### 4.6 Testes unitários de parsers
+
+```bash
+uv run --with pytest pytest tests/
+```
+
+Cobrindo:
+- `_parse_doc_label` — formato "Tipo SIGLA NUMERO" e "Tipo (NUMERO)"
+- `_parse_acompanhamento_tabela` — tabela vazia, limite, linha sem link
+- `parse_inbox` — layout detalhada, resumida, HTML vazio
+- `parse_arvore_nos` — JS vazio, entrada inválida
 
 ## 5. Variáveis de ambiente
 
@@ -354,13 +236,12 @@ Por restrição técnica ou escopo (PKI server-side, API admin):
 
 ## 8. Métricas de sucesso
 
-- **M1**: 100% das tools de fluxo cotidiano (listar, consultar, concluir,
+- **M1** ✅: 100% das tools de fluxo cotidiano (listar, consultar, concluir,
   reabrir, andamento, ciência, anotação, marcador, upload externo, enviar)
   funcionando em SEI-RO.
-- **M2**: zero regressão nas instâncias com REST (ANTAQ) — `smoke_web.py`
-  passa contra a ANTAQ antes e depois de cada fase (não há suite de testes
-  unitários no repo hoje; o smoke test é a linha de base).
-- **M3**: tempo médio por operação web ≤ 2 s (hoje: 0.6–1.5 s nas migradas).
+- **M2** ✅: zero regressão nas instâncias com REST (ANTAQ) — `smoke_web.py`
+  passa contra a ANTAQ antes e depois de cada fase.
+- **M3** ✅: tempo médio por operação web ≤ 2 s (hoje: 0.6–1.5 s nas migradas).
 
 ## 9. Decisões
 
