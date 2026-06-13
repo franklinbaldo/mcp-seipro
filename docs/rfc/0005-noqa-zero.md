@@ -111,24 +111,49 @@ Parâmetros bool devem ser keyword-only (adicionar `*` antes deles).
 
 ## 2. Proposta
 
-### 2.1 Constante `_HTTP_OK` e invariantes de layout (Phase A)
+### 2.1 Helper `_raise_unless_ok` em vez de constante (Phase A)
 
-Definir em `sei_web_client.py`:
+Em vez de só nomear o literal `200`, centralizar toda a verificação em um helper
+que lança `SEIConnectionError` diretamente. O literal desaparece do código:
 
 ```python
-_HTTP_OK = 200  # status HTTP esperado em todas as respostas do SEI
+def _raise_unless_ok(r: httpx.Response, context: str = "") -> None:
+    """Lança SEIConnectionError se a resposta não for HTTP 200.
 
-# Invariantes de layout HTML do SEI (número mínimo de colunas por contexto)
+    Elimina o padrão repetido 'if r.status_code != 200: raise ...' em todos os
+    métodos do web client e garante mensagens de erro consistentes.
+    """
+    if r.status_code != httpx.codes.OK:  # usa a constante do próprio httpx
+        prefix = f"{context}: " if context else ""
+        raise SEIConnectionError(
+            f"{prefix}SEI retornou HTTP {r.status_code} (esperado 200)"
+        )
+```
+
+Uso nos métodos:
+
+```python
+# Antes (45× em sei_web_client.py)
+if r.status_code != 200:   # noqa: PLR2004
+    raise SEIConnectionError(f"Falha ao listar processos: {r.status_code}")
+
+# Depois — zero literais, zero noqa, mensagem contextual uniforme
+_raise_unless_ok(r, "listar processos")
+```
+
+Para comparações de comprimento de lista (`len(tds) >= 4`, `len(rows) < 2`, etc.)
+onde o significado é invariante de layout HTML documentável, definir constantes:
+
+```python
 _COLS_PROCESSO_INBOX   = 2   # protocolo + especificação
 _COLS_PROCESSO_DETALHE = 4   # protocolo + tipo + data + unidade
 _COLS_ATIVIDADE_MIN    = 4   # data + ação + unidade + usuário
 _COLS_MARCADOR_MIN     = 2   # nome + cor
 ```
 
-Substituir todos os literais `!= 200` / `== 200` por `!= _HTTP_OK` / `== _HTTP_OK`.
-Substituir comparações de comprimento por constantes nomeadas onde o significado
-é documentável; onde a comparação é local demais para nomear, remover o `# noqa`
-adicionando `PLR2004` ao `per-file-ignores` do arquivo em questão.
+Onde a comparação é demasiado local para nomear com sentido, adicionar
+`PLR2004` ao `per-file-ignores` de `sei_web_client.py` (com comentário
+justificando) em vez de espalhá-lo linha a linha.
 
 ### 2.2 Acessadores públicos em `SEIWebClient` (Phase B)
 
@@ -265,7 +290,7 @@ Verificar e atualizar call sites para passar como keyword args.
 
 | Fase | Alvo | Noqa removidos | Esforço |
 |---|---|---|---|
-| **A** | `_HTTP_OK` + constantes de layout em `sei_web_client.py` | ~80 PLR2004 | 45 min |
+| **A** | `_raise_unless_ok()` + constantes de layout em `sei_web_client.py` | ~80 PLR2004 | 45 min |
 | **B** | Acessadores públicos em `SEIWebClient` | 7 SLF001 | 30 min |
 | **C** | Decomposição de `sei_ler_documento` | PLR0911/PLR0913/PLR0915 + 2 FBT | 90 min |
 | **D** | G004 + S110/S112 + ERA001 + FBT em métodos públicos do web client | ~20 | 45 min |
