@@ -88,10 +88,17 @@ def _extrair_erro_sei(html: str) -> str | None:
             txt = el.get_text(" ", strip=True)
             if txt:
                 return txt
-    # JavaScript alert("mensagem de erro")
-    m = re.search(r"alert\(['\"](.{10,300})['\"]", html)
-    if m:
-        return m.group(1)
+    # JavaScript alert("mensagem de erro") — busca apenas em <script>,
+    # excluindo onclick/href e scripts que constroem HTML dinamicamente
+    # (document.write com âncoras de assinantes).
+    for script in soup.find_all("script"):
+        if not isinstance(script, Tag):
+            continue
+        src = script.get_text()
+        # [^<>'"]{10,300} evita match de HTML embutido nos scripts (nomes de assinantes)
+        m = re.search(r"alert\(['\"]([^<>'\"]{10,300})['\"]", src)
+        if m:
+            return m.group(1)
     return None
 
 
