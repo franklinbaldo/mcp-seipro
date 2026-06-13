@@ -36,6 +36,9 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
+import httpx
+
+from todos.exceptions import SEIError
 from todos.sei_web_client import SEIWebClient
 
 from .scrub import scrub
@@ -53,7 +56,7 @@ async def _capture_all(client: SEIWebClient) -> dict[str, str]:
             html: str = await coro
             pages[slug] = scrub(html)
             sys.stdout.write(f"  ✓ {slug}\n")
-        except Exception as exc:
+        except (SEIError, httpx.HTTPError, OSError) as exc:
             sys.stderr.write(f"  ✗ {slug}: {exc}\n")
 
     await client.ensure_authenticated()
