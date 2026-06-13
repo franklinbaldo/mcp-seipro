@@ -3481,12 +3481,18 @@ async def sei_pesquisar_usuarios(
     este pesquisa no servidor por nome/sigla em todo o órgão.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (AJAX autocomplete).
+    No modo web, filtro é obrigatório e id_orgao/pagina são ignorados.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_usuarios(
-            filtro=filtro, id_orgao=id_orgao, limit=limit, start=pagina
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_usuarios(
+                filtro=filtro, id_orgao=id_orgao, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.pesquisar_usuarios_web(filtro=filtro, limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3785,12 +3791,18 @@ async def sei_pesquisar_tipos_documento_externo(
     este retorna apenas os tipos aplicáveis a documentos externos.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (form documento_receber).
+    No modo web, pagina é ignorado.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_tipos_documento_externo(
-            filtro=filtro, limit=limit, start=pagina
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_tipos_documento_externo(
+                filtro=filtro, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.pesquisar_tipos_documento_externo_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3896,11 +3908,16 @@ async def sei_verificar_acesso(
     Útil para checar permissão antes de operações em processos restritos.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (tenta navegar à árvore do processo).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.verificar_acesso(id_proc)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.verificar_acesso(id_proc)
+        else:
+            result = await backend.web.verificar_acesso_web(processo)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4126,10 +4143,16 @@ async def sei_listar_meus_acompanhamentos(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (acompanhamento_listar).
+    No modo web, pagina é ignorado.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_meus_acompanhamentos(limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_meus_acompanhamentos(limit=limit, start=pagina)
+        else:
+            result = await backend.web.listar_meus_acompanhamentos_web(limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4145,10 +4168,16 @@ async def sei_listar_acompanhamentos_unidade(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (acompanhamento_listar, segunda tabela).
+    No modo web, pagina é ignorado.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_acompanhamentos_unidade(limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_acompanhamentos_unidade(limit=limit, start=pagina)
+        else:
+            result = await backend.web.listar_acompanhamentos_unidade_web(limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4169,11 +4198,16 @@ async def sei_alterar_acompanhamento(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (form acompanhamento_registrar).
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.alterar_acompanhamento(id_proc, grupo, observacao)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.alterar_acompanhamento(id_proc, grupo, observacao)
+        else:
+            result = await backend.web.alterar_acompanhamento_web(processo, grupo, observacao)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4351,10 +4385,16 @@ async def sei_listar_grupos_modelos(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (grupo_modelos_listar).
+    No modo web, limit e pagina são ignorados.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_grupos_modelos(limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_grupos_modelos(limit=limit, start=pagina)
+        else:
+            result = await backend.web.listar_grupos_modelos_web()
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4375,12 +4415,18 @@ async def sei_listar_modelos(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (modelos_listar).
+    No modo web, limit e pagina são ignorados.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_modelos(
-            id_grupo=id_grupo, filtro=filtro, limit=limit, start=pagina
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_modelos(
+                id_grupo=id_grupo, filtro=filtro, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.listar_modelos_web(filtro=filtro, id_grupo=id_grupo)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4609,10 +4655,24 @@ async def sei_retirar_documentos_bloco_assinatura(
     """Retira documento(s) de um bloco de assinatura.
 
     - documentos: ID(s) de documento(s) separados por vírgula
+
+    Funciona via REST (mod-wssei) ou via scraper web (um documento por vez em modo web).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.retirar_documento_bloco_assinatura(id_bloco, documentos)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.retirar_documento_bloco_assinatura(id_bloco, documentos)
+        else:
+            resultados = []
+            for id_doc in documentos.split(","):
+                id_doc = id_doc.strip()  # noqa: PLW2901
+                if id_doc:
+                    resultados.append(
+                        await backend.web.retirar_documento_bloco_assinatura_web(id_bloco, id_doc)
+                    )
+            result = (
+                resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4759,10 +4819,19 @@ async def sei_anotar_documento_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (form bloco_assinatura_anotar_documento).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.anotar_documento_bloco_assinatura(id_bloco, documento, descricao)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.anotar_documento_bloco_assinatura(
+                id_bloco, documento, descricao
+            )
+        else:
+            result = await backend.web.anotar_documento_bloco_assinatura_web(
+                id_bloco, documento, descricao
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4779,10 +4848,19 @@ async def sei_alterar_anotacao_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (mesmo form de criação de anotação).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.alterar_anotacao_bloco_assinatura(id_bloco, documento, descricao)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.alterar_anotacao_bloco_assinatura(
+                id_bloco, documento, descricao
+            )
+        else:
+            result = await backend.web.anotar_documento_bloco_assinatura_web(
+                id_bloco, documento, descricao
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
