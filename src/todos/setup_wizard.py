@@ -84,9 +84,7 @@ def _detect_organs(
             "    Isso ocorre comumente em redes governamentais com proxies ou certificados internos."
         )
         confirm_ssl = (
-            input(
-                "Deseja tentar a conexão desativando a verificação de certificado SSL? (s/n): "
-            )
+            input("Deseja tentar a conexão desativando a verificação de certificado SSL? (s/n): ")
             .strip()
             .lower()
         )
@@ -111,14 +109,16 @@ def _detect_organs(
         sigla_sistema = query_final.get("sigla_sistema", [sigla_sistema])[0]
 
         soup = BeautifulSoup(resp.text, "html.parser")
-        sel = soup.find("select", attrs={"name": "selOrgao"}) or soup.find(
-            "select", id="selOrgao"
-        )
+        sel = soup.find("select", attrs={"name": "selOrgao"}) or soup.find("select", id="selOrgao")
         if sel:
             for opt in sel.find_all("option"):
                 val = opt.get("value")
                 text = opt.get_text(strip=True)
-                if val and val != "null" and not text.startswith(("-", "Selecione")):
+                if (
+                    isinstance(val, str)
+                    and val != "null"
+                    and not text.startswith(("-", "Selecione"))
+                ):
                     organs.append((val, text))
 
     return organs, verify_ssl_disabled, sigla_orgao_sistema, sigla_sistema
@@ -144,8 +144,33 @@ def _resolve_organ_from_list(
     parts = [p.strip() for p in re.split(r"\s*-\s*", sigla_orgao) if p.strip()]
 
     ufs = {
-        "AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG",
-        "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO",
+        "AC",
+        "AL",
+        "AP",
+        "AM",
+        "BA",
+        "CE",
+        "DF",
+        "ES",
+        "GO",
+        "MA",
+        "MT",
+        "MS",
+        "MG",
+        "PA",
+        "PB",
+        "PR",
+        "PE",
+        "PI",
+        "RJ",
+        "RN",
+        "RS",
+        "RO",
+        "RR",
+        "SC",
+        "SP",
+        "SE",
+        "TO",
     }
     if len(parts) > 1:
         parts_without_uf = [p for p in parts if p.upper() not in ufs]
@@ -232,7 +257,6 @@ def _save_password_to_keyring(
         )
         print_yellow("    Usando senha local para a validação.")
         return "", senha  # keyring has it; use local for validation only
-
 
 
 def _validate_credentials(conn: _SEIConnConfig) -> None:
@@ -428,7 +452,9 @@ def _update_workspace_local(
             f"[!] Pulando {mcp_json}: senha em texto claro não deve "
             "ser gravada em arquivo de projeto (pode ser enviada ao controle de versão)."
         )
-    elif claude_cli and _mcp_add_via_cli(claude_cli, todos_cmd, mcp_env, "project", cwd=workspace_dir):
+    elif claude_cli and _mcp_add_via_cli(
+        claude_cli, todos_cmd, mcp_env, "project", cwd=workspace_dir
+    ):
         print_green(f"[+] Atualizado: {mcp_json} via `claude mcp add -s project`")
     elif _mcp_add_via_json(mcp_json, todos_cmd, mcp_env):
         print_green(f"[+] Atualizado: {mcp_json}")
@@ -462,9 +488,7 @@ def _update_codex_via_cli(codex_cli: str, todos_cmd: str, mcp_env: dict[str, str
         return True
 
 
-def _update_codex_via_toml(
-    codex_config: Path, todos_cmd: str, mcp_env: dict[str, str]
-) -> None:
+def _update_codex_via_toml(codex_config: Path, todos_cmd: str, mcp_env: dict[str, str]) -> None:
     """Edit ~/.codex/config.toml directly as a fallback for Codex CLI."""
     try:
         codex_config.parent.mkdir(parents=True, exist_ok=True)
@@ -544,9 +568,10 @@ def _infer_sigla_orgao_sistema(hostname: str) -> str:
 def _setup_sei_instance() -> _SEIInstanceConfig:
     """Prompt the user for the SEI URL and organ, returning a resolved instance config."""
     print_yellow("[*] Configuração da URL e Instância do SEI")
-    web_url_input = input(
-        "Digite ou cole a URL do seu SEI (ex: https://sei.sistemas.ro.gov.br): "
-    ).strip() or "https://sei.sistemas.ro.gov.br"
+    web_url_input = (
+        input("Digite ou cole a URL do seu SEI (ex: https://sei.sistemas.ro.gov.br): ").strip()
+        or "https://sei.sistemas.ro.gov.br"
+    )
 
     if not web_url_input.startswith(("http://", "https://")):
         web_url_input = "https://" + web_url_input
@@ -620,7 +645,9 @@ def _setup_credentials(sei_root: str) -> tuple[str, str, str]:
 
     sys.stdout.write("\n")
     print_yellow("[*] Gravando senha com segurança no Keyring do Sistema...")
-    instance_url = sei_root.replace("https://", "").replace("http://", "").strip().rstrip("/").lower()
+    instance_url = (
+        sei_root.replace("https://", "").replace("http://", "").strip().rstrip("/").lower()
+    )
     keyring_user = f"{usuario}@{instance_url}" if instance_url else usuario
     senha_config, senha_validacao = _save_password_to_keyring(keyring_user, senha)
     return usuario, senha_config, senha_validacao
@@ -681,7 +708,9 @@ def run_setup_wizard() -> None:
     print_yellow("[*] Atualizando arquivos de configuração MCP...")
     claude_cli = shutil.which("claude")
     todos_cmd = shutil.which("todos") or "todos"
-    _update_mcp_configs(claude_cli, todos_cmd, mcp_env, using_plaintext_password=using_plaintext_password)
+    _update_mcp_configs(
+        claude_cli, todos_cmd, mcp_env, using_plaintext_password=using_plaintext_password
+    )
     mcp_env["SEI_SENHA"] = ""
 
     sys.stdout.write("\n")
