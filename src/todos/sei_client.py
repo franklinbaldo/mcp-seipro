@@ -68,6 +68,16 @@ class SEIClient:
             verify=verify_ssl,
         )
 
+    @property
+    def http_client(self) -> httpx.AsyncClient:
+        """Expose the underlying HTTP client for direct use (e.g., benchmarks)."""
+        return self._client
+
+    @property
+    def auth_token(self) -> str | None:
+        """Expose the current auth token for direct HTTP calls."""
+        return self._token
+
     async def _cache_get(self, key: str) -> Any:  # noqa: ANN401
         """Retorna um catálogo persistido ou None."""
         return await self._catalog_cache.get(self._cache_namespace, key)
