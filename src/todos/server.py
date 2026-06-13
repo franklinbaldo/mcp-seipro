@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from todos import access_control
 from todos.catalog_cache import get_catalog_cache
+from todos.exceptions import SEINotFoundError
 from todos.html_utils import (
     html_to_markdown,
     html_to_text,
@@ -992,7 +993,7 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
     # Não tentar como externo automaticamente — risco alto de confusão id/proto
     # O fallback para externo só deve ser usado com id_procedimento conhecido
 
-    raise Exception(
+    raise SEINotFoundError(
         f"Documento '{referencia}' não encontrado via pesquisa. "
         "Se é um documento recém-criado, o Solr pode não ter indexado ainda. "
         "Use sei_arvore_processo com o protocolo do processo para encontrá-lo."
