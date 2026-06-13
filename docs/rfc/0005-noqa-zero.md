@@ -111,29 +111,14 @@ Parâmetros bool devem ser keyword-only (adicionar `*` antes deles).
 
 ## 2. Proposta
 
-### 2.1 `r.raise_for_status()` + mapeamento de exceções (Phase A)
+### 2.1 `r.raise_for_status()` inline + ampliar `_to_tool_error` (Phase A)
 
 `httpx.Response.raise_for_status()` já existe e faz exatamente isso: lança
-`httpx.HTTPStatusError` para qualquer resposta não-2xx. Não precisamos de helper
-customizado — só precisamos que `sei_web_client.py` converta a exceção do httpx
-para o tipo `SEIError` adequado, da mesma forma que `sei_client._request()` já faz.
+`httpx.HTTPStatusError` para qualquer resposta não-2xx. Não precisamos de nenhum
+wrapper — basta substituir as verificações inline e ampliar o único lugar onde
+exceções já são mapeadas: `_to_tool_error` em `server.py`.
 
-Adicionar `_raise_for_sei_status()` como wrapper mínimo:
-
-```python
-def _raise_for_sei_status(r: httpx.Response) -> None:
-    """Converte HTTPStatusError em SEIError tipado."""
-    try:
-        r.raise_for_status()
-    except httpx.HTTPStatusError as exc:
-        if exc.response.status_code in (401, 403):
-            raise SEIAuthError(str(exc)) from exc
-        if exc.response.status_code == 404:
-            raise SEINotFoundError(str(exc)) from exc
-        raise SEIConnectionError(str(exc)) from exc
-```
-
-Uso nos métodos (45 substituições em `sei_web_client.py`):
+**`sei_web_client.py`** — substituição direta (45 ocorrências):
 
 ```python
 # Antes
@@ -141,12 +126,30 @@ if r.status_code != 200:   # noqa: PLR2004
     raise SEIConnectionError(f"Falha: {r.status_code}")
 
 # Depois
-_raise_for_sei_status(r)
+r.raise_for_status()
 ```
 
-O literal `200` desaparece inteiramente — `raise_for_status()` usa a constante
-interna do httpx. O wrapper tem uma única responsabilidade (mapeamento de tipo)
-e é testável isoladamente.
+**`server.py`** — ampliar o catch e `_to_tool_error`:
+
+```python
+# catch em cada tool
+except (SEIError, httpx.HTTPStatusError) as e:
+    raise _to_tool_error(e) from e
+
+# _to_tool_error recebe Union
+def _to_tool_error(e: SEIError | httpx.HTTPStatusError) -> ToolError:
+    if isinstance(e, httpx.HTTPStatusError):
+        status = e.response.status_code
+        if status in (401, 403):
+            return ToolError(f"Sessão SEI expirada ou acesso negado (HTTP {status}).")
+        if status == 404:
+            return ToolError(f"Recurso não encontrado no SEI (HTTP 404).")
+        return ToolError(f"SEI retornou HTTP {status}.")
+    # ... ramos SEIError existentes ...
+```
+
+Nenhum código novo em `sei_web_client.py` além de deletar as verificações
+manuais. O mapeamento fica no único lugar onde já vive.
 
 Para comparações de comprimento (`len(tds) >= 4`, etc.) onde o valor representa
 um invariante de layout HTML documentável, definir constantes nomeadas:
@@ -297,7 +300,7 @@ Verificar e atualizar call sites para passar como keyword args.
 
 | Fase | Alvo | Noqa removidos | Esforço |
 |---|---|---|---|
-| **A** | `_raise_for_sei_status()` (wrapper de `raise_for_status()`) + constantes de layout | ~80 PLR2004 | 45 min |
+| **A** | `r.raise_for_status()` inline + ampliar `_to_tool_error` para `httpx.HTTPStatusError` | ~80 PLR2004 | 45 min |
 | **B** | Acessadores públicos em `SEIWebClient` | 7 SLF001 | 30 min |
 | **C** | Decomposição de `sei_ler_documento` | PLR0911/PLR0913/PLR0915 + 2 FBT | 90 min |
 | **D** | G004 + S110/S112 + ERA001 + FBT em métodos públicos do web client | ~20 | 45 min |
