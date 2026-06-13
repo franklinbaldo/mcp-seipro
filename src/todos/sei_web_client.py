@@ -29,7 +29,13 @@ from urllib.parse import parse_qsl, urlencode, urljoin
 import httpx
 from bs4 import BeautifulSoup, Tag
 
-from todos.exceptions import SEIAuthError, SEIConnectionError, SEINotFoundError, SEIParseError
+from todos.exceptions import (
+    SEIAuthError,
+    SEIConnectionError,
+    SEINotFoundError,
+    SEIParseError,
+    SEIValidationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +65,9 @@ def _check(r: httpx.Response) -> None:
             raise SEIAuthError(str(exc)) from exc
         if status == httpx.codes.NOT_FOUND:
             raise SEINotFoundError(str(exc)) from exc
-        raise SEIConnectionError(str(exc)) from exc
+        if status >= httpx.codes.INTERNAL_SERVER_ERROR:
+            raise SEIConnectionError(str(exc)) from exc
+        raise SEIValidationError(str(exc)) from exc
 
 
 def _extrair_erro_sei(html: str) -> str | None:
