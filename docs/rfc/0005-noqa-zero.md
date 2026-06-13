@@ -1,6 +1,6 @@
 # RFC 0005 — Conformidade total ruff: constantes, acessadores e decomposição
 
-**Status**: Proposta
+**Status**: Concluído · **Atualizado**: 2026-06-13
 **Data**: 2026-06-13
 **Autores**: Franklin Baldo (com Claude Code)
 
