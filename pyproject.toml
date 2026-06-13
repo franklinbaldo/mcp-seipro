@@ -83,16 +83,12 @@ ignore = [
 "src/todos/html_utils.py" = [
     # pytesseract/pdf2image/pdfplumber/io must be deferred — heavy optional deps
     "PLC0415",
-    # PDF/HTML conversion errors: markdownify/BeautifulSoup/pdfplumber can raise anything
-    "BLE001",
     # Layout parsing thresholds (table column count, uppercase header length heuristic)
     "PLR2004",
 ]
 "src/todos/catalog_cache.py" = [
     # Cache stores arbitrary JSON-deserializable values; Any is the correct type
     "ANN401",
-    # SQLite/JSON errors during cache reads and writes are non-fatal; all are logged
-    "BLE001",
     # random.random() used for probabilistic sweep (not crypto); S311 doesn't apply here
     "S311",
 ]
@@ -107,8 +103,6 @@ ignore = [
     "S106",
     # len(parts) != 2 checks JWT structure (header.signature); constant would add no clarity
     "PLR2004",
-    # _verify() catches base64/JSON decode errors; all error types are possible
-    "BLE001",
 ]
 "src/todos/sei_client.py" = [
     "TRY002", "TRY003", "EM101", "EM102",
@@ -121,8 +115,6 @@ ignore = [
     "PLC0415",
     # Cache stores arbitrary API-returned values; Any is the correct type here
     "ANN401",
-    # keyring backend errors are unpredictable; blanket catch is intentional and logged
-    "BLE001",
     # Sync open()/os.path.* inside async — architectural constraint shared with sei_web_client;
     # refactor to asyncio.to_thread / aiofiles is tracked separately (ASYNC230/240, PTH)
     "ASYNC230", "ASYNC240", "PTH110", "PTH119", "PTH123",
@@ -138,8 +130,6 @@ ignore = [
     "C901", "PLR0912", "PLR0913", "PLR0915",
     # Optional heavy deps (keyring, mimetypes, os, datetime) must be deferred at import time
     "PLC0415",
-    # Web scraper exception handling: HTML parsing errors can be arbitrary; all are logged
-    "BLE001",
     # Sync path ops inside async — architectural constraint; aiofiles refactor tracked separately
     "ASYNC230", "ASYNC240", "PTH113", "PTH119", "PTH123", "PTH202",
     # date.today() without tz — local date intentional for Brazilian government form fields
@@ -148,7 +138,7 @@ ignore = [
     "ANN401",
 ]
 "src/todos/server.py" = [
-    "TRY002", "TRY003", "EM101", "EM102", "BLE001", "PLR0912", "C901",
+    "TRY002", "TRY003", "EM101", "EM102", "PLR0912", "C901",
     "PLR0911",  # multiple return paths in tools inherent to the dual web/REST dispatch model
     "PLR0913",  # tools need ctx + ≥4 business params; grouping into dataclasses hides the MCP schema
     "ANN201", "D103",  # lifespan() is a FastMCP protocol function; signature is framework-dictated
