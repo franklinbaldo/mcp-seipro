@@ -8,7 +8,7 @@ import os
 import sys
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
-from typing import Literal, Protocol, cast
+from typing import Literal, TypeAlias, cast
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -1626,18 +1626,10 @@ async def sei_listar_processos(
         raise _to_tool_error(e) from e
 
 
-class _Extrator(Protocol):
-    """Interface compartilhada pelos extratores de _CAMPOS_AGRUPAMENTO.
-
-    Todos os extratores recebem (atributos, status) mesmo que cada implementação
-    individual use apenas um dos argumentos — a assinatura uniforme permite
-    que o dict de campos seja iterado sem tratamentos especiais.
-    """
-
-    def __call__(self, atributos: dict, status: dict) -> str:
-        """Extrai um valor legível de atributos e/ou status do processo."""
-        ...
-
+# Extratores em _CAMPOS_AGRUPAMENTO: todos aceitam (atributos, status) mesmo que
+# cada implementação individual use apenas um dos argumentos — assinatura uniforme
+# permite iterar o dict sem tratamentos especiais.
+_Extrator: TypeAlias = Callable[[dict, dict], str]
 
 _CAMPOS_AGRUPAMENTO: dict[str, dict[str, str | _Extrator]] = {
     "tipo": {
