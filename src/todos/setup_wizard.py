@@ -575,10 +575,11 @@ def _infer_sigla_orgao_sistema(hostname: str) -> str:
 def _detect_modsei_url(sei_root: str, *, verify_ssl: bool) -> str:
     """Probe both known mod-wssei paths and return the first that responds.
 
-    Returns the REST base URL on success, or "" if not found.
+    Uses POST /autenticar with empty credentials as the probe: the module
+    returns 400/422 (invalid credentials) when present, while Apache returns
+    a plain 404 when the module is not installed at all.
     Tries "wssei/" first (most common), then "mod-wssei/" (alternative install name).
-    A 401/403 response still confirms the module is installed — it just needs credentials.
-    404/501 means the path doesn't exist; network errors are treated as not-found.
+    Network errors and 404/501 are treated as not-found.
     """
     try:
         with httpx.Client(
@@ -587,7 +588,10 @@ def _detect_modsei_url(sei_root: str, *, verify_ssl: bool) -> str:
             for api_path in _WSSEI_API_PATHS:
                 candidate = f"{sei_root}{api_path}"
                 try:
-                    resp = client.get(f"{candidate}/versao")
+                    resp = client.post(
+                        f"{candidate}/autenticar",
+                        data={"usuario": "", "senha": "", "orgao": "0"},
+                    )
                 except httpx.RequestError:
                     continue
                 if resp.status_code not in (404, 501):
