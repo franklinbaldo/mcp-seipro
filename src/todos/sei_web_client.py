@@ -279,7 +279,7 @@ class SEIWebClient:
         submit_btn = login_form.find("button", type="submit") or login_form.find(
             "input", type="submit"
         )
-        if submit_btn and isinstance(submit_btn, Tag):
+        if submit_btn is not None:
             btn_name = _tag_str(submit_btn, "name")
             if btn_name:
                 btn_value = (
@@ -298,10 +298,10 @@ class SEIWebClient:
         if m_acao and "hdnAcao" in form:
             form["hdnAcao"] = m_acao.group(1)
         sel_ctx = login_form.find("select", attrs={"name": "selContexto"})
-        if sel_ctx is not None and isinstance(sel_ctx, Tag):
+        if sel_ctx is not None:
             ctx_val = ""
             for opt in sel_ctx.find_all("option"):
-                if isinstance(opt, Tag) and opt.get("selected") is not None:
+                if opt.get("selected") is not None:
                     ctx_val = _tag_str(opt, "value")
                     break
             form["selContexto"] = ctx_val
@@ -1086,8 +1086,8 @@ class SEIWebClient:
 
         soup_fs = BeautifulSoup(r1.text, "html.parser")
         ifr = soup_fs.find("iframe", id="ifrArvore")
-        if not isinstance(ifr, Tag):
-            raise RuntimeError("ifrArvore não encontrado no frameset")  # noqa: TRY004
+        if ifr is None:
+            raise RuntimeError("ifrArvore não encontrado no frameset")
         arvore_url = urljoin(str(r1.url), _tag_str(ifr, "src").replace("&amp;", "&"))
 
         r2 = await self._http.get(arvore_url, headers={"Referer": trab_url})
@@ -1146,13 +1146,11 @@ class SEIWebClient:
 
         soup = BeautifulSoup(body, "html.parser")
         form = soup.find("form")
-        if form and isinstance(form, Tag):
+        if form is not None:
             action = _tag_str(form, "action").replace("&amp;", "&")
             post_url = urljoin(str(r.url), action) if action else str(r.url)
             post_data: dict[str, str] = {}
             for inp in form.find_all("input"):
-                if not isinstance(inp, Tag):
-                    continue
                 n = _tag_str(inp, "name")
                 if n:
                     post_data[n] = _tag_str(inp, "value")
@@ -1181,7 +1179,7 @@ class SEIWebClient:
             "protocolo": protocolo,
         }
 
-    async def obter_form_acao(  # noqa: C901, PLR0912
+    async def obter_form_acao(  # noqa: C901
         self,
         protocolo: str,
         nome_acao: str,
@@ -1216,28 +1214,22 @@ class SEIWebClient:
         body = r.content.decode("iso-8859-1", "replace")
         soup = BeautifulSoup(body, "html.parser")
         form = soup.find("form")
-        if not isinstance(form, Tag):
+        if form is None:
             return {"campos": {}, "selects": {}, "textareas": []}
 
         campos: dict[str, str] = {}
         for inp in form.find_all("input", type="hidden"):
-            if not isinstance(inp, Tag):
-                continue
             n = _tag_str(inp, "name")
             if n:
                 campos[n] = _tag_str(inp, "value")
 
         selects: dict[str, list[dict]] = {}
         for sel in form.find_all("select"):
-            if not isinstance(sel, Tag):
-                continue
             n = _tag_str(sel, "name")
             if not n:
                 continue
             opcoes = []
             for opt in sel.find_all("option"):
-                if not isinstance(opt, Tag):
-                    continue
                 v = _tag_str(opt, "value")
                 t = opt.get_text(strip=True)
                 if v:
@@ -1246,8 +1238,6 @@ class SEIWebClient:
 
         textareas = []
         for ta in form.find_all("textarea"):
-            if not isinstance(ta, Tag):
-                continue
             n = _tag_str(ta, "name")
             if n:
                 textareas.append(n)
@@ -1477,8 +1467,6 @@ class SEIWebClient:
 
         post_data: dict[str, str] = {}
         for inp in form.find_all("input"):
-            if not isinstance(inp, Tag):
-                continue
             name = _tag_str(inp, "name")
             if name:
                 post_data[name] = _tag_str(inp, "value")
@@ -1693,8 +1681,8 @@ class SEIWebClient:
 
         soup = BeautifulSoup(body, "html.parser")
         form = soup.find("form")
-        if not isinstance(form, Tag):
-            raise RuntimeError("Form procedimento_tramitar não encontrado.")  # noqa: TRY004
+        if form is None:
+            raise RuntimeError("Form procedimento_tramitar não encontrado.")
 
         action = _tag_str(form, "action").replace("&amp;", "&")
         post_url = urljoin(sei_base, action) if action else tramitar_url
@@ -1702,8 +1690,6 @@ class SEIWebClient:
         # Coleta campos hidden do form
         post_data: list[tuple[str, str]] = []
         for inp in form.find_all("input", type="hidden"):
-            if not isinstance(inp, Tag):
-                continue
             name = _tag_str(inp, "name")
             if name:
                 post_data.append((name, _tag_str(inp, "value")))
@@ -1784,10 +1770,8 @@ class SEIWebClient:
         if sel is None:
             sel = soup.find("select", id=re.compile(r"selTipoProcedimento", re.IGNORECASE))
         tipos: list[dict[str, str]] = []
-        if isinstance(sel, Tag):
+        if sel is not None:
             for opt in sel.find_all("option"):
-                if not isinstance(opt, Tag):
-                    continue
                 v = _tag_str(opt, "value")
                 t = opt.get_text(strip=True)
                 if not v:
@@ -1842,7 +1826,7 @@ class SEIWebClient:
             usuarios.append({"id_usuario": v, "nome": nome, "sigla": sigla})
         return {"usuarios": usuarios, "total_itens": len(usuarios)}
 
-    async def pesquisar_blocos_assinatura_web(self, filtro: str = "", limit: int = 50) -> dict:  # noqa: C901
+    async def pesquisar_blocos_assinatura_web(self, filtro: str = "", limit: int = 50) -> dict:
         """Lista blocos de assinatura via scrape de bloco_assinatura_listar."""
         await self.ensure_authenticated()
         lista_url = await self._obter_link_toolbar("bloco_assinatura_listar")
@@ -1855,10 +1839,8 @@ class SEIWebClient:
         if tbl is None:
             tbl = soup.find("table", class_=re.compile(r"infraTable", re.IGNORECASE))
         blocos: list[dict[str, str]] = []
-        if isinstance(tbl, Tag):
+        if tbl is not None:
             for tr in tbl.find_all("tr")[1:]:
-                if not isinstance(tr, Tag):
-                    continue
                 tds = tr.find_all("td")
                 if len(tds) < 2:  # noqa: PLR2004
                     continue
@@ -1867,8 +1849,6 @@ class SEIWebClient:
                     continue
                 id_bloco = ""
                 for a in tr.find_all("a", href=re.compile(r"id_bloco=\d+")):
-                    if not isinstance(a, Tag):
-                        continue
                     mb = re.search(r"id_bloco=(\d+)", _tag_str(a, "href"))
                     if mb:
                         id_bloco = mb.group(1)
@@ -1921,7 +1901,7 @@ class SEIWebClient:
             )
         return urljoin(sei_base, m.group(1).replace("&amp;", "&"))
 
-    async def criar_bloco_assinatura_web(self, descricao: str) -> dict:  # noqa: C901, PLR0912
+    async def criar_bloco_assinatura_web(self, descricao: str) -> dict:  # noqa: C901
         """Cria um bloco de assinatura via scraper web."""
         await self.ensure_authenticated()
         sei_base = f"{self.sei_root}/sei/"
@@ -1938,14 +1918,12 @@ class SEIWebClient:
             raise RuntimeError(erro)
         soup = BeautifulSoup(body, "html.parser")
         form = soup.find("form")
-        if not isinstance(form, Tag):
-            raise RuntimeError("Form de criação de bloco não encontrado.")  # noqa: TRY004
+        if form is None:
+            raise RuntimeError("Form de criação de bloco não encontrado.")
         action = _tag_str(form, "action").replace("&amp;", "&")
         post_url = urljoin(sei_base, action) if action else incluir_url
         post_data: list[tuple[str, str]] = []
         for inp in form.find_all("input", type="hidden"):
-            if not isinstance(inp, Tag):
-                continue
             n = _tag_str(inp, "name")
             if n:
                 post_data.append((n, _tag_str(inp, "value")))
@@ -2046,7 +2024,7 @@ class SEIWebClient:
             id_bloco, "bloco_assinatura_excluir", "Bloco excluído com sucesso."
         )
 
-    async def listar_documentos_bloco_assinatura_web(self, id_bloco: str) -> list[dict]:  # noqa: C901
+    async def listar_documentos_bloco_assinatura_web(self, id_bloco: str) -> list[dict]:
         """Lista documentos de um bloco de assinatura via scraper web."""
         await self.ensure_authenticated()
         sei_base = f"{self.sei_root}/sei/"
@@ -2072,10 +2050,8 @@ class SEIWebClient:
         if tbl is None:
             tbl = soup.find("table", class_=re.compile(r"infraTable", re.IGNORECASE))
         docs: list[dict] = []
-        if isinstance(tbl, Tag):
+        if tbl is not None:
             for tr in tbl.find_all("tr")[1:]:
-                if not isinstance(tr, Tag):
-                    continue
                 tds = tr.find_all("td")
                 if len(tds) < 2:  # noqa: PLR2004
                     continue
@@ -2083,8 +2059,6 @@ class SEIWebClient:
                 num = tds[1].get_text(" ", strip=True)
                 id_doc = ""
                 for a in tr.find_all("a", href=re.compile(r"id_documento=\d+")):
-                    if not isinstance(a, Tag):
-                        continue
                     md = re.search(r"id_documento=(\d+)", _tag_str(a, "href"))
                     if md:
                         id_doc = md.group(1)
@@ -2092,7 +2066,7 @@ class SEIWebClient:
                 docs.append({"idDocumento": id_doc, "tipo": tipo, "numero": num})
         return docs
 
-    async def alterar_bloco_assinatura_web(self, id_bloco: str, descricao: str) -> dict:  # noqa: C901
+    async def alterar_bloco_assinatura_web(self, id_bloco: str, descricao: str) -> dict:
         """Altera descrição de um bloco de assinatura via scraper web."""
         await self.ensure_authenticated()
         sei_base = f"{self.sei_root}/sei/"
@@ -2115,14 +2089,12 @@ class SEIWebClient:
         body = r.content.decode("iso-8859-1", "replace")
         soup = BeautifulSoup(body, "html.parser")
         form = soup.find("form")
-        if not isinstance(form, Tag):
-            raise RuntimeError("Form de edição de bloco não encontrado.")  # noqa: TRY004
+        if form is None:
+            raise RuntimeError("Form de edição de bloco não encontrado.")
         action = _tag_str(form, "action").replace("&amp;", "&")
         post_url = urljoin(sei_base, action) if action else edit_url
         post_data: list[tuple[str, str]] = []
         for inp in form.find_all("input", type="hidden"):
-            if not isinstance(inp, Tag):
-                continue
             n = _tag_str(inp, "name")
             if n:
                 post_data.append((n, _tag_str(inp, "value")))
@@ -2225,15 +2197,15 @@ class SEIWebClient:
         body = r.content.decode("iso-8859-1", "replace")
         soup = BeautifulSoup(body, "html.parser")
         form = soup.find("form")
-        if not isinstance(form, Tag):
+        if form is None:
             return {"id_usuario": "", "nome": ""}
         sel = form.find("select", {"name": "selAtribuicao"})
-        if not isinstance(sel, Tag):
+        if sel is None:
             return {"id_usuario": "", "nome": ""}
         selected_opt = sel.find("option", {"selected": True})
         if selected_opt is None:
             selected_opt = sel.find("option", {"selected": "selected"})
-        if not isinstance(selected_opt, Tag):
+        if selected_opt is None:
             return {"id_usuario": "", "nome": "", "_aviso": "Processo não atribuído."}
         v = _tag_str(selected_opt, "value")
         t = selected_opt.get_text(strip=True)
@@ -2259,10 +2231,8 @@ class SEIWebClient:
         if sel is None:
             sel = soup.find("select", id=re.compile(r"selHipoteseLegal", re.IGNORECASE))
         hipoteses: list[dict[str, str]] = []
-        if isinstance(sel, Tag):
+        if sel is not None:
             for opt in sel.find_all("option"):
-                if not isinstance(opt, Tag):
-                    continue
                 v = _tag_str(opt, "value")
                 t = opt.get_text(strip=True)
                 if not v:
@@ -2319,8 +2289,6 @@ class SEIWebClient:
         soup_acoes = BeautifulSoup(acoes_html, "html.parser")
         incluir_href: str | None = None
         for a in soup_acoes.find_all("a", href=re.compile(r"documento_escolher_tipo")):
-            if not isinstance(a, Tag):
-                continue
             incluir_href = _tag_str(a, "href").replace("&amp;", "&")
             break
         if not incluir_href:
@@ -2333,14 +2301,12 @@ class SEIWebClient:
         body3 = r3.content.decode("iso-8859-1", "replace")
         soup3 = BeautifulSoup(body3, "html.parser")
         form3 = soup3.find("form", id="frmDocumentoEscolherTipo")
-        if not isinstance(form3, Tag):
-            raise RuntimeError("frmDocumentoEscolherTipo não encontrado")  # noqa: TRY004
+        if form3 is None:
+            raise RuntimeError("frmDocumentoEscolherTipo não encontrado")
         form3_action = _tag_str(form3, "action").replace("&amp;", "&")
         post3_url = urljoin(str(r3.url), form3_action)
         post3_data: dict[str, str] = {}
         for inp in form3.find_all("input", type="hidden"):
-            if not isinstance(inp, Tag):
-                continue
             n = _tag_str(inp, "name")
             if n:
                 post3_data[n] = _tag_str(inp, "value")
@@ -2362,10 +2328,8 @@ class SEIWebClient:
         soup = await self._obter_soup_documento_receber(protocolo)
         sel = soup.find("select", {"name": "selSerie"})
         tipos: list[dict[str, str]] = []
-        if isinstance(sel, Tag):
+        if sel is not None:
             for opt in sel.find_all("option"):
-                if not isinstance(opt, Tag):
-                    continue
                 v = _tag_str(opt, "value")
                 t = opt.get_text(strip=True)
                 if not v or v == "-1":
@@ -2386,10 +2350,8 @@ class SEIWebClient:
         soup = await self._obter_soup_documento_receber(protocolo)
         sel = soup.find("select", {"name": re.compile(r"selTipoConferencia", re.IGNORECASE)})
         tipos: list[dict[str, str]] = []
-        if isinstance(sel, Tag):
+        if sel is not None:
             for opt in sel.find_all("option"):
-                if not isinstance(opt, Tag):
-                    continue
                 v = _tag_str(opt, "value")
                 t = opt.get_text(strip=True)
                 if not v:
@@ -2427,16 +2389,14 @@ class SEIWebClient:
 
         soup = BeautifulSoup(body, "html.parser")
         form = soup.find("form")
-        if not isinstance(form, Tag):
-            raise RuntimeError("Form procedimento_cadastrar não encontrado.")  # noqa: TRY004
+        if form is None:
+            raise RuntimeError("Form procedimento_cadastrar não encontrado.")
 
         action = _tag_str(form, "action").replace("&amp;", "&")
         post_url = urljoin(sei_base, action) if action else cadastrar_url
 
         post_data: list[tuple[str, str]] = []
         for inp in form.find_all("input", type="hidden"):
-            if not isinstance(inp, Tag):
-                continue
             name = _tag_str(inp, "name")
             if name:
                 post_data.append((name, _tag_str(inp, "value")))
@@ -2593,8 +2553,8 @@ class SEIWebClient:
 
         soup4 = BeautifulSoup(body4, "html.parser")
         form4 = soup4.find("form")
-        if not isinstance(form4, Tag):
-            raise RuntimeError("Form editor_montar não encontrado.")  # noqa: TRY004
+        if form4 is None:
+            raise RuntimeError("Form editor_montar não encontrado.")
 
         action4 = _tag_str(form4, "action").replace("&amp;", "&")
         post_url4 = urljoin(sei_base, action4) if action4 else editor_url
@@ -2602,8 +2562,6 @@ class SEIWebClient:
         # --- Step 4: POST documento_gerar ---
         post_data4: list[tuple[str, str]] = []
         for inp in form4.find_all("input", type="hidden"):
-            if not isinstance(inp, Tag):
-                continue
             name = _tag_str(inp, "name")
             if name:
                 post_data4.append((name, _tag_str(inp, "value")))
@@ -2783,8 +2741,6 @@ class SEIWebClient:
         # --- Step 4: POST escolher com hdnIdSerie=-1 → documento_receber ---
         post3_data: dict[str, str] = {}
         for inp in form3.find_all("input", type="hidden"):
-            if not isinstance(inp, Tag):
-                continue
             n = _tag_str(inp, "name")
             if n:
                 post3_data[n] = _tag_str(inp, "value")
@@ -2813,8 +2769,6 @@ class SEIWebClient:
 
         form4_data: dict[str, str] = {}
         for inp in form4.find_all("input", type="hidden"):
-            if not isinstance(inp, Tag):
-                continue
             n = _tag_str(inp, "name")
             if n:
                 form4_data[n] = _tag_str(inp, "value")
@@ -3106,7 +3060,7 @@ class SEIWebClient:
     def _parse_acompanhamento_tabela(tbl: Tag | None, limit: int) -> list[dict]:  # noqa: C901
         """Extrai lista de processos de uma tabela da página acompanhamento_listar."""
         processos: list[dict] = []
-        if not isinstance(tbl, Tag):
+        if tbl is None:
             return processos
         for tr in tbl.find_all("tr")[1:]:
             if len(processos) >= limit:
@@ -3117,7 +3071,7 @@ class SEIWebClient:
             entrada: dict[str, str] = {}
             # Primeira coluna: link com protocolo
             a = tds[0].find("a")
-            if isinstance(a, Tag):
+            if a is not None:
                 txt = a.get_text(" ", strip=True)
                 href = _tag_str(a, "href")
                 mi = re.search(r"id_procedimento=(\d+)", href)
@@ -3142,7 +3096,7 @@ class SEIWebClient:
         soup = await self._obter_soup_acompanhamentos()
         tbls = soup.find_all("table", class_=re.compile(r"infraTable", re.IGNORECASE))
         tbl = tbls[0] if tbls else soup.find("table")
-        processos = self._parse_acompanhamento_tabela(tbl if isinstance(tbl, Tag) else None, limit)
+        processos = self._parse_acompanhamento_tabela(tbl, limit)
         return {"processos": processos, "total_itens": len(processos)}
 
     async def listar_acompanhamentos_unidade_web(self, limit: int = 50) -> dict:
@@ -3150,7 +3104,7 @@ class SEIWebClient:
         soup = await self._obter_soup_acompanhamentos()
         tbls = soup.find_all("table", class_=re.compile(r"infraTable", re.IGNORECASE))
         tbl = tbls[1] if len(tbls) > 1 else (tbls[0] if tbls else soup.find("table"))
-        processos = self._parse_acompanhamento_tabela(tbl if isinstance(tbl, Tag) else None, limit)
+        processos = self._parse_acompanhamento_tabela(tbl, limit)
         return {"processos": processos, "total_itens": len(processos)}
 
     async def alterar_acompanhamento_web(
@@ -3191,8 +3145,6 @@ class SEIWebClient:
         soup = BeautifulSoup(r.content.decode("iso-8859-1", "replace"), "html.parser")
         grupos: list[dict[str, str]] = []
         for tbl in soup.find_all("table", class_=re.compile(r"infraTable", re.IGNORECASE)):
-            if not isinstance(tbl, Tag):
-                continue
             for tr in tbl.find_all("tr")[1:]:
                 tds = tr.find_all("td")
                 if not tds:
@@ -3202,11 +3154,10 @@ class SEIWebClient:
                     continue
                 id_grupo = ""
                 for a in tr.find_all("a", href=re.compile(r"id_grupo=\d+")):
-                    if isinstance(a, Tag):
-                        mg = re.search(r"id_grupo=(\d+)", _tag_str(a, "href"))
-                        if mg:
-                            id_grupo = mg.group(1)
-                            break
+                    mg = re.search(r"id_grupo=(\d+)", _tag_str(a, "href"))
+                    if mg:
+                        id_grupo = mg.group(1)
+                        break
                 grupos.append({"id": id_grupo, "nome": nome})
         return {"grupos": grupos, "total_itens": len(grupos)}
 
@@ -3234,8 +3185,6 @@ class SEIWebClient:
         soup = BeautifulSoup(r.content.decode("iso-8859-1", "replace"), "html.parser")
         modelos: list[dict[str, str]] = []
         for tbl in soup.find_all("table", class_=re.compile(r"infraTable", re.IGNORECASE)):
-            if not isinstance(tbl, Tag):
-                continue
             for tr in tbl.find_all("tr")[1:]:
                 tds = tr.find_all("td")
                 if not tds:
@@ -3246,8 +3195,6 @@ class SEIWebClient:
                 id_modelo = ""
                 grp_id = ""
                 for a in tr.find_all("a", href=re.compile(r"id_modelo=\d+")):
-                    if not isinstance(a, Tag):
-                        continue
                     href = _tag_str(a, "href")
                     mm = re.search(r"id_modelo=(\d+)", href)
                     if mm:
@@ -3301,7 +3248,7 @@ class SEIWebClient:
             "mensagem": "Documento retirado do bloco com sucesso.",
         }
 
-    async def anotar_documento_bloco_assinatura_web(  # noqa: C901
+    async def anotar_documento_bloco_assinatura_web(
         self, id_bloco: str, id_documento: str, descricao: str
     ) -> dict:
         """Cria ou altera anotação em documento de bloco via scraper web."""
@@ -3328,14 +3275,12 @@ class SEIWebClient:
         body2 = r2.content.decode("iso-8859-1", "replace")
         soup = BeautifulSoup(body2, "html.parser")
         form = soup.find("form")
-        if not isinstance(form, Tag):
-            raise RuntimeError("Form de anotação não encontrado.")  # noqa: TRY004
+        if form is None:
+            raise RuntimeError("Form de anotação não encontrado.")
         action = _tag_str(form, "action").replace("&amp;", "&")
         post_url = urljoin(sei_base, action) if action else anotar_url
         post_data: list[tuple[str, str]] = []
         for inp in form.find_all("input", type="hidden"):
-            if not isinstance(inp, Tag):
-                continue
             n = _tag_str(inp, "name")
             if n:
                 post_data.append((n, _tag_str(inp, "value")))
@@ -3552,8 +3497,6 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:  # noqa: C901, PLR0912, PL
             if len(tds) >= 2:  # noqa: PLR2004
                 icones = []
                 for img in tds[1].find_all("img"):
-                    if not isinstance(img, Tag):
-                        continue
                     title = _tag_str(img, "title") or _tag_str(img, "alt")
                     if title:
                         icones.append(title.strip())
@@ -3594,8 +3537,6 @@ def parse_inbox(html: str) -> tuple[str, list[dict]]:  # noqa: C901, PLR0912, PL
             if len(tds) >= 2:  # noqa: PLR2004
                 icones = []
                 for img in tds[1].find_all("img"):
-                    if not isinstance(img, Tag):
-                        continue
                     title = _tag_str(img, "title") or _tag_str(img, "alt")
                     if title:
                         icones.append(title.strip())
@@ -3636,7 +3577,7 @@ def _extrair_metadados_tabelas(soup: BeautifulSoup, result: dict[str, object]) -
     linhas de cabeçalho (duas células <th>), que não são pares label/valor.
     """
     for tbl in soup.find_all("table"):
-        if not isinstance(tbl, Tag):
+        if tbl is None:
             continue
         if _tag_str(tbl, "id") in _TABELAS_LISTA:
             continue
@@ -3662,7 +3603,7 @@ def _parse_documento_consultar(html: str, id_documento: str) -> dict:
     # -- assinaturas: tblAssinaturas --
     assinaturas: list[dict] = []
     tbl_ass = soup.find("table", id="tblAssinaturas")
-    if tbl_ass and isinstance(tbl_ass, Tag):
+    if tbl_ass is not None:
         for tr in tbl_ass.find_all("tr")[1:]:
             tds = tr.find_all("td")
             if len(tds) >= 3:  # noqa: PLR2004
@@ -3678,7 +3619,7 @@ def _parse_documento_consultar(html: str, id_documento: str) -> dict:
     # -- ciências: tblCiencias --
     ciencias: list[dict] = []
     tbl_cien = soup.find("table", id="tblCiencias")
-    if tbl_cien and isinstance(tbl_cien, Tag):
+    if tbl_cien is not None:
         for tr in tbl_cien.find_all("tr")[1:]:
             tds = tr.find_all("td")
             if len(tds) >= 3:  # noqa: PLR2004
@@ -3706,7 +3647,7 @@ def _parse_procedimento_consultar(html: str, protocolo: str) -> dict:  # noqa: C
     # data/unidade/usuário/descrição, não lista de unidades abertas)
     unidades: list[dict] = []
     tbl_un = soup.find("table", id="tblUnidadesProcesso")
-    if tbl_un and isinstance(tbl_un, Tag):
+    if tbl_un is not None:
         for tr in tbl_un.find_all("tr")[1:]:
             tds = tr.find_all("td")
             if tds:
@@ -3717,16 +3658,15 @@ def _parse_procedimento_consultar(html: str, protocolo: str) -> dict:  # noqa: C
     # Fallback: procura qualquer link de unidade
     if not unidades:
         for a in soup.find_all("a", href=re.compile(r"acao=unidade_visualizar")):
-            if isinstance(a, Tag):
-                txt = a.get_text(" ", strip=True)
-                if txt:
-                    unidades.append({"unidade": txt})
+            txt = a.get_text(" ", strip=True)
+            if txt:
+                unidades.append({"unidade": txt})
     result["unidades_abertas"] = unidades
 
     # -- interessados: busca por label ou tabela --
     interessados: list[str] = []
     tbl_int = soup.find("table", id="tblInteressados")
-    if tbl_int and isinstance(tbl_int, Tag):
+    if tbl_int is not None:
         for tr in tbl_int.find_all("tr")[1:]:
             tds = tr.find_all("td")
             if tds:
@@ -3740,7 +3680,7 @@ def _parse_procedimento_consultar(html: str, protocolo: str) -> dict:  # noqa: C
     # -- sobrestamento: campo "Sobrestado" ou tabela tblSobrestamento --
     sobrestamentos: list[dict] = []
     tbl_sob = soup.find("table", id="tblSobrestamento")
-    if tbl_sob and isinstance(tbl_sob, Tag):
+    if tbl_sob is not None:
         for tr in tbl_sob.find_all("tr")[1:]:
             tds = tr.find_all("td")
             if len(tds) >= 2:  # noqa: PLR2004
