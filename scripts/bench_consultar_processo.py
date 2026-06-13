@@ -247,13 +247,17 @@ class WebSEIScraper:
     def __init__(self, sei_root: str, usuario: str, senha: str, *, verify_ssl: bool) -> None:
         """Initialise the scraper with connection parameters."""
         self.sei_root = sei_root.rstrip("/")
-        self.login_url = f"{self.sei_root}/sip/login.php?sigla_orgao_sistema=ANTAQ&sigla_sistema=SEI"
+        self.login_url = (
+            f"{self.sei_root}/sip/login.php?sigla_orgao_sistema=ANTAQ&sigla_sistema=SEI"
+        )
         self.usuario = usuario
         self.senha = senha
         self._http = httpx.AsyncClient(
             verify=verify_ssl,
             follow_redirects=True,
-            timeout=httpx.Timeout(HTTP_TIMEOUT_S, connect=HTTP_CONNECT_TIMEOUT_S, read=HTTP_READ_TIMEOUT_S),
+            timeout=httpx.Timeout(
+                HTTP_TIMEOUT_S, connect=HTTP_CONNECT_TIMEOUT_S, read=HTTP_READ_TIMEOUT_S
+            ),
             headers={
                 "User-Agent": (
                     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -294,7 +298,8 @@ class WebSEIScraper:
         login_form = usuario_input.find_parent("form")
 
         sel_orgao = self._find_sel_orgao(
-            login_form.find("select", attrs={"name": "selOrgao"}) or soup.find("select", attrs={"name": "selOrgao"})
+            login_form.find("select", attrs={"name": "selOrgao"})
+            or soup.find("select", attrs={"name": "selOrgao"})
         )
         form = self._build_login_form(login_form, sel_orgao)
         form["txtUsuario"] = self.usuario
@@ -304,7 +309,8 @@ class WebSEIScraper:
         post_url = urljoin(self.login_url, action)
         t0 = time.perf_counter()
         post_resp = await self._http.post(
-            post_url, data=form,
+            post_url,
+            data=form,
             headers={"Referer": self.login_url, "Origin": self.sei_root},
         )
         self.login_post_ms = (time.perf_counter() - t0) * 1000
@@ -312,9 +318,11 @@ class WebSEIScraper:
         if post_resp.status_code != HTTP_OK:
             raise RuntimeError(f"POST login status={post_resp.status_code}")
         final_url = post_resp.url
-        qs = dict(parse_qsl(
-            final_url.query.decode() if isinstance(final_url.query, bytes) else final_url.query
-        ))
+        qs = dict(
+            parse_qsl(
+                final_url.query.decode() if isinstance(final_url.query, bytes) else final_url.query
+            )
+        )
         if qs.get("acao") != "procedimento_controlar" or "infra_hash" not in qs:
             body = post_resp.text
             if 'name="txtUsuario"' in body:
@@ -547,16 +555,18 @@ class WebSEIScraper:
             args = self._split_js_args(m.group(1))
             if len(args) >= MIN_ARVORE_ARGS:
                 unq = self._unq_js_str
-                out.append({
-                    "tipo_no": unq(args[0]),
-                    "id": unq(args[1]),
-                    "pai": unq(args[2]),
-                    "link": unq(args[3]),
-                    "target": unq(args[4]),
-                    "label": unq(args[5]),
-                    "tooltip": unq(args[6]),
-                    "icone": unq(args[7]) if len(args) > MIN_ARVORE_ARGS else "",
-                })
+                out.append(
+                    {
+                        "tipo_no": unq(args[0]),
+                        "id": unq(args[1]),
+                        "pai": unq(args[2]),
+                        "link": unq(args[3]),
+                        "target": unq(args[4]),
+                        "label": unq(args[5]),
+                        "tooltip": unq(args[6]),
+                        "icone": unq(args[7]) if len(args) > MIN_ARVORE_ARGS else "",
+                    }
+                )
         return out
 
 
@@ -624,12 +634,14 @@ async def bench_method_b(
         t0 = time.perf_counter()
         cold = await scraper.fetch_process_data(protocolo, com_historico=com_historico)
         cold_ms = (time.perf_counter() - t0) * 1000
-        result.phases.append(PhaseTiming(
-            "consultar cadeia (cold)",
-            cold_ms,
-            cold["total_bytes"],
-            note=f"steps: {cold['timings_ms']}",
-        ))
+        result.phases.append(
+            PhaseTiming(
+                "consultar cadeia (cold)",
+                cold_ms,
+                cold["total_bytes"],
+                note=f"steps: {cold['timings_ms']}",
+            )
+        )
         result.data = cold["data"]
         result.fields = _flatten_keys(cold["data"])
 
@@ -696,9 +708,15 @@ def _render_timing_table(a: RunResult | None, b: RunResult | None, out: list[str
         fmt_ms(
             (b_ph["login GET (cold)"].ms if "login GET (cold)" in b_ph else 0)
             + (b_ph["login POST + redirect"].ms if "login POST + redirect" in b_ph else 0)
-        ) if "login GET (cold)" in b_ph else None,
+        )
+        if "login GET (cold)" in b_ph
+        else None,
     )
-    row("trocar_unidade", fmt_ms(a_ph["trocar_unidade"].ms) if "trocar_unidade" in a_ph else None, "n/a")
+    row(
+        "trocar_unidade",
+        fmt_ms(a_ph["trocar_unidade"].ms) if "trocar_unidade" in a_ph else None,
+        "n/a",
+    )
     row(
         "consultar (cold)",
         fmt_ms(a_ph["consultar (cold)"].ms) if "consultar (cold)" in a_ph else None,
@@ -711,7 +729,11 @@ def _render_timing_table(a: RunResult | None, b: RunResult | None, out: list[str
         fmt_ms(a_st["median"]) if a and a.warm_ms else None,
         fmt_ms(b_st["median"]) if b and b.warm_ms else None,
     )
-    row("warm p95", fmt_ms(a_st["p95"]) if a and a.warm_ms else None, fmt_ms(b_st["p95"]) if b and b.warm_ms else None)
+    row(
+        "warm p95",
+        fmt_ms(a_st["p95"]) if a and a.warm_ms else None,
+        fmt_ms(b_st["p95"]) if b and b.warm_ms else None,
+    )
     row(
         "warm min/max",
         f"{fmt_ms(a_st['min'])} / {fmt_ms(a_st['max'])}" if a and a.warm_ms else None,
@@ -720,7 +742,9 @@ def _render_timing_table(a: RunResult | None, b: RunResult | None, out: list[str
     row(
         "bytes payload (cold)",
         fmt_bytes(a_ph["consultar (cold)"].bytes_) if "consultar (cold)" in a_ph else None,
-        fmt_bytes(b_ph["consultar cadeia (cold)"].bytes_) if "consultar cadeia (cold)" in b_ph else None,
+        fmt_bytes(b_ph["consultar cadeia (cold)"].bytes_)
+        if "consultar cadeia (cold)" in b_ph
+        else None,
     )
     out.append("")
     if a and b and a.warm_ms and b.warm_ms and b_st["median"] > 0:
@@ -741,7 +765,9 @@ def _render_data_section(a: RunResult | None, b: RunResult | None, out: list[str
     out.append("")
     out.append("| Aspecto | Method A | Method B |")
     out.append("|---|---|---|")
-    out.append(f"| campos retornados | {len(a.fields) if a else '-'} | {len(b.fields) if b else '-'} |")
+    out.append(
+        f"| campos retornados | {len(a.fields) if a else '-'} | {len(b.fields) if b else '-'} |"
+    )
     out.append("")
 
     if a and a.fields:
@@ -787,7 +813,9 @@ def render_report(a: RunResult | None, b: RunResult | None, args: argparse.Names
     """Render a markdown benchmark report comparing Method A and Method B."""
     ts = datetime.now(UTC).astimezone().strftime("%Y-%m-%d %H:%M:%S %z")
     out: list[str] = [f"# bench_consultar_processo -- {ts}", ""]
-    out.append(f"protocolo: `{args.protocolo or '(auto da inbox)'}` warm: `{args.warm}` com_historico: `{args.com_historico}`")
+    out.append(
+        f"protocolo: `{args.protocolo or '(auto da inbox)'}` warm: `{args.warm}` com_historico: `{args.com_historico}`"
+    )
     out.append("")
     if a and a.error:
         out.extend([f"> **Method A FAILED**: {a.error}", ""])
@@ -845,10 +873,18 @@ async def main_async(args: argparse.Namespace) -> int:
 def main() -> None:
     """Entry point for the benchmark script."""
     parser = argparse.ArgumentParser(description="Benchmark consultar_processo REST vs Web")
-    parser.add_argument("--protocolo", default="", help="protocolo formatado (ex: 50300.007186/2026-69). Se vazio, usa o primeiro da inbox.")
+    parser.add_argument(
+        "--protocolo",
+        default="",
+        help="protocolo formatado (ex: 50300.007186/2026-69). Se vazio, usa o primeiro da inbox.",
+    )
     parser.add_argument("--unit", default="110000037", help="ID da unidade SEI")
     parser.add_argument("--warm", type=int, default=5, help="warm runs (default 5)")
-    parser.add_argument("--com-historico", action="store_true", help="incluir step procedimento_consultar_historico no Method B")
+    parser.add_argument(
+        "--com-historico",
+        action="store_true",
+        help="incluir step procedimento_consultar_historico no Method B",
+    )
     parser.add_argument("--skip-a", action="store_true")
     parser.add_argument("--skip-b", action="store_true")
     args = parser.parse_args()

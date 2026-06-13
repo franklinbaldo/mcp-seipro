@@ -146,7 +146,9 @@ def prompt_url() -> str:
     """Solicita a URL da API REST do SEI (opcional)."""
     sys.stdout.write("\n")
     sys.stdout.write("  [1/5] URL da API do SEI (opcional)\n")
-    sys.stdout.write("        Exemplo: https://sei.orgao.gov.br/sei/modulos/wssei/controlador_ws.php/api/v2\n")
+    sys.stdout.write(
+        "        Exemplo: https://sei.orgao.gov.br/sei/modulos/wssei/controlador_ws.php/api/v2\n"
+    )
     sys.stdout.write("        Deixe em branco se sua instancia nao tiver mod-wssei instalado.\n")
     sys.stdout.write("\n")
     while True:
@@ -519,11 +521,15 @@ def _save_keyring_password(
         )
         info("Senha salva com sucesso no cofre do sistema.")
     except subprocess.TimeoutExpired:
-        error("Timeout ao salvar no chaveiro do sistema (>30s); verifique se o daemon está disponível.")
+        error(
+            "Timeout ao salvar no chaveiro do sistema (>30s); verifique se o daemon está disponível."
+        )
         warn("A senha será armazenada em texto plano no arquivo de configuração como fallback.")
         config["mcpServers"][MCP_SERVER_NAME]["env"]["SEI_SENHA"] = sei_senha
     except (subprocess.CalledProcessError, OSError) as e:
-        error(f"Erro ao salvar senha no cofre do sistema: {getattr(e, 'stderr', None) or getattr(e, 'stdout', None) or str(e)}")
+        error(
+            f"Erro ao salvar senha no cofre do sistema: {getattr(e, 'stderr', None) or getattr(e, 'stdout', None) or str(e)}"
+        )
         warn("A senha será armazenada em texto plano no arquivo de configuração como fallback.")
         config["mcpServers"][MCP_SERVER_NAME]["env"]["SEI_SENHA"] = sei_senha
 
@@ -550,7 +556,9 @@ def main() -> None:
 
     sys.stdout.write("\n")
     sys.stdout.write("  [5b/5] Guardar senha de forma segura no cofre do sistema (Keyring)?\n")
-    sys.stdout.write("         Se ativado, a senha não será salva em texto plano no arquivo do Claude.\n")
+    sys.stdout.write(
+        "         Se ativado, a senha não será salva em texto plano no arquivo do Claude.\n"
+    )
     sys.stdout.write("\n")
     usar_keyring = confirm("Usar Keyring seguro do sistema?", default_yes=True)
 

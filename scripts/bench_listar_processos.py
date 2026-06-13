@@ -65,6 +65,7 @@ MIN_ICONES_COLS = 2
 # .env loader (parser manual, sem dependência nova)
 # ---------------------------------------------------------------------------
 
+
 def load_dotenv(path: Path) -> dict[str, str]:
     """Load key=value pairs from a .env file into os.environ and return as dict."""
     env: dict[str, str] = {}
@@ -85,6 +86,7 @@ def load_dotenv(path: Path) -> dict[str, str]:
 # ---------------------------------------------------------------------------
 # Dataclasses para timing
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class PhaseTiming:
@@ -130,6 +132,7 @@ def stats(values: list[float]) -> dict[str, float]:
 # ---------------------------------------------------------------------------
 # Method A — REST mod-wssei
 # ---------------------------------------------------------------------------
+
 
 async def bench_method_a(unit_id: str, n_warm: int, limit: int) -> RunResult:
     """Benchmark Method A: REST mod-wssei listar_processos."""
@@ -198,13 +201,16 @@ async def bench_method_a(unit_id: str, n_warm: int, limit: int) -> RunResult:
 # Method B — Web scraper
 # ---------------------------------------------------------------------------
 
+
 class WebSEIScraper:
     """Simplified SEI web scraper for benchmarking inbox requests."""
 
     def __init__(self, sei_root: str, usuario: str, senha: str, *, verify_ssl: bool) -> None:
         """Initialize the scraper with connection parameters."""
         self.sei_root = sei_root.rstrip("/")
-        self.login_url = f"{self.sei_root}/sip/login.php?sigla_orgao_sistema=ANTAQ&sigla_sistema=SEI"
+        self.login_url = (
+            f"{self.sei_root}/sip/login.php?sigla_orgao_sistema=ANTAQ&sigla_sistema=SEI"
+        )
         self.usuario = usuario
         self.senha = senha
         # follow_redirects=True: a cadeia pós-login passa por sip/login →
@@ -386,7 +392,11 @@ def _select_orgao(sel: Tag) -> str:
     # 2) option cujo texto contém ANTAQ
     if sel_orgao is None:
         for opt in sel.find_all("option"):
-            if "ANTAQ" in opt.get_text(strip=True).upper() and opt.get("value") and opt.get("value") != "null":
+            if (
+                "ANTAQ" in opt.get_text(strip=True).upper()
+                and opt.get("value")
+                and opt.get("value") != "null"
+            ):
                 sel_orgao = opt["value"]
                 break
     # 3) fallback: primeiro option não-vazio e não-null
@@ -440,14 +450,14 @@ def _build_login_form(
 def _parse_login_response(post_resp: httpx.Response) -> httpx.URL:
     """Validate the POST login response and return the inbox URL."""
     if post_resp.status_code != HTTP_OK:
-        raise RuntimeError(
-            f"POST login retornou status inesperado {post_resp.status_code}"
-        )
+        raise RuntimeError(f"POST login retornou status inesperado {post_resp.status_code}")
 
     final_url = post_resp.url
-    qs = dict(parse_qsl(
-        final_url.query.decode() if isinstance(final_url.query, bytes) else final_url.query
-    ))
+    qs = dict(
+        parse_qsl(
+            final_url.query.decode() if isinstance(final_url.query, bytes) else final_url.query
+        )
+    )
     if qs.get("acao") == "procedimento_controlar" and "infra_hash" in qs:
         return final_url
 
@@ -462,8 +472,7 @@ def _parse_login_response(post_resp: httpx.Response) -> httpx.URL:
         )
 
     raise RuntimeError(
-        f"Não localizei URL de procedimento_controlar após o login. "
-        f"Última URL: {final_url}"
+        f"Não localizei URL de procedimento_controlar após o login. Última URL: {final_url}"
     )
 
 
@@ -619,11 +628,13 @@ async def _run_pagination(
         if len(rows_p) == 0 and p > 0:
             break
     total = sum(pag_ms_list)
-    result.phases.append(PhaseTiming(
-        f"paginação {len(pag_ms_list)}p ({pag_rows_total} linhas)",
-        total,
-        note=f"individual: {[f'{x:.0f}' for x in pag_ms_list]}",
-    ))
+    result.phases.append(
+        PhaseTiming(
+            f"paginação {len(pag_ms_list)}p ({pag_rows_total} linhas)",
+            total,
+            note=f"individual: {[f'{x:.0f}' for x in pag_ms_list]}",
+        )
+    )
 
 
 async def bench_method_b(
@@ -704,6 +715,7 @@ async def bench_method_b(
 # Relatório markdown
 # ---------------------------------------------------------------------------
 
+
 def fmt_ms(v: float | None) -> str:
     """Format milliseconds for display, or '-' if None."""
     if v is None:
@@ -745,7 +757,11 @@ def _render_timing_section(
         (
             fmt_ms(
                 (b_phases.get("login GET (cold)").ms if "login GET (cold)" in b_phases else 0)
-                + (b_phases.get("login POST + redirect").ms if "login POST + redirect" in b_phases else 0)
+                + (
+                    b_phases.get("login POST + redirect").ms
+                    if "login POST + redirect" in b_phases
+                    else 0
+                )
             )
             if "login GET (cold)" in b_phases or "login POST + redirect" in b_phases
             else None
@@ -782,14 +798,20 @@ def _render_timing_section(
     row(
         "bytes payload (cold listar)",
         fmt_bytes(a_phases.get("listar (cold)").bytes_) if "listar (cold)" in a_phases else None,
-        fmt_bytes(b_phases.get("fetch_inbox (cold)").bytes_) if "fetch_inbox (cold)" in b_phases else None,
+        fmt_bytes(b_phases.get("fetch_inbox (cold)").bytes_)
+        if "fetch_inbox (cold)" in b_phases
+        else None,
     )
     out.append("")
 
     # Fases adicionais (paginação, etc.) — não cabem no esquema fixo
     extras_known = {
-        "auth (cold)", "trocar_unidade", "listar (cold)", "fetch_inbox (cold)",
-        "login GET (cold)", "login POST + redirect",
+        "auth (cold)",
+        "trocar_unidade",
+        "listar (cold)",
+        "fetch_inbox (cold)",
+        "login GET (cold)",
+        "login POST + redirect",
     }
     a_extras = [p for p in (a.phases if a else []) if p.name not in extras_known]
     b_extras = [p for p in (b.phases if b else []) if p.name not in extras_known]
@@ -826,9 +848,7 @@ def _render_data_section(
     out.append(
         f"| campos por linha (qtd) | {len(a.fields) if a else '-'} | {len(b.fields) if b else '-'} |"
     )
-    out.append(
-        f"| layout web detectado | n/a | {b.layout if b else '-'} |"
-    )
+    out.append(f"| layout web detectado | n/a | {b.layout if b else '-'} |")
     out.append("")
 
     if a and a.fields:
@@ -917,6 +937,7 @@ def render_report(a: RunResult | None, b: RunResult | None, args: argparse.Names
 # ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
+
 
 def _log_a_result(result: RunResult) -> None:
     """Write Method A result summary to stderr."""

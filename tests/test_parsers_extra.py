@@ -30,6 +30,7 @@ from todos.sei_web_client import (
 # helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse(html: str) -> BeautifulSoup:
     return BeautifulSoup(html, "html.parser")
 
@@ -43,6 +44,7 @@ def _form(html: str) -> Tag:
 # ===========================================================================
 # 1. _extrair_erro_sei
 # ===========================================================================
+
 
 class TestExtrairErroSei:
     def test_returns_none_for_empty_html(self):
@@ -108,6 +110,7 @@ class TestExtrairErroSei:
 # 2. _tag_str
 # ===========================================================================
 
+
 class TestTagStr:
     def _make_tag(self, html: str, tag_name: str = "div") -> Tag:
         return _parse(html).find(tag_name)
@@ -123,23 +126,23 @@ class TestTagStr:
         assert result == "foo"
 
     def test_returns_default_for_missing_attribute(self):
-        tag = self._make_tag('<div></div>')
+        tag = self._make_tag("<div></div>")
         assert _tag_str(tag, "href") == ""
 
     def test_returns_custom_default_for_missing_attribute(self):
-        tag = self._make_tag('<div></div>')
+        tag = self._make_tag("<div></div>")
         assert _tag_str(tag, "href", "N/A") == "N/A"
 
     def test_empty_class_list_returns_default(self):
         # Manually construct a tag that has class=[] (rare but defensible)
-        tag = self._make_tag('<div></div>')
+        tag = self._make_tag("<div></div>")
         # Simulate a list attribute with no items
         tag.attrs["class"] = []
         assert _tag_str(tag, "class") == ""
         assert _tag_str(tag, "class", "fallback") == "fallback"
 
     def test_none_attribute_value_returns_default(self):
-        tag = self._make_tag('<div></div>')
+        tag = self._make_tag("<div></div>")
         tag.attrs["data-x"] = None
         assert _tag_str(tag, "data-x") == ""
 
@@ -158,6 +161,7 @@ class TestTagStr:
 # 3. _extrair_submit_btn
 # ===========================================================================
 
+
 class TestExtrairSubmitBtn:
     def test_returns_none_for_empty_form(self):
         form = _form("<form></form>")
@@ -168,7 +172,9 @@ class TestExtrairSubmitBtn:
         assert _extrair_submit_btn(form) == ("sbmLogin", "Acessar")
 
     def test_detects_button_type_submit_with_value(self):
-        form = _form('<form><button type="submit" name="sbmAcessar" value="ACESSAR">ACESSAR</button></form>')
+        form = _form(
+            '<form><button type="submit" name="sbmAcessar" value="ACESSAR">ACESSAR</button></form>'
+        )
         assert _extrair_submit_btn(form) == ("sbmAcessar", "ACESSAR")
 
     def test_button_without_value_falls_back_to_text(self):
@@ -190,10 +196,10 @@ class TestExtrairSubmitBtn:
     def test_input_preferred_over_button(self):
         # input[type=submit] appears after button in HTML but spec says input is checked first
         form = _form(
-            '<form>'
+            "<form>"
             '<button type="submit" name="btnButton" value="btn">Botão</button>'
             '<input type="submit" name="sbmInput" value="Input">'
-            '</form>'
+            "</form>"
         )
         assert _extrair_submit_btn(form) == ("sbmInput", "Input")
 
@@ -212,6 +218,7 @@ class TestExtrairSubmitBtn:
 # 4. _extrair_metadados_tabelas
 # ===========================================================================
 
+
 class TestExtrairMetadadosTabelas:
     def test_empty_soup_produces_empty_result(self):
         soup = _parse("<html></html>")
@@ -220,25 +227,19 @@ class TestExtrairMetadadosTabelas:
         assert result == {}
 
     def test_basic_th_td_pair(self):
-        soup = _parse(
-            "<table><tr><th>Tipo do processo</th><td>Administrativo</td></tr></table>"
-        )
+        soup = _parse("<table><tr><th>Tipo do processo</th><td>Administrativo</td></tr></table>")
         result: dict = {}
         _extrair_metadados_tabelas(soup, result)
         assert result["tipo_do_processo"] == "Administrativo"
 
     def test_td_td_pair_also_extracted(self):
-        soup = _parse(
-            "<table><tr><td>Data de autuação:</td><td>01/01/2024</td></tr></table>"
-        )
+        soup = _parse("<table><tr><td>Data de autuação:</td><td>01/01/2024</td></tr></table>")
         result: dict = {}
         _extrair_metadados_tabelas(soup, result)
         assert result["data_de_autuação"] == "01/01/2024"
 
     def test_colon_stripped_from_key(self):
-        soup = _parse(
-            "<table><tr><th>Situação:</th><td>Aberto</td></tr></table>"
-        )
+        soup = _parse("<table><tr><th>Situação:</th><td>Aberto</td></tr></table>")
         result: dict = {}
         _extrair_metadados_tabelas(soup, result)
         assert "situação" in result
@@ -293,27 +294,19 @@ class TestExtrairMetadadosTabelas:
         assert key_59 in result
 
     def test_skip_list_table_tbl_assinaturas(self):
-        soup = _parse(
-            '<table id="tblAssinaturas">'
-            "<tr><th>Assinante</th><td>João</td></tr>"
-            "</table>"
-        )
+        soup = _parse('<table id="tblAssinaturas"><tr><th>Assinante</th><td>João</td></tr></table>')
         result: dict = {}
         _extrair_metadados_tabelas(soup, result)
         assert result == {}
 
     def test_skip_list_table_tbl_ciencias(self):
-        soup = _parse(
-            '<table id="tblCiencias"><tr><th>Usuário</th><td>Maria</td></tr></table>'
-        )
+        soup = _parse('<table id="tblCiencias"><tr><th>Usuário</th><td>Maria</td></tr></table>')
         result: dict = {}
         _extrair_metadados_tabelas(soup, result)
         assert result == {}
 
     def test_skip_list_table_tbl_interessados(self):
-        soup = _parse(
-            '<table id="tblInteressados"><tr><th>Nome</th><td>Pedro</td></tr></table>'
-        )
+        soup = _parse('<table id="tblInteressados"><tr><th>Nome</th><td>Pedro</td></tr></table>')
         result: dict = {}
         _extrair_metadados_tabelas(soup, result)
         assert result == {}
@@ -373,6 +366,7 @@ class TestExtrairMetadadosTabelas:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _wrap(body: str) -> str:
     """Wrap a body snippet in a minimal HTML document."""
     return f"<html><body>{body}</body></html>"
@@ -380,30 +374,28 @@ def _wrap(body: str) -> str:
 
 def _meta_table(pairs: list[tuple[str, str]]) -> str:
     """Build a generic metadata table with th/td pairs."""
-    rows = "".join(
-        f"<tr><th>{label}</th><td>{value}</td></tr>" for label, value in pairs
-    )
+    rows = "".join(f"<tr><th>{label}</th><td>{value}</td></tr>" for label, value in pairs)
     return f"<table>{rows}</table>"
 
 
 def _assinaturas_table(rows: list[tuple[str, str, str]]) -> str:
     header = "<tr><th>Assinante</th><th>Cargo</th><th>Data/Hora</th></tr>"
-    body = "".join(
-        f"<tr><td>{a}</td><td>{c}</td><td>{d}</td></tr>" for a, c, d in rows
-    )
+    body = "".join(f"<tr><td>{a}</td><td>{c}</td><td>{d}</td></tr>" for a, c, d in rows)
     return f'<table id="tblAssinaturas">{header}{body}</table>'
 
 
 def _ciencias_table(rows: list[tuple[str, str, str]]) -> str:
     header = "<tr><th>Usuário</th><th>Cargo</th><th>Data/Hora</th></tr>"
-    body = "".join(
-        f"<tr><td>{u}</td><td>{c}</td><td>{d}</td></tr>" for u, c, d in rows
-    )
+    body = "".join(f"<tr><td>{u}</td><td>{c}</td><td>{d}</td></tr>" for u, c, d in rows)
     return f'<table id="tblCiencias">{header}{body}</table>'
 
 
 def _unidades_table(rows: list[tuple[str, ...]], *, with_situacao: bool = True) -> str:
-    header = "<tr><th>Unidade</th><th>Situação</th></tr>" if with_situacao else "<tr><th>Unidade</th></tr>"
+    header = (
+        "<tr><th>Unidade</th><th>Situação</th></tr>"
+        if with_situacao
+        else "<tr><th>Unidade</th></tr>"
+    )
     body_rows = []
     for row in rows:
         if with_situacao and len(row) >= 2:
@@ -428,6 +420,7 @@ def _sobrestamento_table(rows: list[tuple[str, str]]) -> str:
 # ===========================================================================
 # Class A — _parse_documento_consultar
 # ===========================================================================
+
 
 class TestParseDocumentoConsultar:
     """Tests for _parse_documento_consultar(html, id_documento)."""
@@ -459,11 +452,13 @@ class TestParseDocumentoConsultar:
 
     def test_multiple_assinaturas(self):
         html = _wrap(
-            _assinaturas_table([
-                ("Maria Souza", "Coordenadora", "01/06/2026 09:00"),
-                ("Pedro Lima", "Analista", "02/06/2026 11:15"),
-                ("Ana Costa", "Gerente", "03/06/2026 16:45"),
-            ])
+            _assinaturas_table(
+                [
+                    ("Maria Souza", "Coordenadora", "01/06/2026 09:00"),
+                    ("Pedro Lima", "Analista", "02/06/2026 11:15"),
+                    ("Ana Costa", "Gerente", "03/06/2026 16:45"),
+                ]
+            )
         )
         result = _parse_documento_consultar(html, "99")
         assert len(result["assinaturas"]) == 3
@@ -501,10 +496,12 @@ class TestParseDocumentoConsultar:
 
     def test_multiple_ciencias(self):
         html = _wrap(
-            _ciencias_table([
-                ("Alice B.", "Técnico", "06/06/2026 08:30"),
-                ("Bob C.", "Analista", "07/06/2026 09:00"),
-            ])
+            _ciencias_table(
+                [
+                    ("Alice B.", "Técnico", "06/06/2026 08:30"),
+                    ("Bob C.", "Analista", "07/06/2026 09:00"),
+                ]
+            )
         )
         result = _parse_documento_consultar(html, "12")
         assert len(result["ciencias"]) == 2
@@ -540,6 +537,7 @@ class TestParseDocumentoConsultar:
 # Class B — _parse_procedimento_consultar
 # ===========================================================================
 
+
 class TestParseProcedimentoConsultar:
     """Tests for _parse_procedimento_consultar(html, protocolo)."""
 
@@ -556,10 +554,13 @@ class TestParseProcedimentoConsultar:
 
     def test_unidades_abertas_with_situacao(self):
         html = _wrap(
-            _unidades_table([
-                ("DIRED/ANTAQ", "Aberto"),
-                ("GPRO/ANTAQ", "Remetido"),
-            ], with_situacao=True)
+            _unidades_table(
+                [
+                    ("DIRED/ANTAQ", "Aberto"),
+                    ("GPRO/ANTAQ", "Remetido"),
+                ],
+                with_situacao=True,
+            )
         )
         result = _parse_procedimento_consultar(html, "0000.001")
         assert len(result["unidades_abertas"]) == 2
@@ -599,9 +600,7 @@ class TestParseProcedimentoConsultar:
     # --- interessados ----------------------------------------------------
 
     def test_interessados_from_table(self):
-        html = _wrap(
-            _interessados_table(["Empresa Alpha Ltda.", "Empresa Beta S.A."])
-        )
+        html = _wrap(_interessados_table(["Empresa Alpha Ltda.", "Empresa Beta S.A."]))
         result = _parse_procedimento_consultar(html, "0000.005")
         assert result["interessados"] == ["Empresa Alpha Ltda.", "Empresa Beta S.A."]
 
@@ -614,7 +613,7 @@ class TestParseProcedimentoConsultar:
         html = _wrap(
             '<table id="tblInteressados">'
             "<tr><th>Interessado</th></tr>"
-            "<tr><td>   </td></tr>"   # whitespace-only → stripped → ""
+            "<tr><td>   </td></tr>"  # whitespace-only → stripped → ""
             "<tr><td>Empresa Real</td></tr>"
             "</table>"
         )
@@ -624,9 +623,7 @@ class TestParseProcedimentoConsultar:
     # --- sobrestamentos --------------------------------------------------
 
     def test_sobrestamento_single_row(self):
-        html = _wrap(
-            _sobrestamento_table([("Aguardando laudo pericial", "10/06/2026")])
-        )
+        html = _wrap(_sobrestamento_table([("Aguardando laudo pericial", "10/06/2026")]))
         result = _parse_procedimento_consultar(html, "0000.008")
         assert len(result["sobrestamentos"]) == 1
         s = result["sobrestamentos"][0]
@@ -635,10 +632,12 @@ class TestParseProcedimentoConsultar:
 
     def test_sobrestamento_multiple_rows(self):
         html = _wrap(
-            _sobrestamento_table([
-                ("Motivo A", "01/05/2026"),
-                ("Motivo B", "15/05/2026"),
-            ])
+            _sobrestamento_table(
+                [
+                    ("Motivo A", "01/05/2026"),
+                    ("Motivo B", "15/05/2026"),
+                ]
+            )
         )
         result = _parse_procedimento_consultar(html, "0000.009")
         assert len(result["sobrestamentos"]) == 2
@@ -652,10 +651,12 @@ class TestParseProcedimentoConsultar:
     # --- metadata extraction alongside structured tables -----------------
 
     def test_metadata_extracted_alongside_structured_tables(self):
-        meta = _meta_table([
-            ("Tipo do Processo", "Administrativo"),
-            ("Data de Autuação", "02/01/2026"),
-        ])
+        meta = _meta_table(
+            [
+                ("Tipo do Processo", "Administrativo"),
+                ("Data de Autuação", "02/01/2026"),
+            ]
+        )
         unidades = _unidades_table([("GEDIR/ANTAQ", "Aberto")])
         interessados = _interessados_table(["Empresa Gamma"])
         html = _wrap(meta + unidades + interessados)
@@ -676,12 +677,16 @@ def make_client() -> SEIWebClient:
 # 1. _extract_pesquisa_rapida
 # ---------------------------------------------------------------------------
 
+
 class TestExtractPesquisaRapida:
     def test_basic_sets_action(self):
         client = make_client()
         html = '<form action="sei.php?acao=protocolo_pesquisa_rapida&amp;infra_hash=abc"><input></form>'
         client._extract_pesquisa_rapida(html)
-        assert client._pesquisa_rapida_action == "sei.php?acao=protocolo_pesquisa_rapida&infra_hash=abc"
+        assert (
+            client._pesquisa_rapida_action
+            == "sei.php?acao=protocolo_pesquisa_rapida&infra_hash=abc"
+        )
 
     def test_no_matching_form_leaves_attribute_unchanged(self):
         client = make_client()
@@ -732,6 +737,7 @@ class TestExtractPesquisaRapida:
 # 2. _extract_main_form
 # ---------------------------------------------------------------------------
 
+
 class TestExtractMainForm:
     def test_basic_sets_action_and_hidden_fields(self):
         client = make_client()
@@ -740,7 +746,7 @@ class TestExtractMainForm:
             '  <input type="hidden" name="hdnToken" value="tok123">'
             '  <input type="hidden" name="hdnTipoVisualizacao" value="D">'
             '  <input type="submit" name="sbm" value="OK">'
-            '</form>'
+            "</form>"
         )
         client._extract_main_form(html)
         assert client._form_action == "ctrl.php?acao=procedimento_controlar&infra_hash=xyz"
@@ -775,7 +781,7 @@ class TestExtractMainForm:
             '  <input type="hidden" name="h1" value="v1">'
             '  <input type="text" name="txt" value="ignored">'
             '  <input type="submit" name="sbm" value="Go">'
-            '</form>'
+            "</form>"
         )
         client._extract_main_form(html)
         assert "h1" in client._form_hidden
@@ -788,10 +794,10 @@ class TestExtractMainForm:
             '<form action="a.php?acao=unrelated"></form>'
             '<form action="a.php?acao=procedimento_controlar&amp;hash=first">'
             '  <input type="hidden" name="token" value="t1">'
-            '</form>'
+            "</form>"
             '<form action="a.php?acao=procedimento_controlar&amp;hash=second">'
             '  <input type="hidden" name="token" value="t2">'
-            '</form>'
+            "</form>"
         )
         client._extract_main_form(html)
         assert "hash=first" in client._form_action
@@ -803,7 +809,7 @@ class TestExtractMainForm:
             '<form action="a.php?acao=procedimento_controlar">'
             '  <input type="hidden" value="no-name">'
             '  <input type="hidden" name="good" value="yes">'
-            '</form>'
+            "</form>"
         )
         client._extract_main_form(html)
         assert client._form_hidden == {"good": "yes"}
@@ -813,15 +819,16 @@ class TestExtractMainForm:
 # 3. _populate_trabalhar_links
 # ---------------------------------------------------------------------------
 
+
 class TestPopulateTrabalharLinks:
     def test_basic_populates_dict(self):
         client = make_client()
-        html = (
-            '<a href="sei.php?acao=procedimento_trabalhar&amp;hash=abc">00001.000001/2024-01</a>'
-        )
+        html = '<a href="sei.php?acao=procedimento_trabalhar&amp;hash=abc">00001.000001/2024-01</a>'
         client._populate_trabalhar_links(html)
-        assert client._trabalhar_links.get("00001.000001/2024-01") == \
-            "sei.php?acao=procedimento_trabalhar&hash=abc"
+        assert (
+            client._trabalhar_links.get("00001.000001/2024-01")
+            == "sei.php?acao=procedimento_trabalhar&hash=abc"
+        )
 
     def test_no_matching_links_leaves_dict_empty(self):
         client = make_client()
@@ -886,12 +893,11 @@ class TestPopulateTrabalharLinks:
 # 4. _extract_unidade_atual
 # ---------------------------------------------------------------------------
 
+
 class TestExtractUnidadeAtual:
     def test_basic_sets_sigla_and_nome(self):
         client = make_client()
-        html = (
-            '<a id="unidade123" title="Gerência de Planejamento e Finanças">GPF</a>'
-        )
+        html = '<a id="unidade123" title="Gerência de Planejamento e Finanças">GPF</a>'
         client._extract_unidade_atual(html)
         assert client._unidade_atual is not None
         assert client._unidade_atual["sigla"] == "GPF"
@@ -930,7 +936,9 @@ class TestExtractUnidadeAtual:
         is picked up — using the same str(url.query) path as production.
         """
         client = make_client()
-        client._inbox_url = httpx.URL("http://sei.test/sei/controlador.php?acao=procedimento_controlar&infra_unidade_atual=99")
+        client._inbox_url = httpx.URL(
+            "http://sei.test/sei/controlador.php?acao=procedimento_controlar&infra_unidade_atual=99"
+        )
         # Reproduce what _extract_unidade_atual does to obtain the id
         raw_query = str(client._inbox_url.query)
         id_via_code = dict(parse_qsl(raw_query)).get("infra_unidade_atual", "")
@@ -970,6 +978,7 @@ class TestExtractUnidadeAtual:
 # 5. SEIWebClient._units_from_form (staticmethod)
 # ---------------------------------------------------------------------------
 
+
 class TestUnitsFromForm:
     def _make_form(self, rows_html: str) -> Tag:
         html = f"<form><table>{rows_html}</table></form>"
@@ -978,11 +987,11 @@ class TestUnitsFromForm:
 
     def test_basic_parses_single_unit(self):
         form = self._make_form(
-            '<tr>'
+            "<tr>"
             '  <td><input name="chkInfraItem" value="10"></td>'
-            '  <td>GPF</td>'
-            '  <td>Gerência de Planejamento e Finanças</td>'
-            '</tr>'
+            "  <td>GPF</td>"
+            "  <td>Gerência de Planejamento e Finanças</td>"
+            "</tr>"
         )
         result = SEIWebClient._units_from_form(form)
         assert len(result) == 1
@@ -1004,39 +1013,31 @@ class TestUnitsFromForm:
         assert ids == {"1", "2", "3"}
 
     def test_row_with_fewer_than_2_tds_is_skipped(self):
-        form = self._make_form(
-            '<tr><td><input name="chkInfraItem" value="5"></td></tr>'
-        )
+        form = self._make_form('<tr><td><input name="chkInfraItem" value="5"></td></tr>')
         result = SEIWebClient._units_from_form(form)
         assert result == []
 
     def test_input_without_value_is_skipped(self):
         form = self._make_form(
-            '<tr>'
-            '  <td><input name="chkInfraItem" value=""></td>'
-            '  <td>SIG</td><td>Nome</td>'
-            '</tr>'
+            '<tr>  <td><input name="chkInfraItem" value=""></td>  <td>SIG</td><td>Nome</td></tr>'
         )
         result = SEIWebClient._units_from_form(form)
         assert result == []
 
     def test_ignores_inputs_with_different_name(self):
         form = self._make_form(
-            '<tr>'
-            '  <td><input name="otherField" value="99"></td>'
-            '  <td>X</td><td>Xray</td>'
-            '</tr>'
+            '<tr>  <td><input name="otherField" value="99"></td>  <td>X</td><td>Xray</td></tr>'
         )
         result = SEIWebClient._units_from_form(form)
         assert result == []
 
     def test_extra_whitespace_in_td_is_normalized(self):
         form = self._make_form(
-            '<tr>'
+            "<tr>"
             '  <td><input name="chkInfraItem" value="7"></td>'
-            '  <td>  GR  </td>'
-            '  <td>  Gerência   Regional  </td>'
-            '</tr>'
+            "  <td>  GR  </td>"
+            "  <td>  Gerência   Regional  </td>"
+            "</tr>"
         )
         result = SEIWebClient._units_from_form(form)
         assert result[0]["sigla"] == "GR"
@@ -1051,11 +1052,7 @@ class TestUnitsFromForm:
 
     def test_radio_without_parent_tr_is_skipped(self):
         """Input not nested in a <tr> should not cause errors — just be skipped."""
-        html = (
-            '<form>'
-            '<input name="chkInfraItem" value="orphan">'
-            '</form>'
-        )
+        html = '<form><input name="chkInfraItem" value="orphan"></form>'
         soup = BeautifulSoup(html, "html.parser")
         form = soup.find("form")
         result = SEIWebClient._units_from_form(form)
@@ -1106,7 +1103,9 @@ def _resumida_html(
 
 class TestExtractTooltip:
     def test_extracts_especificacao_and_tipo(self) -> None:
-        link = _make_link("return infraTooltipMostrar('Minha Especificação','Contrato Administrativo')")
+        link = _make_link(
+            "return infraTooltipMostrar('Minha Especificação','Contrato Administrativo')"
+        )
         row: dict = {}
         _extract_tooltip(link, row)
         assert row["especificacao"] == "Minha Especificação"
@@ -1184,7 +1183,18 @@ def _nos_js(*nodes: tuple) -> str:
 
 class TestParseArvoreNosExtended:
     def test_single_node_all_fields_mapped(self) -> None:
-        js = _nos_js(("P", "proc001", "0", "http://link", "_self", "Processo 0001/2024", "tooltip txt", "icon.gif"))
+        js = _nos_js(
+            (
+                "P",
+                "proc001",
+                "0",
+                "http://link",
+                "_self",
+                "Processo 0001/2024",
+                "tooltip txt",
+                "icon.gif",
+            )
+        )
         result = parse_arvore_nos(js)
         assert len(result) == 1
         node = result[0]
@@ -1551,5 +1561,3 @@ class TestParseInboxExtended:
         layout, rows = parse_inbox(html)
         assert layout == "resumida"
         assert rows == []
-
-
