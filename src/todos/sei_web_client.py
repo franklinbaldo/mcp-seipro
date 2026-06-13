@@ -141,7 +141,7 @@ class SEIWebClient:
         else:
             self.sei_root = sei_url.rstrip("/")
 
-        self._usuario = kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", ""))
+        self._usuario = str(kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", "")))
 
         self._senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
         # Pre-compute keyring key so login() can do the actual lookup in a thread
@@ -418,12 +418,12 @@ class SEIWebClient:
                 and opt.get("value")
                 and opt.get("value") != "null"
             ):
-                return opt["value"]
+                return str(opt["value"])
         # 3) primeiro option válido
         for opt in sel.find_all("option"):
             v = opt.get("value")
             if v and v != "null":
-                return v
+                return str(v)
         raise SEIParseError("Nenhum <option> válido em selOrgao.")
 
     def _extract_pesquisa_rapida(self, html: str, soup: BeautifulSoup | None = None) -> None:
@@ -2861,7 +2861,7 @@ class SEIWebClient:
             body4,
             re.DOTALL,
         )
-        usuario = m_add.group(1) if m_add else self._usuario
+        usuario = m_add.group(1) if m_add else str(self._usuario)
         unidade = m_add.group(2) if m_add else ""
 
         # --- Step 7: POST frmDocumentoCadastro com hdnAnexos ---
@@ -3444,7 +3444,7 @@ def _extract_tooltip(link_tag: Tag, row: dict) -> None:
     Esse tooltip contém a especificação INDEPENDENTE de a coluna estar
     habilitada no painel — é sempre renderizado.
     """
-    mouseover = link_tag.get("onmouseover", "")
+    mouseover = str(link_tag.get("onmouseover", ""))
     m = _RE_TOOLTIP.search(mouseover)
     if m:
         especificacao = m.group(1).strip()
