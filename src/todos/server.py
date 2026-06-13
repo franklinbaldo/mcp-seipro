@@ -612,9 +612,6 @@ async def sei_listar_usuarios(
 
     Use o campo id_usuario retornado para sei_atribuir_processo.
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    No modo web, apenas_unidade=false é ignorado — o scraper sempre retorna
-    usuários da unidade atual.
     """
     try:
         backend = _get_backend(ctx)
@@ -1182,7 +1179,7 @@ async def sei_criar_documento(  # noqa: PLR0913
     - id_unidade: ID da unidade geradora (apenas REST, opcional)
 
     O documento é criado vazio. Use sei_listar_secoes e sei_editar_secao
-    para inserir conteúdo. Funciona via REST (mod-wssei) ou via scraper web.
+    para inserir conteúdo.
     """
     try:
         backend = _get_backend(ctx)
@@ -1799,8 +1796,6 @@ async def sei_pesquisar_hipoteses_legais(
 
     Exemplos: "pessoal", "controle interno", "sigilo fiscal"
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    No modo web, limit e pagina são ignorados.
     """
     try:
         backend = _get_backend(ctx)
@@ -1834,8 +1829,6 @@ async def sei_pesquisar_tipos_processo(
 
     Use o 'id' retornado como tipo_processo em sei_criar_processo.
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    No modo web, favoritos e pagina são ignorados.
     """
     try:
         backend = _get_backend(ctx)
@@ -1913,7 +1906,6 @@ async def sei_criar_processo(  # noqa: PLR0913
       Use sei_pesquisar_hipoteses_legais para descobrir o ID.
 
     Retorna o IdProcedimento e ProtocoloFormatado do processo criado.
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -1967,7 +1959,6 @@ async def sei_enviar_processo(  # noqa: C901, PLR0913
     - data_retorno: data de retorno programado DD/MM/AAAA (só se o usuário pedir)
     - dias_retorno: prazo em dias para retorno (alternativa à data, só se pedir)
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2081,7 +2072,6 @@ async def sei_concluir_processo(numero_processo: str, ctx: Context | None = None
 
     O processo é removido da caixa da unidade mas permanece acessível.
     Use sei_reabrir_processo para reverter.
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2101,7 +2091,6 @@ async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str
     - processo: protocolo formatado (ex: 50300.018905/2018-67) ou IdProcedimento
 
     O processo volta para a caixa da unidade atual.
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2128,7 +2117,6 @@ async def sei_atribuir_processo(  # noqa: C901, PLR0911
     - usuario: ID numérico do usuário OU nome/parte do nome
       (ex: "100001860" ou "Karina" ou "Karina Shimoishi")
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     Via web, o usuário é escolhido de um <select> no form — use
     sei_atribuir_processo(usuario="?") para listar os usuários disponíveis.
     """
@@ -2382,9 +2370,6 @@ async def sei_pesquisar_tipos_documento(  # noqa: PLR0913
 
     Use o 'id' retornado como id_serie em sei_criar_documento.
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    No modo web, favoritos, aplicabilidade e pagina são ignorados; retorna todos
-    os tipos visíveis no form de inclusão de documento do processo mais recente da inbox.
     """
     try:
         backend = _get_backend(ctx)
@@ -2422,7 +2407,6 @@ async def sei_sobrestar_processo(
     - motivo: motivo do sobrestamento (obrigatório)
     - processo_vinculado: protocolo de outro processo para vincular (opcional)
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2483,7 +2467,6 @@ async def sei_remover_sobrestamento(
 
     - processo: protocolo formatado (ex: 50300.018905/2018-67) ou IdProcedimento
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2515,7 +2498,6 @@ async def sei_dar_ciencia(
     - sei_dar_ciencia("1482875", tipo="documento")  → ciência na NT 16
     - sei_dar_ciencia("50300.018905/2018-67", tipo="processo")  → ciência no processo
 
-    Funciona via REST (mod-wssei) ou via scraper web para tipo="processo" em
     instâncias sem mod-wssei. Tipo "documento" exige REST.
     """
     try:
@@ -2555,7 +2537,6 @@ async def sei_listar_ciencias(
     - tipo: "documento" (padrão) ou "processo"
     - processo: protocolo do processo (necessário em instâncias sem mod-wssei quando tipo="documento")
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2596,7 +2577,6 @@ async def sei_remover_atribuicao(
     """Remove a atribuição de um processo (desatribui de qualquer usuário).
 
     - processo: protocolo formatado ou IdProcedimento
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2618,7 +2598,6 @@ async def sei_receber_processo(
     """Confirma o recebimento de um processo na unidade atual.
 
     - processo: protocolo formatado ou IdProcedimento
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2680,10 +2659,7 @@ async def sei_listar_unidades_processo(
     processo: str,
     ctx: Context | None = None,
 ) -> str:
-    """Lista as unidades onde o processo está aberto.
-
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    """
+    """Lista as unidades onde o processo está aberto."""
     try:
         backend = _get_backend(ctx)
         if backend.has_rest:
@@ -2701,10 +2677,7 @@ async def sei_listar_interessados(
     processo: str,
     ctx: Context | None = None,
 ) -> str:
-    """Lista os interessados de um processo.
-
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    """
+    """Lista os interessados de um processo."""
     try:
         backend = _get_backend(ctx)
         if backend.has_rest:
@@ -2722,10 +2695,7 @@ async def sei_listar_sobrestamentos(
     processo: str,
     ctx: Context | None = None,
 ) -> str:
-    """Lista o histórico de sobrestamentos de um processo.
-
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    """
+    """Lista o histórico de sobrestamentos de um processo."""
     try:
         backend = _get_backend(ctx)
         if backend.has_rest:
@@ -2749,7 +2719,6 @@ async def sei_listar_assinaturas(
     - id_documento: id interno do documento
     - processo: protocolo do processo (necessário em instâncias sem mod-wssei)
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2778,7 +2747,6 @@ async def sei_registrar_andamento(
     - processo: protocolo formatado ou IdProcedimento
     - descricao: texto do andamento
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2998,7 +2966,6 @@ async def sei_marcar_processo(
     - marcador: ID do marcador OU "?" para listar os disponíveis
     - texto: texto/comentário associado ao marcador (opcional)
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -3030,8 +2997,6 @@ async def sei_pesquisar_marcadores(
 
     Use o 'id' retornado em sei_marcar_processo.
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    No modo web, limit é ignorado; requer ao menos um processo na inbox.
     """
     try:
         backend = _get_backend(ctx)
@@ -3078,7 +3043,6 @@ async def sei_acompanhar_processo(
     - grupo: ID do grupo de acompanhamento (ou "?" para listar disponíveis)
     - observacao: observação/anotação do acompanhamento
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -3109,10 +3073,7 @@ async def sei_remover_acompanhamento(
     processo: str,
     ctx: Context | None = None,
 ) -> str:
-    """Remove acompanhamento especial de um processo.
-
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    """
+    """Remove acompanhamento especial de um processo."""
     try:
         backend = _get_backend(ctx)
         if backend.has_rest:
@@ -3254,7 +3215,6 @@ async def sei_criar_bloco_assinatura(
       (separados por vírgula). Se informar sigla, resolve automaticamente.
       Ignorado em modo web (bloco criado sem unidades pré-configuradas).
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -3316,7 +3276,6 @@ async def sei_disponibilizar_bloco_assinatura(
 
     Após disponibilizar, os usuários das unidades podem assinar os documentos.
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -3338,7 +3297,6 @@ async def sei_cancelar_disponibilizacao_bloco(
 
     O bloco volta ao estado aberto e pode ser editado novamente.
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -3357,10 +3315,7 @@ async def sei_pesquisar_blocos_assinatura(
     limit: int = 50,
     ctx: Context | None = None,
 ) -> str:
-    """Pesquisa blocos de assinatura existentes.
-
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    """
+    """Pesquisa blocos de assinatura existentes."""
     try:
         backend = _get_backend(ctx)
         if backend.has_rest:
@@ -3386,7 +3341,6 @@ async def sei_criar_anotacao(
     - descricao: texto da anotação
     - prioridade: nível de prioridade (1=normal, 2=alta)
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -3413,7 +3367,6 @@ async def sei_criar_anotacao(
 # Se um endpoint falhar, use sei_versao para verificar a versão instalada.
 # Compatibilidade: SEI 4.0.x=mod-wssei 2.0.x | SEI 4.1.1=2.2.0 | SEI 5.0.x=3.0.x
 # ---------------------------------------------------------------------------
-
 
 # -- Sistema / Informações --
 
@@ -3482,8 +3435,6 @@ async def sei_pesquisar_usuarios(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (AJAX autocomplete).
-    No modo web, filtro é obrigatório e id_orgao/pagina são ignorados.
     """
     try:
         backend = _get_backend(ctx)
@@ -3514,8 +3465,6 @@ async def sei_pesquisar_outras_unidades(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (AJAX autocomplete).
-    No modo web, filtro é obrigatório (mínimo 1 caractere) e pagina é ignorado.
     """
     try:
         backend = _get_backend(ctx)
@@ -3544,8 +3493,6 @@ async def sei_pesquisar_textos_padrao(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (AJAX autocomplete).
-    No modo web, pagina é ignorado.
     """
     try:
         backend = _get_backend(ctx)
@@ -3586,7 +3533,6 @@ async def sei_consultar_documento_externo(
     privacidade, NÃO erro de permissão. Os metadados foram retornados
     normalmente; não tente trocar de unidade ou rotas alternativas.
     Se falhar com erro inesperado, use sei_versao para verificar a versão.
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -3725,8 +3671,6 @@ async def sei_pesquisar_tipos_conferencia(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    No modo web, limit e pagina são ignorados; requer processo na inbox.
     """
     try:
         backend = _get_backend(ctx)
@@ -3792,8 +3736,6 @@ async def sei_pesquisar_tipos_documento_externo(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (form documento_receber).
-    No modo web, pagina é ignorado.
     """
     try:
         backend = _get_backend(ctx)
@@ -3840,8 +3782,6 @@ async def sei_pesquisar_assuntos(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (AJAX autocomplete).
-    No modo web, filtro é obrigatório e pagina é ignorado.
     """
     try:
         backend = _get_backend(ctx)
@@ -3883,8 +3823,6 @@ async def sei_consultar_atribuicao(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (form atribuicao_salvar).
-    No modo web, lê o campo selected do select de usuários.
     """
     try:
         backend = _get_backend(ctx)
@@ -3909,7 +3847,6 @@ async def sei_verificar_acesso(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (tenta navegar à árvore do processo).
     """
     try:
         backend = _get_backend(ctx)
@@ -4144,8 +4081,6 @@ async def sei_listar_meus_acompanhamentos(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (acompanhamento_listar).
-    No modo web, pagina é ignorado.
     """
     try:
         backend = _get_backend(ctx)
@@ -4169,8 +4104,6 @@ async def sei_listar_acompanhamentos_unidade(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (acompanhamento_listar, segunda tabela).
-    No modo web, pagina é ignorado.
     """
     try:
         backend = _get_backend(ctx)
@@ -4199,7 +4132,6 @@ async def sei_alterar_acompanhamento(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (form acompanhamento_registrar).
     """
     try:
         backend = _get_backend(ctx)
@@ -4386,8 +4318,6 @@ async def sei_listar_grupos_modelos(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (grupo_modelos_listar).
-    No modo web, limit e pagina são ignorados.
     """
     try:
         backend = _get_backend(ctx)
@@ -4416,8 +4346,6 @@ async def sei_listar_modelos(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (modelos_listar).
-    No modo web, limit e pagina são ignorados.
     """
     try:
         backend = _get_backend(ctx)
@@ -4631,10 +4559,7 @@ async def sei_listar_documentos_bloco_assinatura(
     id_bloco: str,
     ctx: Context | None = None,
 ) -> str:
-    """Lista documentos de um bloco de assinatura.
-
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    """
+    """Lista documentos de um bloco de assinatura."""
     try:
         backend = _get_backend(ctx)
         if backend.has_rest:
@@ -4656,7 +4581,6 @@ async def sei_retirar_documentos_bloco_assinatura(
 
     - documentos: ID(s) de documento(s) separados por vírgula
 
-    Funciona via REST (mod-wssei) ou via scraper web (um documento por vez em modo web).
     """
     try:
         backend = _get_backend(ctx)
@@ -4689,7 +4613,6 @@ async def sei_alterar_bloco_assinatura(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -4712,7 +4635,6 @@ async def sei_excluir_bloco_assinatura(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (um bloco por vez em modo web).
     """
     try:
         backend = _get_backend(ctx)
@@ -4742,7 +4664,6 @@ async def sei_concluir_bloco_assinatura(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (um bloco por vez em modo web).
     """
     try:
         backend = _get_backend(ctx)
@@ -4772,7 +4693,6 @@ async def sei_reabrir_bloco_assinatura(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -4795,7 +4715,6 @@ async def sei_retornar_bloco_assinatura(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -4820,7 +4739,6 @@ async def sei_anotar_documento_bloco_assinatura(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (form bloco_assinatura_anotar_documento).
     """
     try:
         backend = _get_backend(ctx)
@@ -4849,7 +4767,6 @@ async def sei_alterar_anotacao_bloco_assinatura(
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
 
-    Funciona via REST (mod-wssei) ou via scraper web (mesmo form de criação de anotação).
     """
     try:
         backend = _get_backend(ctx)
