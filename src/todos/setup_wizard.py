@@ -285,9 +285,9 @@ def _validate_credentials(conn: _SEIConnConfig) -> None:
         try:
             await web_client.ensure_authenticated()
             info: dict = {
-                "nome": web_client._nome_usuario,  # noqa: SLF001
-                "id": web_client._id_usuario,  # noqa: SLF001
-                "orgao": web_client._orgao_usuario,  # noqa: SLF001
+                "nome": web_client.nome_usuario,
+                "id": web_client.id_usuario,
+                "orgao": web_client.orgao_usuario,
                 "unidade": {},
             }
             with contextlib.suppress(Exception):
@@ -298,7 +298,7 @@ def _validate_credentials(conn: _SEIConnConfig) -> None:
 
     try:
         client_info = asyncio.run(do_test_login())
-        web_client._senha = ""  # noqa: SLF001
+        web_client.limpar_senha()
         print_green("[+] Credenciais validadas com sucesso no SEI!")
         if client_info:
             nome_usuario = client_info.get("nome") or conn.usuario
@@ -311,7 +311,7 @@ def _validate_credentials(conn: _SEIConnConfig) -> None:
             print_green(f"    Usuário: {nome_usuario} (ID: {id_usuario}, Órgão: {orgao_usuario})")
             print_green(f"    Unidade Ativa: {sigla_unid} - {nome_unid} (ID: {id_unid})")
     except (OSError, ValueError, RuntimeError) as e:
-        web_client._senha = ""  # noqa: SLF001
+        web_client.limpar_senha()
         print_red(f"[ERRO] Falha na validação das credenciais no SEI: {e}")
         print_yellow(
             "[!] O login no SEI falhou. Pode ser que o usuário, senha ou órgão estejam incorretos."
