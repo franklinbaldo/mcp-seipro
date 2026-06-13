@@ -61,10 +61,16 @@ async def _capture_all(client: SEIWebClient) -> dict[str, str]:
 
     await client.ensure_authenticated()
 
-    await save("inbox", client._get_inbox_html())
-    await save("arvore", client._get_arvore_html(CAPTURE_PROCESS))
-    await save("historico", client._get_historico_html(CAPTURE_PROCESS))
-    await save("procedimento_consultar", client._get_procedimento_consultar_html(CAPTURE_PROCESS))
+    async def inbox_html() -> str:
+        _, html = await client.fetch_inbox()
+        return html
+
+    async def arvore_html() -> str:
+        html, _ = await client._arvore_do_processo(CAPTURE_PROCESS)
+        return html
+
+    await save("inbox", inbox_html())
+    await save("arvore", arvore_html())
     await save(
         "documento_interno",
         client.visualizar_documento_interno_web(CAPTURE_PROCESS, "13931287"),
@@ -75,14 +81,14 @@ async def _capture_all(client: SEIWebClient) -> dict[str, str]:
 
 async def _run(url: str, usuario: str, senha: str, orgao: str) -> dict[str, str]:
     """Authenticate and capture all pages."""
-    async with SEIWebClient(
-        base_url=url,
-        usuario=usuario,
-        senha=senha,
-        sigla_orgao=orgao,
-    ) as client:
-        sys.stdout.write(f"Capturing from {url} ...\n")
-        return await _capture_all(client)
+    sys.stdout.write(f"Capturing from {url} ...\n")
+    client = SEIWebClient(
+        sei_web_url=url,
+        sei_usuario=usuario,
+        sei_senha=senha,
+        sei_orgao=orgao,
+    )
+    return await _capture_all(client)
 
 
 def main() -> None:
@@ -106,8 +112,8 @@ def main() -> None:
     senha = os.environ.get("SEI_SENHA", "")
     orgao = os.environ.get("SEI_ORGAO", "RO")
 
-    if not (url and usuario and senha):
-        sys.stderr.write("ERROR: SEI_WEB_URL, SEI_USUARIO, SEI_SENHA must be set.\n")
+    if not (url and usuario):
+        sys.stderr.write("ERROR: SEI_WEB_URL and SEI_USUARIO must be set.\n")
         sys.exit(1)
 
     pages = asyncio.run(_run(url, usuario, senha, orgao))
