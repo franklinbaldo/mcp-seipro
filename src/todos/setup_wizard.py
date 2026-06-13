@@ -25,6 +25,8 @@ from todos.sei_web_client import SEIWebClient
 _MAX_ACRONYM_LEN: int = 6
 _MAX_ANCESTOR_SEARCH: int = 5
 _MIN_HOSTNAME_PARTS: int = 2
+_WSSEI_API_PATH: str = "/sei/modulos/wssei/controlador_ws.php/api/v2"
+_WSSEI_PROBE_TIMEOUT: float = 8.0
 
 
 @dataclass
@@ -565,6 +567,26 @@ def _infer_sigla_orgao_sistema(hostname: str) -> str:
     return "SEI"
 
 
+def _detect_modsei_url(sei_root: str, *, verify_ssl: bool) -> str:
+    """Probe the canonical mod-wssei path and return the base URL if the module is found.
+
+    Returns the REST base URL on success, or "" if not found.
+    A 401/403 response still confirms the module is installed — it just needs credentials.
+    404/501 means the path doesn't exist (module not installed).
+    """
+    candidate = f"{sei_root}{_WSSEI_API_PATH}"
+    try:
+        with httpx.Client(
+            verify=verify_ssl, follow_redirects=False, timeout=_WSSEI_PROBE_TIMEOUT
+        ) as client:
+            resp = client.get(f"{candidate}/versao")
+    except httpx.RequestError:
+        return ""
+    if resp.status_code in (404, 501):
+        return ""
+    return candidate
+
+
 def _setup_sei_instance() -> _SEIInstanceConfig:
     """Prompt the user for the SEI URL and organ, returning a resolved instance config."""
     print_yellow("[*] Configuração da URL e Instância do SEI")
@@ -611,9 +633,21 @@ def _setup_sei_instance() -> _SEIInstanceConfig:
 
     print_green(f"[+] Configurado para o órgão: {sigla_orgao} (ID: {orgao_id})")
 
-    rest_url = input(
-        "Digite a URL REST do mod-wssei (deixe em branco se a instância não tiver mod-wssei): "
-    ).strip()
+    sys.stdout.write("\n")
+    print_yellow("[*] Detectando mod-wssei...")
+    rest_url = _detect_modsei_url(sei_root, verify_ssl=not verify_ssl_disabled)
+    if rest_url:
+        print_green(f"[+] mod-wssei detectado em: {rest_url}")
+        confirm = input("Usar esta URL REST? (s/n, padrão: s): ").strip().lower() or "s"
+        if confirm != "s":
+            rest_url = input(
+                "Digite a URL REST do mod-wssei (ou deixe em branco para desativar): "
+            ).strip()
+    else:
+        print_yellow("[!] mod-wssei não detectado automaticamente nesta instância.")
+        rest_url = input(
+            "Digite a URL REST do mod-wssei manualmente (ou deixe em branco se não instalado): "
+        ).strip()
 
     return _SEIInstanceConfig(
         sei_root=sei_root,
