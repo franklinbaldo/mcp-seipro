@@ -1796,6 +1796,120 @@ class SEIWebClient:
         sei_base = f"{self.sei_root}/sei/"
         return urljoin(sei_base, m.group(1).replace("&amp;", "&"))
 
+    async def pesquisar_tipos_processo_web(self, filtro: str = "") -> dict:
+        """Extrai tipos de processo do select selTipoProcedimento em procedimento_cadastrar."""
+        await self.ensure_authenticated()
+        cadastrar_url = await self._obter_link_toolbar("procedimento_cadastrar")
+        r = await self._http.get(cadastrar_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"procedimento_cadastrar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body, "html.parser")
+        sel = soup.find("select", {"name": re.compile(r"selTipoProcedimento", re.IGNORECASE)})
+        if sel is None:
+            sel = soup.find("select", id=re.compile(r"selTipoProcedimento", re.IGNORECASE))
+        tipos: list[dict[str, str]] = []
+        if isinstance(sel, Tag):
+            for opt in sel.find_all("option"):
+                if not isinstance(opt, Tag):
+                    continue
+                v = _tag_str(opt, "value")
+                t = opt.get_text(strip=True)
+                if not v:
+                    continue
+                if filtro and filtro.lower() not in t.lower():
+                    continue
+                tipos.append({"id": v, "nome": t})
+        return {"tipos": tipos, "total_itens": len(tipos)}
+
+    async def listar_usuarios_web(
+        self,
+        filtro: str = "",
+        apenas_unidade: bool = True,  # noqa: ARG002, FBT001, FBT002
+    ) -> dict:
+        """Lista usuários da unidade via scrape do form atribuicao_salvar.
+
+        Requer ao menos um processo na inbox para acessar o form.
+        O parâmetro `apenas_unidade` é ignorado — o form mostra apenas
+        usuários da unidade atual (equivalente a apenas_unidade=True).
+        """
+        await self.ensure_authenticated()
+        if not self._trabalhar_links:
+            await self.fetch_inbox(detalhada=False)
+        if not self._trabalhar_links:
+            return {
+                "usuarios": [],
+                "total_itens": 0,
+                "_aviso": "Inbox vazia; não foi possível carregar usuários.",
+            }
+        protocolo = next(iter(self._trabalhar_links))
+        form_info = await self.obter_form_acao(protocolo, "atribuicao_salvar")
+        opcoes = form_info.get("selects", {}).get("selAtribuicao", [])
+        usuarios: list[dict[str, str]] = []
+        for opt in opcoes:
+            texto = opt.get("texto", "")
+            v = opt.get("value", "")
+            if not v:
+                continue
+            m = re.match(r"^(.+?)\s*\(([^)]+)\)\s*$", texto)
+            if m:
+                nome = m.group(1).strip()
+                sigla = m.group(2).strip()
+            else:
+                nome = texto.strip()
+                sigla = ""
+            if (
+                filtro
+                and filtro.lower() not in nome.lower()
+                and filtro.lower() not in sigla.lower()
+            ):
+                continue
+            usuarios.append({"id_usuario": v, "nome": nome, "sigla": sigla})
+        return {"usuarios": usuarios, "total_itens": len(usuarios)}
+
+    async def pesquisar_blocos_assinatura_web(self, filtro: str = "", limit: int = 50) -> dict:  # noqa: C901
+        """Lista blocos de assinatura via scrape de bloco_assinatura_listar."""
+        await self.ensure_authenticated()
+        lista_url = await self._obter_link_toolbar("bloco_assinatura_listar")
+        r = await self._http.get(lista_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_listar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body, "html.parser")
+        tbl = soup.find("table", id=re.compile(r"tblBlocos?", re.IGNORECASE))
+        if tbl is None:
+            tbl = soup.find("table", class_=re.compile(r"infraTable", re.IGNORECASE))
+        blocos: list[dict[str, str]] = []
+        if isinstance(tbl, Tag):
+            for tr in tbl.find_all("tr")[1:]:
+                if not isinstance(tr, Tag):
+                    continue
+                tds = tr.find_all("td")
+                if len(tds) < 2:  # noqa: PLR2004
+                    continue
+                descricao = tds[1].get_text(" ", strip=True)
+                if filtro and filtro.lower() not in descricao.lower():
+                    continue
+                id_bloco = ""
+                for a in tr.find_all("a", href=re.compile(r"id_bloco=\d+")):
+                    if not isinstance(a, Tag):
+                        continue
+                    mb = re.search(r"id_bloco=(\d+)", _tag_str(a, "href"))
+                    if mb:
+                        id_bloco = mb.group(1)
+                        break
+                estado = tds[2].get_text(" ", strip=True) if len(tds) > 2 else ""  # noqa: PLR2004
+                blocos.append({"idBloco": id_bloco, "descricao": descricao, "estado": estado})
+                if len(blocos) >= limit:
+                    break
+        return {
+            "blocos": blocos,
+            "pagina_atual": 0,
+            "itens_pagina": len(blocos),
+            "total_itens": len(blocos),
+            "tem_proxima": len(blocos) >= limit,
+        }
+
     async def criar_processo_web(  # noqa: C901, PLR0912, PLR0913, PLR0915
         self,
         tipo_processo: str,

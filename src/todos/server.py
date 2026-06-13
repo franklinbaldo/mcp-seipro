@@ -611,10 +611,21 @@ async def sei_listar_usuarios(
     - apenas_unidade=false: todos os usuários do órgão
 
     Use o campo id_usuario retornado para sei_atribuir_processo.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    No modo web, apenas_unidade=false é ignorado — o scraper sempre retorna
+    usuários da unidade atual.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_usuarios(filtro=filtro, apenas_unidade=apenas_unidade)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_usuarios(
+                filtro=filtro, apenas_unidade=apenas_unidade
+            )
+        else:
+            result = await backend.web.listar_usuarios_web(
+                filtro=filtro, apenas_unidade=apenas_unidade
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -1812,19 +1823,25 @@ async def sei_pesquisar_tipos_processo(
 
     Parâmetros:
     - filtro: texto para filtrar por nome (ex: "Plano Anual", "Fiscalização")
-    - favoritos: "S" para apenas favoritos
-    - limit/pagina: paginação
+    - favoritos: "S" para apenas favoritos (REST apenas)
+    - limit/pagina: paginação (REST apenas)
 
     Use o 'id' retornado como tipo_processo em sei_criar_processo.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    No modo web, favoritos e pagina são ignorados.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_tipos_processo(
-            filtro=filtro,
-            favoritos=favoritos,
-            limit=limit,
-            start=pagina,
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_tipos_processo(
+                filtro=filtro,
+                favoritos=favoritos,
+                limit=limit,
+                start=pagina,
+            )
+        else:
+            result = await backend.web.pesquisar_tipos_processo_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3304,10 +3321,16 @@ async def sei_pesquisar_blocos_assinatura(
     limit: int = 50,
     ctx: Context | None = None,
 ) -> str:
-    """Pesquisa blocos de assinatura existentes."""
+    """Pesquisa blocos de assinatura existentes.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_blocos_assinatura(filtro=filtro, limit=limit)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_blocos_assinatura(filtro=filtro, limit=limit)
+        else:
+            result = await backend.web.pesquisar_blocos_assinatura_web(filtro=filtro, limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
