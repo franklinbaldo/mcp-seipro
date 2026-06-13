@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""
-Bootstrap para o todos MCP (Desktop Extension).
+"""Bootstrap para o todos MCP (Desktop Extension).
 
 Na primeira execucao, cria um venv em ~/.todos/.venv e instala
 as dependencias. Nas execucoes seguintes, apenas executa o servidor.
@@ -22,9 +21,9 @@ TODOS = VENV_DIR / "Scripts" / "todos.exe" if IS_WINDOWS else VENV_DIR / "bin" /
 SRC_DIR = Path(__file__).resolve().parent
 
 
-def setup():
+def setup() -> None:
     """Cria venv e instala o pacote na primeira execucao."""
-    print("todos: configurando ambiente (primeira execucao)...", file=sys.stderr)
+    sys.stderr.write("todos: configurando ambiente (primeira execucao)...\n")
     VENV_HOME.mkdir(parents=True, exist_ok=True)
     subprocess.run(
         [sys.executable, "-m", "venv", str(VENV_DIR)],
@@ -34,10 +33,11 @@ def setup():
         [str(PYTHON), "-m", "pip", "install", "--quiet", str(SRC_DIR)],
         check=True,
     )
-    print("todos: ambiente configurado.", file=sys.stderr)
+    sys.stderr.write("todos: ambiente configurado.\n")
 
 
-def main():
+def main() -> None:
+    """Run todos MCP, installing into a venv on first execution."""
     if not TODOS.exists():
         setup()
 
