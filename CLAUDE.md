@@ -3,7 +3,7 @@
 ## O que é
 
 **TOdos Domina O Sei** — MCP Server para o SEI (Sistema Eletrônico de Informações) com arquitetura web-first.
-~116 tools cobrindo processos, documentos, tramitação, assinatura, blocos, marcadores, acompanhamento, credenciamento, modelos e mais.
+121 tools cobrindo processos, documentos, tramitação, assinatura, blocos, marcadores, acompanhamento, credenciamento, modelos e mais.
 Opera via scraper HTTP do frontend web + REST mod-wssei v2 quando disponível. Funciona em qualquer instância SEI 4.0+ — inclusive sem mod-wssei instalado.
 
 ## Stack
@@ -14,11 +14,13 @@ Opera via scraper HTTP do frontend web + REST mod-wssei v2 quando disponível. F
 
 ## Arquivos principais
 
-- `src/todos/server.py` — FastMCP server com ~116 tools + helpers (_resolver_documento, _resolver_processo)
+- `src/todos/server.py` — FastMCP server com 121 tools + helpers (_resolver_documento, _resolver_processo)
+- `src/todos/sei_backend.py` — SEIBackend: wrapper que expõe `.rest` (SEIClient), `.web` (SEIWebClient), `.has_rest` — roteia para o backend adequado
 - `src/todos/sei_client.py` — Cliente REST assíncrono para mod-wssei v2 (auth automática, auto-reauth 401/403, cache de metadados TTL 1h)
 - `src/todos/sei_web_client.py` — Cliente HTTP scraper do frontend web do SEI (login SIP, sessão persistente, parser de inbox/árvore/histórico, upload de documentos externos)
 - `src/todos/html_utils.py` — html_to_text, html_to_markdown, pdf_to_text, pdf_to_markdown (com OCR fallback), sanitize_iso8859
 - `src/todos/sei_styles.py` — Dicionário de 39 estilos CSS do SEI + helpers (html_referencia_sei, html_destinatario)
+- `tests/test_parsers.py` — Testes unitários dos parsers HTML (sem servidor SEI)
 
 ## Convenções importantes
 
@@ -42,7 +44,7 @@ Opera via scraper HTTP do frontend web + REST mod-wssei v2 quando disponível. F
 - `sei_editar_secao` preenche seções somenteLeitura automaticamente
 
 ### Compatibilidade de versão do mod-wssei
-- **Todos os ~116 endpoints existem desde o mod-wssei 2.0.0** (SEI 4.0.x)
+- **Todos os 121 tools funcionam em qualquer SEI 4.0+** — os endpoints REST existem desde o mod-wssei 2.0.0
 - Única exceção: `sei_listar_relacionamentos` (`GET /processo/{id}/relacionamentos`) requer **mod-wssei 3.0.2+** (SEI 5.0.x)
 - Tabela de compatibilidade SEI ↔ mod-wssei:
   - SEI 4.0.x → mod-wssei 2.0.x (131 endpoints)
@@ -65,9 +67,9 @@ Opera via scraper HTTP do frontend web + REST mod-wssei v2 quando disponível. F
 - Labels de documentos parseados via regex: "Despacho GPF 2874369" → tipo=Despacho, sigla=GPF, numero=2874369
 - **`hdnAnexos` encoding**: separador é `±` (U+00B1), encoding ISO-8859-1 como `%B1` — NÃO usar `#`. Construir POST manual (`content=body.encode("ascii")`) para evitar double-encoding pelo httpx
 - **`hdnFlagDocumentoCadastro`**: JS `submeter()` muda `'1'→'2'` antes do submit; obrigatório ser `'2'` no POST
-- Tools migradas para web: `sei_listar_processos` (23×), `sei_arvore_processo` (10×), `sei_listar_documentos` (10×), `sei_listar_atividades` (2×), `sei_incluir_documento_externo`
-- Tools híbridas REST+web: `sei_consultar_processo` (REST rich + web documentos[] em paralelo via asyncio.gather)
-- `sei_resumo_processos` mantém REST direto (precisa dos flags estruturados de status para agrupamento)
+- Padrão REST-first: todos os tools usam `backend.has_rest` para preferir REST quando disponível e cair para web scraping caso contrário
+- `sei_consultar_processo` é híbrido: REST para dados ricos + web para documentos[] em paralelo via asyncio.gather
+- `sei_resumo_processos` é REST-only (precisa dos flags estruturados de status para agrupamento correto)
 - Cache in-memory TTL 1h no SEIClient para: `pesquisar_tipos_processo`, `listar_unidades_usuario`, `pesquisar_marcadores`
 
 ### Limitações conhecidas
@@ -82,6 +84,6 @@ Opera via scraper HTTP do frontend web + REST mod-wssei v2 quando disponível. F
 - Produção ANTAQ: https://sei.antaq.gov.br/sei/modulos/wssei/controlador_ws.php/api/v2
 - SEI-RO (sem mod-wssei): https://sei.sistemas.ro.gov.br — web-only, funciona com SEIWebClient
 
-## Plano futuro
+## Paridade web — implementado
 
-Ver `docs/rfc/0001-web-first.md` para a proposta de paridade web completa para instâncias sem mod-wssei.
+A paridade web completa foi implementada (Fases 1–11). Ver `docs/rfc/0001-web-first.md` para o histórico completo e a lista de tools permanentemente REST-only (assinatura PKI, credenciamento, `sei_versao`, `sei_resumo_processos`, `sei_listar_relacionamentos`).

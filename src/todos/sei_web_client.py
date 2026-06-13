@@ -1796,6 +1796,636 @@ class SEIWebClient:
         sei_base = f"{self.sei_root}/sei/"
         return urljoin(sei_base, m.group(1).replace("&amp;", "&"))
 
+    async def pesquisar_tipos_processo_web(self, filtro: str = "") -> dict:
+        """Extrai tipos de processo do select selTipoProcedimento em procedimento_cadastrar."""
+        await self.ensure_authenticated()
+        cadastrar_url = await self._obter_link_toolbar("procedimento_cadastrar")
+        r = await self._http.get(cadastrar_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"procedimento_cadastrar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body, "html.parser")
+        sel = soup.find("select", {"name": re.compile(r"selTipoProcedimento", re.IGNORECASE)})
+        if sel is None:
+            sel = soup.find("select", id=re.compile(r"selTipoProcedimento", re.IGNORECASE))
+        tipos: list[dict[str, str]] = []
+        if isinstance(sel, Tag):
+            for opt in sel.find_all("option"):
+                if not isinstance(opt, Tag):
+                    continue
+                v = _tag_str(opt, "value")
+                t = opt.get_text(strip=True)
+                if not v:
+                    continue
+                if filtro and filtro.lower() not in t.lower():
+                    continue
+                tipos.append({"id": v, "nome": t})
+        return {"tipos": tipos, "total_itens": len(tipos)}
+
+    async def listar_usuarios_web(
+        self,
+        filtro: str = "",
+        apenas_unidade: bool = True,  # noqa: ARG002, FBT001, FBT002
+    ) -> dict:
+        """Lista usuários da unidade via scrape do form atribuicao_salvar.
+
+        Requer ao menos um processo na inbox para acessar o form.
+        O parâmetro `apenas_unidade` é ignorado — o form mostra apenas
+        usuários da unidade atual (equivalente a apenas_unidade=True).
+        """
+        await self.ensure_authenticated()
+        if not self._trabalhar_links:
+            await self.fetch_inbox(detalhada=False)
+        if not self._trabalhar_links:
+            return {
+                "usuarios": [],
+                "total_itens": 0,
+                "_aviso": "Inbox vazia; não foi possível carregar usuários.",
+            }
+        protocolo = next(iter(self._trabalhar_links))
+        form_info = await self.obter_form_acao(protocolo, "atribuicao_salvar")
+        opcoes = form_info.get("selects", {}).get("selAtribuicao", [])
+        usuarios: list[dict[str, str]] = []
+        for opt in opcoes:
+            texto = opt.get("texto", "")
+            v = opt.get("value", "")
+            if not v:
+                continue
+            m = re.match(r"^(.+?)\s*\(([^)]+)\)\s*$", texto)
+            if m:
+                nome = m.group(1).strip()
+                sigla = m.group(2).strip()
+            else:
+                nome = texto.strip()
+                sigla = ""
+            if (
+                filtro
+                and filtro.lower() not in nome.lower()
+                and filtro.lower() not in sigla.lower()
+            ):
+                continue
+            usuarios.append({"id_usuario": v, "nome": nome, "sigla": sigla})
+        return {"usuarios": usuarios, "total_itens": len(usuarios)}
+
+    async def pesquisar_blocos_assinatura_web(self, filtro: str = "", limit: int = 50) -> dict:  # noqa: C901
+        """Lista blocos de assinatura via scrape de bloco_assinatura_listar."""
+        await self.ensure_authenticated()
+        lista_url = await self._obter_link_toolbar("bloco_assinatura_listar")
+        r = await self._http.get(lista_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_listar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body, "html.parser")
+        tbl = soup.find("table", id=re.compile(r"tblBlocos?", re.IGNORECASE))
+        if tbl is None:
+            tbl = soup.find("table", class_=re.compile(r"infraTable", re.IGNORECASE))
+        blocos: list[dict[str, str]] = []
+        if isinstance(tbl, Tag):
+            for tr in tbl.find_all("tr")[1:]:
+                if not isinstance(tr, Tag):
+                    continue
+                tds = tr.find_all("td")
+                if len(tds) < 2:  # noqa: PLR2004
+                    continue
+                descricao = tds[1].get_text(" ", strip=True)
+                if filtro and filtro.lower() not in descricao.lower():
+                    continue
+                id_bloco = ""
+                for a in tr.find_all("a", href=re.compile(r"id_bloco=\d+")):
+                    if not isinstance(a, Tag):
+                        continue
+                    mb = re.search(r"id_bloco=(\d+)", _tag_str(a, "href"))
+                    if mb:
+                        id_bloco = mb.group(1)
+                        break
+                estado = tds[2].get_text(" ", strip=True) if len(tds) > 2 else ""  # noqa: PLR2004
+                blocos.append({"idBloco": id_bloco, "descricao": descricao, "estado": estado})
+                if len(blocos) >= limit:
+                    break
+        return {
+            "blocos": blocos,
+            "pagina_atual": 0,
+            "itens_pagina": len(blocos),
+            "total_itens": len(blocos),
+            "tem_proxima": len(blocos) >= limit,
+        }
+
+    async def pesquisar_outras_unidades_web(self, filtro: str = "", limit: int = 50) -> dict:
+        """Pesquisa unidades via AJAX autocomplete (unidade_auto_completar).
+
+        Requer filtro não-vazio — o endpoint AJAX não retorna resultados sem termo.
+        """
+        if not filtro:
+            return {
+                "unidades": [],
+                "total_itens": 0,
+                "_aviso": "Em modo web, filtro é obrigatório (mínimo 1 caractere).",
+            }
+        resultados = await self.autocomplete_unidades(filtro)
+        resultados = resultados[:limit]
+        return {"unidades": resultados, "total_itens": len(resultados)}
+
+    async def _obter_acao_bloco_url(self, id_bloco: str, nome_acao: str) -> str:
+        """Busca URL assinada de uma ação em um bloco específico via bloco_assinatura_listar."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        lista_url = await self._obter_link_toolbar("bloco_assinatura_listar")
+        r = await self._http.get(lista_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_listar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        pat = re.compile(
+            rf"(controlador\.php\?[^\"'\s]*acao={re.escape(nome_acao)}[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*infra_hash=[a-fA-F0-9]+|"
+            rf"controlador\.php\?[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*acao={re.escape(nome_acao)}[^\"'\s]*infra_hash=[a-fA-F0-9]+)"
+        )
+        m = pat.search(body)
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Ação '{nome_acao}' não encontrada para bloco {id_bloco}. "  # noqa: EM102
+                "Verifique se o bloco existe e está no estado correto."
+            )
+        return urljoin(sei_base, m.group(1).replace("&amp;", "&"))
+
+    async def criar_bloco_assinatura_web(self, descricao: str) -> dict:  # noqa: C901, PLR0912
+        """Cria um bloco de assinatura via scraper web."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        try:
+            incluir_url = await self._obter_link_toolbar("bloco_assinatura_incluir")
+        except RuntimeError:
+            incluir_url = await self._obter_link_toolbar("bloco_assinatura_cadastrar")
+        r = await self._http.get(incluir_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_incluir status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body)
+        if erro:
+            raise RuntimeError(erro)
+        soup = BeautifulSoup(body, "html.parser")
+        form = soup.find("form")
+        if not isinstance(form, Tag):
+            raise RuntimeError("Form de criação de bloco não encontrado.")  # noqa: EM101, TRY003, TRY004
+        action = _tag_str(form, "action").replace("&amp;", "&")
+        post_url = urljoin(sei_base, action) if action else incluir_url
+        post_data: list[tuple[str, str]] = []
+        for inp in form.find_all("input", type="hidden"):
+            if not isinstance(inp, Tag):
+                continue
+            n = _tag_str(inp, "name")
+            if n:
+                post_data.append((n, _tag_str(inp, "value")))
+        sbm = _extrair_submit_btn(form)
+        if sbm:
+            post_data.append(sbm)
+        post_data.append(("txtDescricao", descricao))
+        r2 = await self._http.post(
+            post_url,
+            content=urlencode(post_data).encode("iso-8859-1"),
+            headers={
+                "Referer": incluir_url,
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        if r2.status_code not in (200, 302):
+            raise RuntimeError(f"POST bloco_assinatura_incluir status={r2.status_code}")  # noqa: EM102, TRY003
+        body2 = r2.content.decode("iso-8859-1", "replace")
+        erro2 = _extrair_erro_sei(body2)
+        if erro2:
+            raise RuntimeError(erro2)
+        id_bloco = ""
+        mb = re.search(r"id_bloco=(\d+)", str(r2.url))
+        if mb:
+            id_bloco = mb.group(1)
+        if not id_bloco:
+            mb = re.search(r"id_bloco[\"']?\s*[:=]\s*[\"']?(\d+)", body2)
+            if mb:
+                id_bloco = mb.group(1)
+        return {"ok": True, "idBloco": id_bloco, "descricao": descricao}
+
+    async def disponibilizar_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Disponibiliza um bloco de assinatura via scraper web."""
+        acao_url = await self._obter_acao_bloco_url(id_bloco, "bloco_assinatura_disponibilizar")
+        r = await self._http.get(acao_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code not in (200, 302):
+            raise RuntimeError(f"bloco_assinatura_disponibilizar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body)
+        if erro:
+            raise RuntimeError(erro)
+        return {"ok": True, "idBloco": id_bloco, "mensagem": "Bloco disponibilizado com sucesso."}
+
+    async def cancelar_disponibilizacao_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Cancela a disponibilização de um bloco de assinatura via scraper web."""
+        try:
+            acao_url = await self._obter_acao_bloco_url(
+                id_bloco, "bloco_assinatura_cancelar_disponibilizacao"
+            )
+        except RuntimeError:
+            acao_url = await self._obter_acao_bloco_url(id_bloco, "bloco_assinatura_cancelar")
+        r = await self._http.get(acao_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code not in (200, 302):
+            raise RuntimeError(f"bloco_assinatura_cancelar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body)
+        if erro:
+            raise RuntimeError(erro)
+        return {
+            "ok": True,
+            "idBloco": id_bloco,
+            "mensagem": "Disponibilização cancelada com sucesso.",
+        }
+
+    async def _executar_acao_bloco(self, id_bloco: str, nome_acao: str, mensagem: str) -> dict:
+        """Executa ação simples em bloco via URL assinada (GET sem form)."""
+        acao_url = await self._obter_acao_bloco_url(id_bloco, nome_acao)
+        r = await self._http.get(acao_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code not in (200, 302):
+            raise RuntimeError(f"{nome_acao} status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body)
+        if erro:
+            raise RuntimeError(erro)
+        return {"ok": True, "idBloco": id_bloco, "mensagem": mensagem}
+
+    async def concluir_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Conclui bloco de assinatura via scraper web."""
+        return await self._executar_acao_bloco(
+            id_bloco, "bloco_assinatura_concluir", "Bloco concluído com sucesso."
+        )
+
+    async def reabrir_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Reabre bloco de assinatura concluído via scraper web."""
+        return await self._executar_acao_bloco(
+            id_bloco, "bloco_assinatura_reabrir", "Bloco reaberto com sucesso."
+        )
+
+    async def retornar_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Retorna bloco de assinatura para a unidade de origem via scraper web."""
+        return await self._executar_acao_bloco(
+            id_bloco, "bloco_assinatura_retornar", "Bloco retornado para a unidade de origem."
+        )
+
+    async def excluir_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Exclui bloco de assinatura via scraper web."""
+        return await self._executar_acao_bloco(
+            id_bloco, "bloco_assinatura_excluir", "Bloco excluído com sucesso."
+        )
+
+    async def listar_documentos_bloco_assinatura_web(self, id_bloco: str) -> list[dict]:  # noqa: C901
+        """Lista documentos de um bloco de assinatura via scraper web."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        lista_url = await self._obter_link_toolbar("bloco_assinatura_listar")
+        r = await self._http.get(lista_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_listar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        pat = re.compile(
+            rf"controlador\.php\?[^\"'\s]*(?:acao=bloco_assinatura_alterar|bloco_assinatura_alterar)[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+            rf"|controlador\.php\?[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*acao=bloco_assinatura_alterar[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+        )
+        m = pat.search(body)
+        if not m:
+            return []
+        detail_url = urljoin(sei_base, m.group().replace("&amp;", "&"))
+        r2 = await self._http.get(detail_url, headers={"Referer": lista_url})
+        if r2.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_alterar status={r2.status_code}")  # noqa: EM102, TRY003
+        body2 = r2.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body2, "html.parser")
+        tbl = soup.find("table", id=re.compile(r"tblDocumentos?", re.IGNORECASE))
+        if tbl is None:
+            tbl = soup.find("table", class_=re.compile(r"infraTable", re.IGNORECASE))
+        docs: list[dict] = []
+        if isinstance(tbl, Tag):
+            for tr in tbl.find_all("tr")[1:]:
+                if not isinstance(tr, Tag):
+                    continue
+                tds = tr.find_all("td")
+                if len(tds) < 2:  # noqa: PLR2004
+                    continue
+                tipo = tds[0].get_text(" ", strip=True)
+                num = tds[1].get_text(" ", strip=True)
+                id_doc = ""
+                for a in tr.find_all("a", href=re.compile(r"id_documento=\d+")):
+                    if not isinstance(a, Tag):
+                        continue
+                    md = re.search(r"id_documento=(\d+)", _tag_str(a, "href"))
+                    if md:
+                        id_doc = md.group(1)
+                        break
+                docs.append({"idDocumento": id_doc, "tipo": tipo, "numero": num})
+        return docs
+
+    async def alterar_bloco_assinatura_web(self, id_bloco: str, descricao: str) -> dict:  # noqa: C901
+        """Altera descrição de um bloco de assinatura via scraper web."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        lista_url = await self._obter_link_toolbar("bloco_assinatura_listar")
+        r_list = await self._http.get(lista_url, headers={"Referer": str(self._inbox_url)})
+        if r_list.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_listar status={r_list.status_code}")  # noqa: EM102, TRY003
+        body_list = r_list.content.decode("iso-8859-1", "replace")
+        pat = re.compile(
+            rf"controlador\.php\?[^\"'\s]*acao=bloco_assinatura_alterar[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+            rf"|controlador\.php\?[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*acao=bloco_assinatura_alterar[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+        )
+        m = pat.search(body_list)
+        if not m:
+            raise RuntimeError(f"Link de edição não encontrado para bloco {id_bloco}.")  # noqa: EM102, TRY003
+        edit_url = urljoin(sei_base, m.group().replace("&amp;", "&"))
+        r = await self._http.get(edit_url, headers={"Referer": lista_url})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_alterar GET status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body, "html.parser")
+        form = soup.find("form")
+        if not isinstance(form, Tag):
+            raise RuntimeError("Form de edição de bloco não encontrado.")  # noqa: EM101, TRY003, TRY004
+        action = _tag_str(form, "action").replace("&amp;", "&")
+        post_url = urljoin(sei_base, action) if action else edit_url
+        post_data: list[tuple[str, str]] = []
+        for inp in form.find_all("input", type="hidden"):
+            if not isinstance(inp, Tag):
+                continue
+            n = _tag_str(inp, "name")
+            if n:
+                post_data.append((n, _tag_str(inp, "value")))
+        sbm = _extrair_submit_btn(form)
+        if sbm:
+            post_data.append(sbm)
+        post_data.append(("txtDescricao", descricao))
+        r2 = await self._http.post(
+            post_url,
+            content=urlencode(post_data).encode("iso-8859-1"),
+            headers={"Referer": edit_url, "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if r2.status_code not in (200, 302):
+            raise RuntimeError(f"POST bloco_assinatura_alterar status={r2.status_code}")  # noqa: EM102, TRY003
+        body2 = r2.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body2)
+        if erro:
+            raise RuntimeError(erro)
+        return {"ok": True, "idBloco": id_bloco, "descricao": descricao}
+
+    async def _autocomplete_ajax(
+        self, acao_ajax: str, termo: str, campo: str = "termo"
+    ) -> list[dict]:
+        """Chama endpoint AJAX genérico controlador_ajax.php e retorna lista de itens."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        r = await self._http.get(
+            f"{sei_base}controlador_ajax.php",
+            params={"acao_ajax": acao_ajax, campo: termo},
+            headers={"Referer": str(self._inbox_url)},
+        )
+        if r.status_code != 200:  # noqa: PLR2004
+            return []
+        try:
+            raw = r.json()
+        except Exception:  # noqa: BLE001
+            return []
+        return raw if isinstance(raw, list) else []
+
+    async def pesquisar_assuntos_web(self, filtro: str = "", limit: int = 50) -> dict:
+        """Pesquisa assuntos via AJAX assunto_auto_completar."""
+        if not filtro:
+            return {
+                "assuntos": [],
+                "total_itens": 0,
+                "_aviso": "Em modo web, filtro é obrigatório (mínimo 1 caractere).",
+            }
+        raw = await self._autocomplete_ajax("assunto_auto_completar", filtro)
+        assuntos: list[dict[str, str]] = []
+        for item in raw[:limit]:
+            if not isinstance(item, dict):
+                continue
+            assuntos.append(
+                {
+                    "id": str(item.get("id", item.get("value", ""))),
+                    "nome": str(item.get("nome", item.get("descricao", item.get("label", "")))),
+                    "codigo": str(item.get("codigo", "")),
+                }
+            )
+        return {"assuntos": assuntos, "total_itens": len(assuntos)}
+
+    async def pesquisar_textos_padrao_web(self, filtro: str = "", limit: int = 50) -> dict:
+        """Pesquisa textos padrão via AJAX texto_padrao_auto_completar."""
+        raw = await self._autocomplete_ajax(
+            "texto_padrao_auto_completar", filtro or "", campo="str_texto_padrao"
+        )
+        if not raw:
+            raw = await self._autocomplete_ajax("texto_padrao_pesquisar", filtro or "")
+        textos: list[dict[str, str]] = []
+        for item in raw[:limit]:
+            if not isinstance(item, dict):
+                continue
+            textos.append(
+                {
+                    "id": str(item.get("id", item.get("value", ""))),
+                    "nome": str(item.get("nome", item.get("descricao", item.get("label", "")))),
+                }
+            )
+        return {"textos": textos, "total_itens": len(textos)}
+
+    async def consultar_atribuicao_web(self, protocolo: str) -> dict:
+        """Retorna o usuário atualmente atribuído ao processo via form atribuicao_salvar."""
+        await self.ensure_authenticated()
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+        m = re.search(
+            r"(controlador\.php\?acao=atribuicao_salvar[^\"'\s]*infra_hash=[a-f0-9]+)",
+            html_arvore,
+        )
+        if not m:
+            return {
+                "id_usuario": "",
+                "nome": "",
+                "_aviso": "Ação atribuicao_salvar não disponível para este processo.",
+            }
+        acao_url = urljoin(sei_base, m.group(1).replace("&amp;", "&"))
+        r = await self._http.get(acao_url, headers={"Referer": url_arvore})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"GET atribuicao_salvar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body, "html.parser")
+        form = soup.find("form")
+        if not isinstance(form, Tag):
+            return {"id_usuario": "", "nome": ""}
+        sel = form.find("select", {"name": "selAtribuicao"})
+        if not isinstance(sel, Tag):
+            return {"id_usuario": "", "nome": ""}
+        selected_opt = sel.find("option", {"selected": True})
+        if selected_opt is None:
+            selected_opt = sel.find("option", {"selected": "selected"})
+        if not isinstance(selected_opt, Tag):
+            return {"id_usuario": "", "nome": "", "_aviso": "Processo não atribuído."}
+        v = _tag_str(selected_opt, "value")
+        t = selected_opt.get_text(strip=True)
+        mb = re.match(r"^(.+?)\s*\(([^)]+)\)\s*$", t)
+        if mb:
+            nome = mb.group(1).strip()
+            sigla = mb.group(2).strip()
+        else:
+            nome = t.strip()
+            sigla = ""
+        return {"id_usuario": v, "nome": nome, "sigla": sigla}
+
+    async def pesquisar_hipoteses_legais_web(self, filtro: str = "") -> dict:
+        """Extrai hipóteses legais do select selHipoteseLegal em procedimento_cadastrar."""
+        await self.ensure_authenticated()
+        cadastrar_url = await self._obter_link_toolbar("procedimento_cadastrar")
+        r = await self._http.get(cadastrar_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"procedimento_cadastrar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body, "html.parser")
+        sel = soup.find("select", {"name": re.compile(r"selHipoteseLegal", re.IGNORECASE)})
+        if sel is None:
+            sel = soup.find("select", id=re.compile(r"selHipoteseLegal", re.IGNORECASE))
+        hipoteses: list[dict[str, str]] = []
+        if isinstance(sel, Tag):
+            for opt in sel.find_all("option"):
+                if not isinstance(opt, Tag):
+                    continue
+                v = _tag_str(opt, "value")
+                t = opt.get_text(strip=True)
+                if not v:
+                    continue
+                if filtro and filtro.lower() not in t.lower():
+                    continue
+                hipoteses.append({"id": v, "nome": t})
+        return {"hipoteses": hipoteses, "total_itens": len(hipoteses)}
+
+    async def pesquisar_marcadores_web(self, filtro: str = "") -> dict:
+        """Extrai marcadores disponíveis via select selMarcador do form marcacao_salvar."""
+        await self.ensure_authenticated()
+        if not self._trabalhar_links:
+            await self.fetch_inbox(detalhada=False)
+        if not self._trabalhar_links:
+            return {"marcadores": [], "total_itens": 0}
+        protocolo = next(iter(self._trabalhar_links))
+        form_info = await self.obter_form_acao(protocolo, "marcacao_salvar")
+        opcoes = form_info.get("selects", {}).get("selMarcador", [])
+        marcadores: list[dict[str, str]] = []
+        for opt in opcoes:
+            v = opt.get("value", "")
+            t = opt.get("texto", "")
+            if not v:
+                continue
+            if filtro and filtro.lower() not in t.lower():
+                continue
+            marcadores.append({"id": v, "nome": t})
+        return {"marcadores": marcadores, "total_itens": len(marcadores)}
+
+    async def _obter_soup_documento_receber(self, protocolo: str) -> BeautifulSoup:  # noqa: C901
+        """Navega até o form documento_receber para um processo.
+
+        Fluxo: arvore_montar → documento_escolher_tipo GET → POST hdnIdSerie=-1.
+        Compartilhado entre pesquisar_tipos_documento_web e pesquisar_tipos_conferencia_web.
+        """
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+
+        acoes_html = ""
+        for pat in (
+            r"Nos\[0\]\.acoes\s*=\s*'((?:[^'\\]|\\.)*)'",
+            r'Nos\[0\]\.acoes\s*=\s*"((?:[^"\\]|\\.)*)"',
+        ):
+            m = re.search(pat, html_arvore, re.S)  # noqa: FURB167
+            if m:
+                acoes_html = (
+                    m.group(1).replace("\\'", "'").replace('\\"', '"').replace("\\\\", "\\")
+                )
+                break
+        if not acoes_html:
+            raise RuntimeError("Nos[0].acoes não encontrado na arvore")  # noqa: EM101, TRY003
+
+        soup_acoes = BeautifulSoup(acoes_html, "html.parser")
+        incluir_href: str | None = None
+        for a in soup_acoes.find_all("a", href=re.compile(r"documento_escolher_tipo")):
+            if not isinstance(a, Tag):
+                continue
+            incluir_href = _tag_str(a, "href").replace("&amp;", "&")
+            break
+        if not incluir_href:
+            raise RuntimeError(  # noqa: TRY003
+                "Link documento_escolher_tipo não encontrado nas ações do processo."  # noqa: EM101
+            )
+
+        escolher_url = urljoin(sei_base, incluir_href)
+        r3 = await self._http.get(escolher_url, headers={"Referer": url_arvore})
+        if r3.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"documento_escolher_tipo status={r3.status_code}")  # noqa: EM102, TRY003
+        body3 = r3.content.decode("iso-8859-1", "replace")
+        soup3 = BeautifulSoup(body3, "html.parser")
+        form3 = soup3.find("form", id="frmDocumentoEscolherTipo")
+        if not isinstance(form3, Tag):
+            raise RuntimeError("frmDocumentoEscolherTipo não encontrado")  # noqa: EM101, TRY003, TRY004
+        form3_action = _tag_str(form3, "action").replace("&amp;", "&")
+        post3_url = urljoin(str(r3.url), form3_action)
+        post3_data: dict[str, str] = {}
+        for inp in form3.find_all("input", type="hidden"):
+            if not isinstance(inp, Tag):
+                continue
+            n = _tag_str(inp, "name")
+            if n:
+                post3_data[n] = _tag_str(inp, "value")
+        post3_data["hdnIdSerie"] = "-1"
+
+        r4 = await self._http.post(post3_url, data=post3_data, headers={"Referer": str(r3.url)})
+        if r4.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"POST documento_escolher_tipo status={r4.status_code}")  # noqa: EM102, TRY003
+        return BeautifulSoup(r4.content.decode("iso-8859-1", "replace"), "html.parser")
+
+    async def pesquisar_tipos_documento_web(self, filtro: str = "") -> dict:
+        """Extrai tipos de documento (séries) via select selSerie em documento_receber."""
+        await self.ensure_authenticated()
+        if not self._trabalhar_links:
+            await self.fetch_inbox(detalhada=False)
+        if not self._trabalhar_links:
+            return {"tipos": [], "total_itens": 0}
+        protocolo = next(iter(self._trabalhar_links))
+        soup = await self._obter_soup_documento_receber(protocolo)
+        sel = soup.find("select", {"name": "selSerie"})
+        tipos: list[dict[str, str]] = []
+        if isinstance(sel, Tag):
+            for opt in sel.find_all("option"):
+                if not isinstance(opt, Tag):
+                    continue
+                v = _tag_str(opt, "value")
+                t = opt.get_text(strip=True)
+                if not v or v == "-1":
+                    continue
+                if filtro and filtro.lower() not in t.lower():
+                    continue
+                tipos.append({"id": v, "nome": t})
+        return {"tipos": tipos, "total_itens": len(tipos)}
+
+    async def pesquisar_tipos_conferencia_web(self, filtro: str = "") -> dict:
+        """Extrai tipos de conferência via select selTipoConferencia em documento_receber."""
+        await self.ensure_authenticated()
+        if not self._trabalhar_links:
+            await self.fetch_inbox(detalhada=False)
+        if not self._trabalhar_links:
+            return {"tipos": [], "total_itens": 0}
+        protocolo = next(iter(self._trabalhar_links))
+        soup = await self._obter_soup_documento_receber(protocolo)
+        sel = soup.find("select", {"name": re.compile(r"selTipoConferencia", re.IGNORECASE)})
+        tipos: list[dict[str, str]] = []
+        if isinstance(sel, Tag):
+            for opt in sel.find_all("option"):
+                if not isinstance(opt, Tag):
+                    continue
+                v = _tag_str(opt, "value")
+                t = opt.get_text(strip=True)
+                if not v:
+                    continue
+                if filtro and filtro.lower() not in t.lower():
+                    continue
+                tipos.append({"id": v, "nome": t})
+        return {"tipos": tipos, "total_itens": len(tipos)}
+
     async def criar_processo_web(  # noqa: C901, PLR0912, PLR0913, PLR0915
         self,
         tipo_processo: str,
@@ -2456,6 +3086,312 @@ class SEIWebClient:
             # não o total real. Página cheia = provavelmente tem mais.
             "tem_proxima": len(rows) >= 500,  # noqa: PLR2004
             "layout": layout,
+        }
+
+    async def pesquisar_usuarios_web(self, filtro: str = "", limit: int = 50) -> dict:
+        """Pesquisa usuários no órgão via AJAX usuario_auto_completar."""
+        if not filtro:
+            return {
+                "usuarios": [],
+                "total_itens": 0,
+                "_aviso": "Em modo web, filtro é obrigatório (mínimo 1 caractere).",
+            }
+        raw = await self._autocomplete_ajax("usuario_auto_completar", filtro)
+        usuarios: list[dict[str, str]] = []
+        for item in raw[:limit]:
+            if not isinstance(item, dict):
+                continue
+            usuarios.append(
+                {
+                    "id_usuario": str(item.get("id", item.get("value", ""))),
+                    "nome": str(item.get("nome", item.get("descricao", item.get("label", "")))),
+                    "sigla": str(item.get("sigla", "")),
+                }
+            )
+        return {"usuarios": usuarios, "total_itens": len(usuarios)}
+
+    async def pesquisar_tipos_documento_externo_web(self, filtro: str = "") -> dict:
+        """Extrai tipos de documento externo (séries) via form documento_receber."""
+        return await self.pesquisar_tipos_documento_web(filtro=filtro)
+
+    async def verificar_acesso_web(self, protocolo: str) -> dict:
+        """Verifica se o usuário tem acesso a um processo via scraper web."""
+        try:
+            await self._garantir_link_trabalhar(protocolo)
+        except Exception:  # noqa: BLE001
+            return {"temAcesso": False, "protocolo": protocolo}
+        return {"temAcesso": True, "protocolo": protocolo}
+
+    async def _obter_soup_acompanhamentos(self) -> BeautifulSoup:
+        """Obtém página acompanhamento_listar como BeautifulSoup."""
+        await self.ensure_authenticated()
+        lista_url = await self._obter_link_toolbar("acompanhamento_listar")
+        r = await self._http.get(lista_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"acompanhamento_listar status={r.status_code}")  # noqa: EM102, TRY003
+        return BeautifulSoup(r.content.decode("iso-8859-1", "replace"), "html.parser")
+
+    @staticmethod
+    def _parse_acompanhamento_tabela(tbl: Tag | None, limit: int) -> list[dict]:  # noqa: C901
+        """Extrai lista de processos de uma tabela da página acompanhamento_listar."""
+        processos: list[dict] = []
+        if not isinstance(tbl, Tag):
+            return processos
+        for tr in tbl.find_all("tr")[1:]:
+            if len(processos) >= limit:
+                break
+            tds = tr.find_all("td")
+            if not tds:
+                continue
+            entrada: dict[str, str] = {}
+            # Primeira coluna: link com protocolo
+            a = tds[0].find("a")
+            if isinstance(a, Tag):
+                txt = a.get_text(" ", strip=True)
+                href = _tag_str(a, "href")
+                mi = re.search(r"id_procedimento=(\d+)", href)
+                if mi:
+                    entrada["idProcedimento"] = mi.group(1)
+                if txt:
+                    entrada["protocoloFormatado"] = txt
+            else:
+                txt = tds[0].get_text(" ", strip=True)
+                if txt:
+                    entrada["protocoloFormatado"] = txt
+            if len(tds) >= 2:  # noqa: PLR2004
+                entrada["tipo"] = tds[1].get_text(" ", strip=True)
+            if len(tds) >= 3:  # noqa: PLR2004
+                entrada["observacao"] = tds[2].get_text(" ", strip=True)
+            if entrada:
+                processos.append(entrada)
+        return processos
+
+    async def listar_meus_acompanhamentos_web(self, limit: int = 50) -> dict:
+        """Lista processos com acompanhamento especial do usuário via scraper web."""
+        soup = await self._obter_soup_acompanhamentos()
+        tbls = soup.find_all("table", class_=re.compile(r"infraTable", re.IGNORECASE))
+        tbl = tbls[0] if tbls else soup.find("table")
+        processos = self._parse_acompanhamento_tabela(tbl if isinstance(tbl, Tag) else None, limit)
+        return {"processos": processos, "total_itens": len(processos)}
+
+    async def listar_acompanhamentos_unidade_web(self, limit: int = 50) -> dict:
+        """Lista processos com acompanhamento especial da unidade via scraper web."""
+        soup = await self._obter_soup_acompanhamentos()
+        tbls = soup.find_all("table", class_=re.compile(r"infraTable", re.IGNORECASE))
+        tbl = tbls[1] if len(tbls) > 1 else (tbls[0] if tbls else soup.find("table"))
+        processos = self._parse_acompanhamento_tabela(tbl if isinstance(tbl, Tag) else None, limit)
+        return {"processos": processos, "total_itens": len(processos)}
+
+    async def alterar_acompanhamento_web(
+        self, protocolo: str, grupo: str = "", observacao: str = ""
+    ) -> dict:
+        """Altera acompanhamento especial de um processo via form acompanhamento_registrar."""
+        campos: dict[str, str] = {}
+        if grupo:
+            campos["selGrupoAcompanhamento"] = grupo
+        if observacao:
+            campos["txaObservacao"] = observacao
+        await self.executar_acao_processo(protocolo, "acompanhamento_registrar", campos)
+        return {
+            "ok": True,
+            "protocolo": protocolo,
+            "mensagem": "Acompanhamento alterado com sucesso.",
+        }
+
+    async def listar_grupos_modelos_web(self, filtro: str = "") -> dict:  # noqa: C901
+        """Lista grupos de modelos de documento via scraper web."""
+        await self.ensure_authenticated()
+        lista_url: str | None = None
+        for nome_acao in ("grupo_modelos_listar", "modelos_grupos_listar"):
+            try:
+                lista_url = await self._obter_link_toolbar(nome_acao)
+                break
+            except RuntimeError:
+                continue
+        if not lista_url:
+            return {
+                "grupos": [],
+                "total_itens": 0,
+                "_aviso": "Página de grupos de modelos não encontrada.",
+            }
+        r = await self._http.get(lista_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            return {"grupos": [], "total_itens": 0}
+        soup = BeautifulSoup(r.content.decode("iso-8859-1", "replace"), "html.parser")
+        grupos: list[dict[str, str]] = []
+        for tbl in soup.find_all("table", class_=re.compile(r"infraTable", re.IGNORECASE)):
+            if not isinstance(tbl, Tag):
+                continue
+            for tr in tbl.find_all("tr")[1:]:
+                tds = tr.find_all("td")
+                if not tds:
+                    continue
+                nome = tds[0].get_text(" ", strip=True)
+                if not nome or (filtro and filtro.lower() not in nome.lower()):
+                    continue
+                id_grupo = ""
+                for a in tr.find_all("a", href=re.compile(r"id_grupo=\d+")):
+                    if isinstance(a, Tag):
+                        mg = re.search(r"id_grupo=(\d+)", _tag_str(a, "href"))
+                        if mg:
+                            id_grupo = mg.group(1)
+                            break
+                grupos.append({"id": id_grupo, "nome": nome})
+        return {"grupos": grupos, "total_itens": len(grupos)}
+
+    async def listar_modelos_web(  # noqa: C901, PLR0912
+        self, filtro: str = "", id_grupo: str = ""
+    ) -> dict:
+        """Lista modelos de documento via scraper web."""
+        await self.ensure_authenticated()
+        lista_url: str | None = None
+        for nome_acao in ("modelos_listar", "modelo_listar"):
+            try:
+                lista_url = await self._obter_link_toolbar(nome_acao)
+                break
+            except RuntimeError:
+                continue
+        if not lista_url:
+            return {
+                "modelos": [],
+                "total_itens": 0,
+                "_aviso": "Página de modelos não encontrada.",
+            }
+        r = await self._http.get(lista_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            return {"modelos": [], "total_itens": 0}
+        soup = BeautifulSoup(r.content.decode("iso-8859-1", "replace"), "html.parser")
+        modelos: list[dict[str, str]] = []
+        for tbl in soup.find_all("table", class_=re.compile(r"infraTable", re.IGNORECASE)):
+            if not isinstance(tbl, Tag):
+                continue
+            for tr in tbl.find_all("tr")[1:]:
+                tds = tr.find_all("td")
+                if not tds:
+                    continue
+                nome = tds[0].get_text(" ", strip=True)
+                if not nome:
+                    continue
+                id_modelo = ""
+                grp_id = ""
+                for a in tr.find_all("a", href=re.compile(r"id_modelo=\d+")):
+                    if not isinstance(a, Tag):
+                        continue
+                    href = _tag_str(a, "href")
+                    mm = re.search(r"id_modelo=(\d+)", href)
+                    if mm:
+                        id_modelo = mm.group(1)
+                    mg = re.search(r"id_grupo=(\d+)", href)
+                    if mg:
+                        grp_id = mg.group(1)
+                    break
+                if id_grupo and grp_id and grp_id != id_grupo:
+                    continue
+                if filtro and filtro.lower() not in nome.lower():
+                    continue
+                entry: dict[str, str] = {"id": id_modelo, "nome": nome}
+                if grp_id:
+                    entry["id_grupo"] = grp_id
+                modelos.append(entry)
+        return {"modelos": modelos, "total_itens": len(modelos)}
+
+    async def retirar_documento_bloco_assinatura_web(
+        self, id_bloco: str, id_documento: str
+    ) -> dict:
+        """Retira documento de bloco de assinatura via scraper web."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        acao_url = await self._obter_acao_bloco_url(id_bloco, "bloco_assinatura_alterar")
+        r = await self._http.get(acao_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_alterar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        pat = re.compile(
+            rf"controlador\.php\?[^\"'\s]*acao=bloco_assinatura_retirar_documento[^\"'\s]*id_documento={re.escape(id_documento)}[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+            rf"|controlador\.php\?[^\"'\s]*id_documento={re.escape(id_documento)}[^\"'\s]*acao=bloco_assinatura_retirar_documento[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+        )
+        m = pat.search(body)
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Link retirar documento {id_documento} não encontrado no bloco {id_bloco}."  # noqa: EM102
+            )
+        retirar_url = urljoin(sei_base, m.group().replace("&amp;", "&"))
+        r2 = await self._http.get(retirar_url, headers={"Referer": acao_url})
+        if r2.status_code not in (200, 302):
+            raise RuntimeError(  # noqa: TRY003
+                f"bloco_assinatura_retirar_documento status={r2.status_code}"  # noqa: EM102
+            )
+        body2 = r2.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body2)
+        if erro:
+            raise RuntimeError(erro)
+        return {
+            "ok": True,
+            "idBloco": id_bloco,
+            "idDocumento": id_documento,
+            "mensagem": "Documento retirado do bloco com sucesso.",
+        }
+
+    async def anotar_documento_bloco_assinatura_web(  # noqa: C901
+        self, id_bloco: str, id_documento: str, descricao: str
+    ) -> dict:
+        """Cria ou altera anotação em documento de bloco via scraper web."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        acao_url = await self._obter_acao_bloco_url(id_bloco, "bloco_assinatura_alterar")
+        r = await self._http.get(acao_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_alterar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        pat = re.compile(
+            rf"controlador\.php\?[^\"'\s]*acao=bloco_assinatura_anotar_documento[^\"'\s]*id_documento={re.escape(id_documento)}[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+            rf"|controlador\.php\?[^\"'\s]*id_documento={re.escape(id_documento)}[^\"'\s]*acao=bloco_assinatura_anotar_documento[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+        )
+        m = pat.search(body)
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Link anotação documento {id_documento} não encontrado no bloco {id_bloco}."  # noqa: EM102
+            )
+        anotar_url = urljoin(sei_base, m.group().replace("&amp;", "&"))
+        r2 = await self._http.get(anotar_url, headers={"Referer": acao_url})
+        if r2.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(  # noqa: TRY003
+                f"GET bloco_assinatura_anotar_documento status={r2.status_code}"  # noqa: EM102
+            )
+        body2 = r2.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body2, "html.parser")
+        form = soup.find("form")
+        if not isinstance(form, Tag):
+            raise RuntimeError("Form de anotação não encontrado.")  # noqa: EM101, TRY003, TRY004
+        action = _tag_str(form, "action").replace("&amp;", "&")
+        post_url = urljoin(sei_base, action) if action else anotar_url
+        post_data: list[tuple[str, str]] = []
+        for inp in form.find_all("input", type="hidden"):
+            if not isinstance(inp, Tag):
+                continue
+            n = _tag_str(inp, "name")
+            if n:
+                post_data.append((n, _tag_str(inp, "value")))
+        sbm = _extrair_submit_btn(form)
+        if sbm:
+            post_data.append(sbm)
+        post_data.append(("txaDescricao", descricao))
+        r3 = await self._http.post(
+            post_url,
+            content=urlencode(post_data).encode("iso-8859-1"),
+            headers={"Referer": anotar_url, "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if r3.status_code not in (200, 302):
+            raise RuntimeError(f"POST anotação bloco status={r3.status_code}")  # noqa: EM102, TRY003
+        body3 = r3.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body3)
+        if erro:
+            raise RuntimeError(erro)
+        return {
+            "ok": True,
+            "idBloco": id_bloco,
+            "idDocumento": id_documento,
+            "mensagem": "Anotação salva com sucesso.",
         }
 
 

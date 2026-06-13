@@ -26,6 +26,16 @@ dependencies = [
 [project.scripts]
 todos = "todos.server:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.9",
+    "ty>=0.0.1a14",
+    "vulture>=2.14",
+    "bandit>=1.8",
+    "pip-audit>=2.8",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/todos"]
 
@@ -62,6 +72,10 @@ ignore = [
 "setup_claude.py" = ["T201"]  # print() ok in installer
 "src/todos/setup_wizard.py" = ["T201", "PLR0915", "PLR0912", "C901", "D103", "ANN201", "ANN001", "S501", "BLE001", "PLC0415", "PLR2004", "D100", "S110"]
 "scripts/smoke_web.py" = ["D103", "PLR0915", "T201"]
+"tests/**" = ["S101", "ANN", "D", "PLR2004", "SLF001"]  # assert/no-annot/no-docstring/magic-vals ok in tests
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.vulture]
 min_confidence = 80

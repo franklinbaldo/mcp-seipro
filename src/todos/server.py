@@ -168,64 +168,109 @@ def _get_backend(ctx: Context | None) -> SEIBackend:
 mcp = FastMCP(
     "sei",
     instructions=(
-        "MCP Server para o SEI (Sistema Eletrônico de Informações). "
-        "Permite gerenciar processos, documentos, tramitação e assinatura. "
-        "CONTEXTO: leia o resource sei://status antes de qualquer operação — "
-        "ele mostra a instância SEI conectada e a unidade ativa do usuário. "
-        "ASSINATURA: as credenciais do usuário já estão configuradas no servidor. "
-        "NUNCA peça login ou senha ao usuário para assinar. Basta chamar "
-        "sei_assinar_documento com o id do documento e o cargo. Se não souber "
-        "o cargo, chame sem cargo para obter a lista e pergunte ao usuário. "
-        "Fluxo típico: sei_unidade_atual → sei_trocar_unidade (se necessario) → "
-        "sei_listar_processos → "
-        "sei_consultar_processo (obter IdProcedimento) → sei_arvore_processo → "
-        "sei_ler_documento. Para criar docs: sei_pesquisar_tipos_documento → "
-        "sei_criar_documento → sei_listar_secoes → sei_editar_secao. "
-        "Ao gerar HTML para documentos, use as classes CSS padronizadas do SEI. "
-        "DESPACHOS: Texto_Alinhado_Esquerda com âncora SEI no destinatário "
-        "(<span class='ancoraSei interessadoSeiPro' data-id='ID_UNIDADE'>SIGLA - Nome</span>) "
-        "para vincular à unidade na tramitação. "
-        "Texto_Justificado+<strong> (assunto), "
-        "Paragrafo_Numerado_Nivel1 (corpo, autonumera 1. 2. 3.), "
+        # ── Modelo de domínio ────────────────────────────────────────────────
+        "=== MODELO DE DOMÍNIO DO SEI ===\n"
+        "PROCESSO (Expediente): unidade básica de trabalho. Tem número visível único "
+        "(ex: 00100.001234/2024-01), tipo de processo, especificação, interessados e "
+        "nível de acesso. Contém uma árvore ordenada de documentos. É aberto em uma "
+        "UNIDADE e pode ser enviado (tramitado) para outras unidades.\n"
+        "DOCUMENTO: item na árvore de um processo. "
+        "INTERNO = criado no editor HTML do SEI (Despacho, Nota Técnica, Ofício, Parecer…); "
+        "EXTERNO = arquivo importado (PDF, DOCX…). "
+        "Cada documento tem um número visível curto (ex: 2843449) e um idDocumento interno.\n"
+        "UNIDADE: setor/departamento do órgão. Todo acesso ao SEI é feito no contexto "
+        "da unidade ativa. Processos aparecem na inbox da unidade que os recebeu. "
+        "Use sei_unidade_atual para saber onde você está, sei_trocar_unidade para mudar.\n"
+        "TRAMITAÇÃO: enviar um processo para outra unidade (sei_enviar_processo). "
+        "O processo continua existindo; a responsabilidade passa para o destinatário. "
+        "A unidade remetente perde o processo da inbox (a menos que seja mantida como cópia).\n"
+        "ANDAMENTO: entrada no histórico/log do processo — data, unidade, descrição. "
+        "Criado automaticamente por ações (envio, recebimento, conclusão) ou manualmente "
+        "via sei_registrar_andamento. Use para documentar o que foi feito.\n"
+        "BLOCO DE ASSINATURA: agrupa documentos de processos diferentes para assinatura "
+        "em lote por um responsável. Fluxo: criar → incluir documentos → disponibilizar "
+        "(para o assinante ver) → assinante assina → concluir. "
+        "Os documentos permanecem em seus processos originais.\n"
+        "BLOCO INTERNO: agrupa processos para fins organizacionais (revisão coletiva, "
+        "despacho conjunto). Não envolve assinatura. "
+        "Operações: criar, incluir processos, concluir, reabrir.\n"
+        "ACOMPANHAMENTO ESPECIAL: usuário ou unidade 'segue' um processo para monitorar "
+        "atualizações mesmo sem tê-lo na inbox. Use sei_acompanhar_processo para iniciar, "
+        "sei_listar_meus_acompanhamentos para consultar, sei_alterar_acompanhamento para "
+        "ajustar grupo/observação, sei_remover_acompanhamento para parar de seguir.\n"
+        "MARCADOR: tag colorida e pessoal aplicada a processos para organização. "
+        "Use sei_pesquisar_marcadores para listar os disponíveis, sei_marcar_processo "
+        "para aplicar. Marcadores são por usuário, não por unidade.\n"
+        "HIPÓTESE LEGAL: base legal que justifica restringir o acesso a um processo "
+        "ou documento (Lei de Acesso à Informação, sigilo fiscal, segredo de justiça…). "
+        "OBRIGATÓRIA ao criar processo/documento restrito (nível 1) ou sigiloso (nível 2). "
+        "Sufixo '(S)' no nome = sigiloso; sem sufixo = restrito. "
+        "Use sei_pesquisar_hipoteses_legais para listar as disponíveis.\n"
+        "CREDENCIAMENTO (processos sigilosos, nível 2): acesso individual concedido "
+        "explicitamente. ATENÇÃO: ao enviar um processo sigiloso para outra unidade, "
+        "o destinatário precisa de credenciamento ANTES ou não conseguirá abrir o processo. "
+        "Use sei_conceder_credenciamento logo após sei_enviar_processo em processos sigilosos.\n"
+        "MODELO DE DOCUMENTO: template HTML reutilizável para criar documentos internos "
+        "com estrutura pré-definida. Use sei_listar_modelos para ver disponíveis e "
+        "passar id_modelo ao sei_criar_documento.\n"
+        # ── IDs e números ────────────────────────────────────────────────────
+        "=== IDs E NÚMEROS ===\n"
+        "protocoloFormatado de PROCESSO: '00100.001234/2024-01' (com pontos, barra, ano). "
+        "protocoloFormatado de DOCUMENTO: '2843449' (só dígitos, bem mais curto). "
+        "idProcedimento: ID interno do processo na API (ex: '123456'). "
+        "idDocumento: ID interno do documento na API. "
+        "REGRA: todas as tools aceitam tanto o protocolo formatado quanto o ID interno — "
+        "o servidor resolve automaticamente. "
+        "EXCEÇÃO: documentos recém-criados podem não estar indexados no Solr ainda; "
+        "nesses casos use o idDocumento retornado pela tool de criação.\n"
+        # ── Contexto e fluxos ────────────────────────────────────────────────
+        "=== CONTEXTO E FLUXOS ===\n"
+        "Leia sei://status antes de qualquer operação — mostra instância, usuário e unidade ativa.\n"
+        "CONSULTAR: sei_listar_processos → sei_consultar_processo → sei_arvore_processo → "
+        "sei_ler_documento.\n"
+        "CRIAR E EDITAR: sei_pesquisar_tipos_processo → sei_criar_processo → "
+        "sei_pesquisar_tipos_documento → sei_criar_documento → "
+        "sei_listar_secoes → sei_editar_secao.\n"
+        "ASSINAR: sei_assinar_documento (credenciais já estão no servidor — NUNCA peça senha). "
+        "Se não souber o cargo, chame sem cargo para ver a lista e pergunte ao usuário.\n"
+        "ASSINAR EM LOTE: sei_criar_bloco_assinatura → sei_incluir_documento_bloco_assinatura "
+        "→ sei_disponibilizar_bloco_assinatura → (assinante usa sei_assinar_bloco) "
+        "→ sei_concluir_bloco_assinatura.\n"
+        "ENVIAR: sei_enviar_processo. Para sigilosos: sei_conceder_credenciamento antes ou depois.\n"
+        "BUSCAR: 'SEI XXXX' ou 'SEI nº XXXX' → use sei_ler_documento diretamente com o número. "
+        "Para buscar sem ler, use sei_buscar_documento.\n"
+        # ── Formatação de documentos ─────────────────────────────────────────
+        "=== FORMATAÇÃO DE DOCUMENTOS (HTML) ===\n"
+        "Use as classes CSS padronizadas do SEI. NUNCA escreva numeração manual no texto.\n"
+        "DESPACHOS: Texto_Alinhado_Esquerda com âncora para destinatário "
+        "(<span class='ancoraSei interessadoSeiPro' data-id='ID_UNIDADE'>SIGLA - Nome</span>), "
+        "Texto_Justificado+<strong> (assunto), Paragrafo_Numerado_Nivel1 (corpo, autonumera), "
         "Texto_Justificado_Recuo_Primeira_Linha (fecho), "
-        "Texto_Centralizado_Maiusculas (signatário), Texto_Centralizado (cargo). "
-        "NOTAS TÉCNICAS e PARECERES: Item_Nivel1/2/3/4 para títulos de seção "
-        "(equivalem a H1/H2/H3/H4 ou #/##/###/####, autonumeram 1. 1.1. 1.1.1.), "
-        "Paragrafo_Numerado_Nivel1 para parágrafos do corpo, "
-        "Item_Alinea_Letra para alíneas (autonumera a, b, c — NUNCA escrever a) b) no texto), "
-        "Item_Inciso_Romano para incisos (autonumera I, II, III — NUNCA escrever I - II - no texto). "
-        "REGRA: toda numeração/enumeração deve usar as classes CSS, nunca texto manual. "
-        "Use sei_estilos para consultar todos os estilos disponíveis. "
-        "Ao citar documentos SEI no texto, use sei_gerar_referencia para "
-        "gerar hiperlinks dinâmicos (<a class='ancoraSei'>) que o SEI "
-        "renderiza como links clicáveis na interface web. "
-        "IMPORTANTE: Quando o usuário mencionar 'SEI XXXX', 'SEI nº XXXX' ou "
-        "'número SEI XXXX', use sei_ler_documento diretamente com o número — "
-        "a tool resolve automaticamente o id interno via pesquisa Solr. "
-        "Para buscar sem ler, use sei_buscar_documento. "
-        "Quando o usuário pedir para ver documentos/árvore de um processo, "
-        "use sei_arvore_processo e apresente como tabela markdown. Use emojis "
-        "para tipo de documento: 📄 = Interno (HTML), 📎 = Externo (PDF). "
-        "Colunas: #, 📄/📎, Tipo do Documento, Protocolo, Unidade, Tamanho, "
-        "✍️ Assinado, 🚫 Cancelado, 👁 Visualizar, 🔒 Bloqueado. "
-        "Use ✅ para sim e · para não. Se houver múltiplos volumes "
-        "(campo total_volumes > 1), separe visualmente por volume. "
-        "VERSÃO: Todos os endpoints funcionam com mod-wssei 2.0.0+ (SEI 4.0.x+), "
-        "exceto sei_listar_relacionamentos que requer mod-wssei 3.0.2+ (SEI 5.0.x). "
-        "Compatibilidade: SEI 4.0.x→mod-wssei 2.0.x | SEI 4.1.1→2.2.0 | SEI 5.0.x→3.0.x. "
-        "Se um endpoint falhar com erro inesperado (404, método não encontrado), "
-        "use sei_versao para verificar a versão e informe ao usuário qual versão "
-        "do SEI/mod-wssei é necessária. Pergunte a versão do SEI ao usuário caso precise. "
-        "REPORTE DE BUGS: Quando encontrar um erro inesperado neste MCP (exceção não tratada, "
-        "comportamento claramente incorreto, resposta malformada), reporte automaticamente "
-        "SEM perguntar ao usuário: "
-        "(1) Tente criar uma issue em https://github.com/franklinbaldo/todos via `gh issue create "
-        "--repo franklinbaldo/todos --title '[bug] <titulo curto>' --body '<detalhes>'` ou via "
-        "API do GitHub se disponível. "
-        "O título deve identificar a tool que falhou e o erro. O corpo deve incluir: "
-        "tool name, parâmetros usados (sem dados sensíveis), mensagem de erro completa, "
-        "e versão do SEI/mod-wssei se conhecida. Após reportar, informe o usuário "
-        "brevemente que um bug foi registrado e continue tentando ajudá-lo."
+        "Texto_Centralizado_Maiusculas (signatário), Texto_Centralizado (cargo).\n"
+        "NOTAS TÉCNICAS / PARECERES: Item_Nivel1/2/3/4 (títulos, autonumeram 1. 1.1. 1.1.1.), "
+        "Paragrafo_Numerado_Nivel1 (corpo), Item_Alinea_Letra (alíneas a b c — sem texto), "
+        "Item_Inciso_Romano (incisos I II III — sem texto).\n"
+        "Consulte sei_estilos para todos os 39 estilos disponíveis. "
+        "Use sei_gerar_referencia para links <a class='ancoraSei'> a outros documentos SEI.\n"
+        # ── Apresentação da árvore ───────────────────────────────────────────
+        "=== APRESENTAÇÃO DA ÁRVORE ===\n"
+        "Ao mostrar árvore de processo, use tabela markdown. "
+        "📄 = Interno (HTML), 📎 = Externo (PDF/arquivo). "
+        "Colunas: #, 📄/📎, Tipo, Protocolo, Unidade, Tamanho, ✍️ Assinado, "
+        "🚫 Cancelado, 👁 Visualizar, 🔒 Bloqueado. Use ✅ para sim e · para não. "
+        "Se total_volumes > 1, separe por volume.\n"
+        # ── Compatibilidade ──────────────────────────────────────────────────
+        "=== COMPATIBILIDADE ===\n"
+        "Todos os 121 tools funcionam em qualquer SEI 4.0+ (com ou sem mod-wssei). "
+        "Exceção: sei_listar_relacionamentos requer mod-wssei 3.0.2+ (SEI 5.0.x). "
+        "Assinatura (sei_assinar_documento, sei_assinar_bloco) requer mod-wssei. "
+        "Se endpoint falhar inesperadamente, use sei_versao para diagnosticar.\n"
+        # ── Bugs ────────────────────────────────────────────────────────────
+        "=== BUGS ===\n"
+        "Erro inesperado neste MCP? Reporte SEM perguntar ao usuário: "
+        "gh issue create --repo franklinbaldo/todos --title '[bug] <tool>: <erro curto>' "
+        "--body '<tool, parâmetros sem dados sensíveis, mensagem completa, versão SEI>'. "
+        "Após reportar, informe brevemente e continue ajudando."
     ),
     lifespan=lifespan,
 )
@@ -611,10 +656,18 @@ async def sei_listar_usuarios(
     - apenas_unidade=false: todos os usuários do órgão
 
     Use o campo id_usuario retornado para sei_atribuir_processo.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_usuarios(filtro=filtro, apenas_unidade=apenas_unidade)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_usuarios(
+                filtro=filtro, apenas_unidade=apenas_unidade
+            )
+        else:
+            result = await backend.web.listar_usuarios_web(
+                filtro=filtro, apenas_unidade=apenas_unidade
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -1171,7 +1224,7 @@ async def sei_criar_documento(  # noqa: PLR0913
     - id_unidade: ID da unidade geradora (apenas REST, opcional)
 
     O documento é criado vazio. Use sei_listar_secoes e sei_editar_secao
-    para inserir conteúdo. Funciona via REST (mod-wssei) ou via scraper web.
+    para inserir conteúdo.
     """
     try:
         backend = _get_backend(ctx)
@@ -1787,14 +1840,18 @@ async def sei_pesquisar_hipoteses_legais(
     hipotese_legal de sei_criar_processo.
 
     Exemplos: "pessoal", "controle interno", "sigilo fiscal"
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_hipoteses_legais(
-            filtro=filtro,
-            limit=limit,
-            start=pagina,
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_hipoteses_legais(
+                filtro=filtro,
+                limit=limit,
+                start=pagina,
+            )
+        else:
+            result = await backend.web.pesquisar_hipoteses_legais_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -1812,19 +1869,23 @@ async def sei_pesquisar_tipos_processo(
 
     Parâmetros:
     - filtro: texto para filtrar por nome (ex: "Plano Anual", "Fiscalização")
-    - favoritos: "S" para apenas favoritos
-    - limit/pagina: paginação
+    - favoritos: "S" para apenas favoritos (REST apenas)
+    - limit/pagina: paginação (REST apenas)
 
     Use o 'id' retornado como tipo_processo em sei_criar_processo.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_tipos_processo(
-            filtro=filtro,
-            favoritos=favoritos,
-            limit=limit,
-            start=pagina,
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_tipos_processo(
+                filtro=filtro,
+                favoritos=favoritos,
+                limit=limit,
+                start=pagina,
+            )
+        else:
+            result = await backend.web.pesquisar_tipos_processo_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -1890,7 +1951,6 @@ async def sei_criar_processo(  # noqa: PLR0913
       Use sei_pesquisar_hipoteses_legais para descobrir o ID.
 
     Retorna o IdProcedimento e ProtocoloFormatado do processo criado.
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -1944,7 +2004,6 @@ async def sei_enviar_processo(  # noqa: C901, PLR0913
     - data_retorno: data de retorno programado DD/MM/AAAA (só se o usuário pedir)
     - dias_retorno: prazo em dias para retorno (alternativa à data, só se pedir)
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2058,7 +2117,6 @@ async def sei_concluir_processo(numero_processo: str, ctx: Context | None = None
 
     O processo é removido da caixa da unidade mas permanece acessível.
     Use sei_reabrir_processo para reverter.
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2078,7 +2136,6 @@ async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str
     - processo: protocolo formatado (ex: 50300.018905/2018-67) ou IdProcedimento
 
     O processo volta para a caixa da unidade atual.
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2105,7 +2162,6 @@ async def sei_atribuir_processo(  # noqa: C901, PLR0911
     - usuario: ID numérico do usuário OU nome/parte do nome
       (ex: "100001860" ou "Karina" ou "Karina Shimoishi")
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     Via web, o usuário é escolhido de um <select> no form — use
     sei_atribuir_processo(usuario="?") para listar os usuários disponíveis.
     """
@@ -2352,22 +2408,26 @@ async def sei_pesquisar_tipos_documento(  # noqa: PLR0913
 
     Parâmetros:
     - filtro: texto para filtrar por nome do tipo
-    - favoritos: "S" para apenas favoritos
-    - aplicabilidade: "I" para internos, "F" para externos, ou "I,F" para ambos
-    - limit: quantidade por página
-    - pagina: número da página (0=primeira)
+    - favoritos: "S" para apenas favoritos (REST apenas)
+    - aplicabilidade: "I" para internos, "F" para externos (REST apenas)
+    - limit: quantidade por página (REST apenas)
+    - pagina: número da página (REST apenas)
 
     Use o 'id' retornado como id_serie em sei_criar_documento.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_tipos_documento(
-            filtro=filtro,
-            favoritos=favoritos,
-            aplicabilidade=aplicabilidade,
-            limit=limit,
-            start=pagina,
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_tipos_documento(
+                filtro=filtro,
+                favoritos=favoritos,
+                aplicabilidade=aplicabilidade,
+                limit=limit,
+                start=pagina,
+            )
+        else:
+            result = await backend.web.pesquisar_tipos_documento_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -2392,7 +2452,6 @@ async def sei_sobrestar_processo(
     - motivo: motivo do sobrestamento (obrigatório)
     - processo_vinculado: protocolo de outro processo para vincular (opcional)
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2453,7 +2512,6 @@ async def sei_remover_sobrestamento(
 
     - processo: protocolo formatado (ex: 50300.018905/2018-67) ou IdProcedimento
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2485,7 +2543,6 @@ async def sei_dar_ciencia(
     - sei_dar_ciencia("1482875", tipo="documento")  → ciência na NT 16
     - sei_dar_ciencia("50300.018905/2018-67", tipo="processo")  → ciência no processo
 
-    Funciona via REST (mod-wssei) ou via scraper web para tipo="processo" em
     instâncias sem mod-wssei. Tipo "documento" exige REST.
     """
     try:
@@ -2525,7 +2582,6 @@ async def sei_listar_ciencias(
     - tipo: "documento" (padrão) ou "processo"
     - processo: protocolo do processo (necessário em instâncias sem mod-wssei quando tipo="documento")
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2566,7 +2622,6 @@ async def sei_remover_atribuicao(
     """Remove a atribuição de um processo (desatribui de qualquer usuário).
 
     - processo: protocolo formatado ou IdProcedimento
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2588,7 +2643,6 @@ async def sei_receber_processo(
     """Confirma o recebimento de um processo na unidade atual.
 
     - processo: protocolo formatado ou IdProcedimento
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2650,10 +2704,7 @@ async def sei_listar_unidades_processo(
     processo: str,
     ctx: Context | None = None,
 ) -> str:
-    """Lista as unidades onde o processo está aberto.
-
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    """
+    """Lista as unidades onde o processo está aberto."""
     try:
         backend = _get_backend(ctx)
         if backend.has_rest:
@@ -2671,10 +2722,7 @@ async def sei_listar_interessados(
     processo: str,
     ctx: Context | None = None,
 ) -> str:
-    """Lista os interessados de um processo.
-
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    """
+    """Lista os interessados de um processo."""
     try:
         backend = _get_backend(ctx)
         if backend.has_rest:
@@ -2692,10 +2740,7 @@ async def sei_listar_sobrestamentos(
     processo: str,
     ctx: Context | None = None,
 ) -> str:
-    """Lista o histórico de sobrestamentos de um processo.
-
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    """
+    """Lista o histórico de sobrestamentos de um processo."""
     try:
         backend = _get_backend(ctx)
         if backend.has_rest:
@@ -2719,7 +2764,6 @@ async def sei_listar_assinaturas(
     - id_documento: id interno do documento
     - processo: protocolo do processo (necessário em instâncias sem mod-wssei)
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2748,7 +2792,6 @@ async def sei_registrar_andamento(
     - processo: protocolo formatado ou IdProcedimento
     - descricao: texto do andamento
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2968,7 +3011,6 @@ async def sei_marcar_processo(
     - marcador: ID do marcador OU "?" para listar os disponíveis
     - texto: texto/comentário associado ao marcador (opcional)
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -2999,10 +3041,14 @@ async def sei_pesquisar_marcadores(
     """Lista marcadores disponíveis na unidade atual.
 
     Use o 'id' retornado em sei_marcar_processo.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_marcadores(filtro=filtro, limit=limit)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_marcadores(filtro=filtro, limit=limit)
+        else:
+            result = await backend.web.pesquisar_marcadores_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3042,7 +3088,6 @@ async def sei_acompanhar_processo(
     - grupo: ID do grupo de acompanhamento (ou "?" para listar disponíveis)
     - observacao: observação/anotação do acompanhamento
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -3073,10 +3118,7 @@ async def sei_remover_acompanhamento(
     processo: str,
     ctx: Context | None = None,
 ) -> str:
-    """Remove acompanhamento especial de um processo.
-
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
-    """
+    """Remove acompanhamento especial de um processo."""
     try:
         backend = _get_backend(ctx)
         if backend.has_rest:
@@ -3216,10 +3258,16 @@ async def sei_criar_bloco_assinatura(
     - descricao: descrição do bloco
     - unidades: sigla(s) ou ID(s) das unidades para disponibilizar
       (separados por vírgula). Se informar sigla, resolve automaticamente.
+      Ignorado em modo web (bloco criado sem unidades pré-configuradas).
+
     """
     try:
-        client = _get_client(ctx)
+        backend = _get_backend(ctx)
+        if not backend.has_rest:
+            result = await backend.web.criar_bloco_assinatura_web(descricao=descricao)
+            return _json(result)
 
+        client = backend.rest
         # Resolver siglas de unidades para IDs
         if unidades:
             destinos = [u.strip() for u in unidades.split(",")]
@@ -3228,15 +3276,15 @@ async def sei_criar_bloco_assinatura(
                 if d.isdigit():
                     ids.append(d)
                 else:
-                    result = await client.pesquisar_unidades(filtro=d, limit=5)
+                    res_u = await client.pesquisar_unidades(filtro=d, limit=5)
                     found = False
-                    for u in result.get("unidades", []):
+                    for u in res_u.get("unidades", []):
                         if u.get("sigla", "").upper() == d.upper():
                             ids.append(str(u.get("id", "")))
                             found = True
                             break
-                    if not found and result.get("unidades"):
-                        ids.append(str(result["unidades"][0].get("id", "")))
+                    if not found and res_u.get("unidades"):
+                        ids.append(str(res_u["unidades"][0].get("id", "")))
             unidades = ",".join(ids)
 
         result = await client.criar_bloco_assinatura(descricao, unidades)
@@ -3272,10 +3320,14 @@ async def sei_disponibilizar_bloco_assinatura(
     """Disponibiliza um bloco de assinatura para as unidades configuradas.
 
     Após disponibilizar, os usuários das unidades podem assinar os documentos.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.disponibilizar_bloco_assinatura(id_bloco)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.disponibilizar_bloco_assinatura(id_bloco)
+        else:
+            result = await backend.web.disponibilizar_bloco_assinatura_web(id_bloco)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3289,10 +3341,14 @@ async def sei_cancelar_disponibilizacao_bloco(
     """Cancela a disponibilização de um bloco de assinatura.
 
     O bloco volta ao estado aberto e pode ser editado novamente.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.cancelar_disponibilizacao_bloco_assinatura(id_bloco)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.cancelar_disponibilizacao_bloco_assinatura(id_bloco)
+        else:
+            result = await backend.web.cancelar_disponibilizacao_bloco_assinatura_web(id_bloco)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3306,8 +3362,11 @@ async def sei_pesquisar_blocos_assinatura(
 ) -> str:
     """Pesquisa blocos de assinatura existentes."""
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_blocos_assinatura(filtro=filtro, limit=limit)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_blocos_assinatura(filtro=filtro, limit=limit)
+        else:
+            result = await backend.web.pesquisar_blocos_assinatura_web(filtro=filtro, limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3327,7 +3386,6 @@ async def sei_criar_anotacao(
     - descricao: texto da anotação
     - prioridade: nível de prioridade (1=normal, 2=alta)
 
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -3354,7 +3412,6 @@ async def sei_criar_anotacao(
 # Se um endpoint falhar, use sei_versao para verificar a versão instalada.
 # Compatibilidade: SEI 4.0.x=mod-wssei 2.0.x | SEI 4.1.1=2.2.0 | SEI 5.0.x=3.0.x
 # ---------------------------------------------------------------------------
-
 
 # -- Sistema / Informações --
 
@@ -3422,12 +3479,16 @@ async def sei_pesquisar_usuarios(
     este pesquisa no servidor por nome/sigla em todo o órgão.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_usuarios(
-            filtro=filtro, id_orgao=id_orgao, limit=limit, start=pagina
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_usuarios(
+                filtro=filtro, id_orgao=id_orgao, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.pesquisar_usuarios_web(filtro=filtro, limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3448,10 +3509,16 @@ async def sei_pesquisar_outras_unidades(
     Útil para tramitação — já filtra a unidade do usuário.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_outras_unidades(filtro=filtro, limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_outras_unidades(
+                filtro=filtro, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.pesquisar_outras_unidades_web(filtro=filtro, limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3470,10 +3537,16 @@ async def sei_pesquisar_textos_padrao(
     automaticamente ao criar um novo documento interno.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_textos_padrao(filtro=filtro, limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_textos_padrao(
+                filtro=filtro, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.pesquisar_textos_padrao_web(filtro=filtro, limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3505,7 +3578,6 @@ async def sei_consultar_documento_externo(
     privacidade, NÃO erro de permissão. Os metadados foram retornados
     normalmente; não tente trocar de unidade ou rotas alternativas.
     Se falhar com erro inesperado, use sei_versao para verificar a versão.
-    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
         backend = _get_backend(ctx)
@@ -3643,10 +3715,16 @@ async def sei_pesquisar_tipos_conferencia(
     cópia simples, original, etc.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_tipos_conferencia(filtro=filtro, limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_tipos_conferencia(
+                filtro=filtro, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.pesquisar_tipos_conferencia_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3702,12 +3780,16 @@ async def sei_pesquisar_tipos_documento_externo(
     este retorna apenas os tipos aplicáveis a documentos externos.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_tipos_documento_externo(
-            filtro=filtro, limit=limit, start=pagina
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_tipos_documento_externo(
+                filtro=filtro, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.pesquisar_tipos_documento_externo_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3744,10 +3826,14 @@ async def sei_pesquisar_assuntos(
     Use o ID retornado no campo 'assuntos' ao criar processos.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_assuntos(filtro=filtro, limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_assuntos(filtro=filtro, limit=limit, start=pagina)
+        else:
+            result = await backend.web.pesquisar_assuntos_web(filtro=filtro, limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3781,11 +3867,15 @@ async def sei_consultar_atribuicao(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.consultar_atribuicao(id_proc)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.consultar_atribuicao(id_proc)
+        else:
+            result = await backend.web.consultar_atribuicao_web(processo)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3801,11 +3891,15 @@ async def sei_verificar_acesso(
     Útil para checar permissão antes de operações em processos restritos.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.verificar_acesso(id_proc)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.verificar_acesso(id_proc)
+        else:
+            result = await backend.web.verificar_acesso_web(processo)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4031,10 +4125,14 @@ async def sei_listar_meus_acompanhamentos(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_meus_acompanhamentos(limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_meus_acompanhamentos(limit=limit, start=pagina)
+        else:
+            result = await backend.web.listar_meus_acompanhamentos_web(limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4050,10 +4148,14 @@ async def sei_listar_acompanhamentos_unidade(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_acompanhamentos_unidade(limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_acompanhamentos_unidade(limit=limit, start=pagina)
+        else:
+            result = await backend.web.listar_acompanhamentos_unidade_web(limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4074,11 +4176,15 @@ async def sei_alterar_acompanhamento(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        id_proc = await _resolver_processo(client, processo)
-        result = await client.alterar_acompanhamento(id_proc, grupo, observacao)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            id_proc = await _resolver_processo(backend.rest, processo)
+            result = await backend.rest.alterar_acompanhamento(id_proc, grupo, observacao)
+        else:
+            result = await backend.web.alterar_acompanhamento_web(processo, grupo, observacao)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4256,10 +4362,14 @@ async def sei_listar_grupos_modelos(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_grupos_modelos(limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_grupos_modelos(limit=limit, start=pagina)
+        else:
+            result = await backend.web.listar_grupos_modelos_web()
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4280,12 +4390,16 @@ async def sei_listar_modelos(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_modelos(
-            id_grupo=id_grupo, filtro=filtro, limit=limit, start=pagina
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_modelos(
+                id_grupo=id_grupo, filtro=filtro, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.listar_modelos_web(filtro=filtro, id_grupo=id_grupo)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4492,8 +4606,11 @@ async def sei_listar_documentos_bloco_assinatura(
 ) -> str:
     """Lista documentos de um bloco de assinatura."""
     try:
-        client = _get_client(ctx)
-        result = await client.listar_documentos_bloco_assinatura(id_bloco)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_documentos_bloco_assinatura(id_bloco)
+        else:
+            result = await backend.web.listar_documentos_bloco_assinatura_web(id_bloco)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4508,10 +4625,23 @@ async def sei_retirar_documentos_bloco_assinatura(
     """Retira documento(s) de um bloco de assinatura.
 
     - documentos: ID(s) de documento(s) separados por vírgula
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.retirar_documento_bloco_assinatura(id_bloco, documentos)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.retirar_documento_bloco_assinatura(id_bloco, documentos)
+        else:
+            resultados = []
+            for id_doc in documentos.split(","):
+                id_doc = id_doc.strip()  # noqa: PLW2901
+                if id_doc:
+                    resultados.append(
+                        await backend.web.retirar_documento_bloco_assinatura_web(id_bloco, id_doc)
+                    )
+            result = (
+                resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4527,10 +4657,14 @@ async def sei_alterar_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.alterar_bloco_assinatura(id_bloco, descricao)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.alterar_bloco_assinatura(id_bloco, descricao)
+        else:
+            result = await backend.web.alterar_bloco_assinatura_web(id_bloco, descricao)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4545,10 +4679,21 @@ async def sei_excluir_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.excluir_blocos_assinatura(ids_blocos)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.excluir_blocos_assinatura(ids_blocos)
+        else:
+            resultados = []
+            for id_bloco in ids_blocos.split(","):
+                id_bloco = id_bloco.strip()  # noqa: PLW2901
+                if id_bloco:
+                    resultados.append(await backend.web.excluir_bloco_assinatura_web(id_bloco))
+            result = (
+                resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4563,10 +4708,21 @@ async def sei_concluir_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.concluir_blocos_assinatura(ids_blocos)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.concluir_blocos_assinatura(ids_blocos)
+        else:
+            resultados = []
+            for id_bloco in ids_blocos.split(","):
+                id_bloco = id_bloco.strip()  # noqa: PLW2901
+                if id_bloco:
+                    resultados.append(await backend.web.concluir_bloco_assinatura_web(id_bloco))
+            result = (
+                resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4581,10 +4737,14 @@ async def sei_reabrir_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.reabrir_bloco_assinatura(id_bloco)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.reabrir_bloco_assinatura(id_bloco)
+        else:
+            result = await backend.web.reabrir_bloco_assinatura_web(id_bloco)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4599,10 +4759,14 @@ async def sei_retornar_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.retornar_bloco_assinatura(id_bloco)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.retornar_bloco_assinatura(id_bloco)
+        else:
+            result = await backend.web.retornar_bloco_assinatura_web(id_bloco)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4619,10 +4783,18 @@ async def sei_anotar_documento_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.anotar_documento_bloco_assinatura(id_bloco, documento, descricao)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.anotar_documento_bloco_assinatura(
+                id_bloco, documento, descricao
+            )
+        else:
+            result = await backend.web.anotar_documento_bloco_assinatura_web(
+                id_bloco, documento, descricao
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4639,10 +4811,18 @@ async def sei_alterar_anotacao_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
     """
     try:
-        client = _get_client(ctx)
-        result = await client.alterar_anotacao_bloco_assinatura(id_bloco, documento, descricao)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.alterar_anotacao_bloco_assinatura(
+                id_bloco, documento, descricao
+            )
+        else:
+            result = await backend.web.anotar_documento_bloco_assinatura_web(
+                id_bloco, documento, descricao
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
