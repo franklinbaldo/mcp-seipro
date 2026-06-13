@@ -78,7 +78,7 @@ ignore = [
 "scripts/bench_listar_processos.py" = ["S603", "S606", "E402", "TRY002", "TRY003", "EM101", "EM102"]
 "src/todos/sei_client.py" = ["TRY002", "TRY003", "EM101", "EM102"]
 "src/todos/sei_web_client.py" = ["TRY002", "TRY003", "EM101", "EM102"]
-"src/todos/server.py" = ["TRY002", "TRY003", "EM101", "EM102"]
+"src/todos/server.py" = ["TRY002", "TRY003", "EM101", "EM102", "BLE001", "PLR0912", "C901"]  # boundary file: 121 tools, complexity is inherent; fallback except Exception intentional
 "tests/**" = ["S101", "ANN", "D", "PLR2004", "SLF001"]  # assert/no-annot/no-docstring/magic-vals ok in tests
 
 [tool.pytest.ini_options]
