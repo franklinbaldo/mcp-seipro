@@ -59,7 +59,7 @@ class CatalogCache:
         """Retorna um valor válido ou None em miss/falha do cache (executado em thread worker)."""
         try:
             return await asyncio.to_thread(self._get_sync, namespace, key)
-        except Exception:
+        except (sqlite3.Error, json.JSONDecodeError):
             logger.warning("Falha ao ler cache de catalogos", exc_info=True)
         return None
 
@@ -84,7 +84,7 @@ class CatalogCache:
         """Persista uma resposta bem-sucedida pelo TTL padrão (executado em thread worker)."""
         try:
             await asyncio.to_thread(self._set_sync, namespace, key, value)
-        except Exception:
+        except (sqlite3.Error, json.JSONDecodeError):
             logger.warning("Falha ao gravar cache de catalogos", exc_info=True)
 
     def _set_sync(self, namespace: dict[str, str], key: str, value: Any) -> None:
@@ -108,7 +108,7 @@ class CatalogCache:
         """Retorne o TTL restante de uma entrada (executado em thread worker)."""
         try:
             return await asyncio.to_thread(self._ttl_sync, namespace, key)
-        except Exception:
+        except sqlite3.Error:
             logger.warning("Falha ao consultar TTL do cache de catalogos", exc_info=True)
         return None
 

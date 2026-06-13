@@ -36,7 +36,7 @@ def html_to_text(raw: str) -> str:
         # Limpar linhas vazias e espaços excessivos
         lines = [line.strip() for line in text.split("\n") if line.strip()]
         return "\n".join(lines)
-    except Exception:
+    except (AttributeError, TypeError, ValueError, UnicodeDecodeError):
         # Fallback: regex brutal
         text = html_module.unescape(raw)
         text = re.sub(r"<[^>]+>", " ", text)
@@ -111,7 +111,7 @@ def html_to_markdown(raw: str) -> str:
         )
         resultado = _clean_markdown_tables(resultado)
         return re.sub(r"\n{3,}", "\n\n", resultado).strip()
-    except Exception:
+    except (AttributeError, TypeError, ValueError, UnicodeDecodeError):
         return html_to_text(raw)
 
 
@@ -170,7 +170,7 @@ def _extract_pdf_pages(content: bytes) -> list[tuple[int, str]]:
     # Fallback: OCR para PDFs de imagem
     try:
         return _ocr_pdf(content)
-    except Exception:
+    except (ImportError, OSError, RuntimeError, ValueError):
         return []
 
 

@@ -59,7 +59,7 @@ def _verify(token: str) -> dict | None:
     try:
         padded = raw + "=" * (-len(raw) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded))
-    except Exception:
+    except (ValueError, UnicodeDecodeError):
         return None
     if payload.get("exp", 0) < time.time():
         return None

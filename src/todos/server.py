@@ -333,7 +333,7 @@ async def sei_status_resource(ctx: Context) -> str:
             marker = "▶" if u.get("sigla") == sigla else " "
             linhas.append(f"  {marker} {u['sigla']} — {u['nome']} (id: {u.get('id_unidade', '?')})")
         return "\n".join(linhas)
-    except Exception as exc:
+    except (SEIError, httpx.HTTPError, AttributeError) as exc:
         return f"Status: erro ao obter sessão — {exc}"
 
 
@@ -372,7 +372,7 @@ async def sei_hipoteses_resource(ctx: Context) -> str:
         else:
             result = await backend.web.pesquisar_hipoteses_legais_web()
         return json.dumps(result, ensure_ascii=False, indent=2)
-    except Exception as exc:
+    except (SEIError, httpx.HTTPError) as exc:
         return json.dumps({"error": str(exc)}, ensure_ascii=False)
 
 
@@ -401,7 +401,7 @@ def _cliente_suporta_elicit(ctx: Context | None) -> bool:
         if client_params is None:
             return False
         caps = client_params.capabilities
-    except Exception:
+    except AttributeError:
         return False
     return getattr(caps, "elicitation", None) is not None
 
@@ -451,7 +451,7 @@ async def _solicitar_consentimento_via_elicit(
             _ELICIT_TIMEOUT_S,
         )
         return "nao_suportado"
-    except Exception as e:
+    except (AttributeError, NotImplementedError, RuntimeError, TypeError, ValueError) as e:
         logger.debug("elicit falhou (%s: %s) — fallback JSON", type(e).__name__, e)
         return "nao_suportado"
 
@@ -493,7 +493,7 @@ async def _aplicar_gate_documento_web(
         return None
     try:
         meta = await web.consultar_documento_web(processo, id_documento)
-    except Exception:
+    except (SEIError, httpx.HTTPError):
         logger.warning("gate web-only: consulta de metadados falhou — prossegue fail-open")
         return None
     nivel = access_control.extrair_nivel_web(meta)
@@ -522,7 +522,7 @@ async def _aplicar_gate_documento(
             meta = await client.consultar_documento_externo(id_documento)
         else:
             meta = await client.consultar_documento_interno(id_documento)
-    except Exception as e:
+    except (SEIError, httpx.HTTPError) as e:
         msg = str(e)
         low = msg.lower()
         if "não autorizado" in low or "nao autorizado" in low:
@@ -698,7 +698,7 @@ async def sei_trocar_unidade(id_unidade: str, ctx: Context) -> str:
         try:
             rest = _get_client(ctx)
             await rest.trocar_unidade(result.get("id_unidade", id_unidade))
-        except Exception as rest_err:
+        except (SEIError, httpx.HTTPError) as rest_err:
             logger.debug("REST unit sync failed (best-effort): %s", rest_err)
         return _json(result)
     except (SEIError, httpx.RequestError) as e:
@@ -794,7 +794,7 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
         if not web.is_authenticated:
             try:
                 await web.login()
-            except Exception as e:
+            except (SEIError, httpx.HTTPError) as e:
                 logger.warning("web login falhou, seguindo só com REST: %s", e)
 
         # roda REST completo e web em paralelo; suporta falha individual
@@ -1020,7 +1020,7 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
         # Validar que realmente retornou conteúdo (não erro mascarado)
         if raw and len(raw) > _MIN_DOC_CONTENT_LENGTH:
             return referencia, "I"
-    except Exception as e:
+    except (SEIError, httpx.HTTPError) as e:
         msg = str(e)
         # "não autorizado" pode significar que o id existe mas sem permissão
         # OU que o protocoloFormatado coincidiu com outro id — não confiável
@@ -1067,7 +1067,7 @@ async def _ler_doc_web(
     if tipo_documento == "auto":
         try:
             raw = await web.visualizar_documento_interno_web(processo, id_documento)
-        except Exception:
+        except (SEIError, httpx.HTTPError):
             raw_bytes = await web.baixar_documento_externo_web(processo, id_documento)
             return _formatar_pdf(raw_bytes, formato)
     elif tipo_documento == "X":
@@ -1138,7 +1138,7 @@ async def _ler_doc_rest(
             doc_id, detected_tipo = await _resolver_documento(client, id_documento)
             id_documento = doc_id
             tipo_doc = detected_tipo
-        except Exception as e:
+        except (SEIError, httpx.HTTPError) as e:
             return _json(
                 {
                     "error": str(e),
@@ -1222,7 +1222,7 @@ async def sei_ler_documento(
             formato,
             confirmou=confirmar_acesso_restrito,
         )
-    except Exception as e:
+    except (SEIError, httpx.HTTPError) as e:
         msg = str(e)
         if "não autorizado" in msg.lower() or "nao autorizado" in msg.lower():
             return _json(
@@ -1288,7 +1288,7 @@ async def sei_baixar_anexo(
         try:
             doc_id, _ = await _resolver_documento(client, id_documento)
             id_documento = doc_id
-        except Exception as e:
+        except (SEIError, httpx.HTTPError) as e:
             return _json(
                 {
                     "error": str(e),
@@ -1960,7 +1960,7 @@ async def sei_pesquisar_processos(
         if avisos:
             paged["aviso"] = "; ".join(avisos).capitalize()
         return _json(paged)
-    except Exception as e2:
+    except (SEIError, httpx.HTTPError) as e2:
         return _error(f"Web: {e2}")
 
 
@@ -2331,7 +2331,7 @@ async def sei_atribuir_processo(
                             "usuario": {"id": id_u, "nome": nome, "sigla": sigla},
                         }
                     )
-                except Exception as e:
+                except (SEIError, httpx.HTTPError) as e:
                     erros.append(f"{nome} ({sigla}): {e}")
                     continue
             return _json(
@@ -2434,7 +2434,7 @@ async def sei_cancelar_assinatura(
                 "versao": result,
             }
         )
-    except Exception as e:
+    except (SEIError, httpx.HTTPError) as e:
         msg = str(e)
         if "assinado" in msg.lower():
             return _json(
@@ -2483,14 +2483,14 @@ async def sei_assinar_documento(
         doc_id = id_documento.strip()
         try:
             doc_id, _ = await _resolver_documento(client, doc_id)
-        except Exception:
+        except (SEIError, httpx.HTTPError):
             doc_id = id_documento.strip()  # Manter original se resolver falhar
 
         # Se cargo não informado, listar opções e pedir ao usuário
         if not cargo:
             try:
                 cargos = await client.listar_assinantes()
-            except Exception:
+            except (SEIError, httpx.HTTPError):
                 cargos = []
             return _json(
                 {
@@ -2602,7 +2602,7 @@ async def sei_sobrestar_processo(
                     protocolo_vinculado=proto_vinculado,
                 )
                 return _json(result)
-            except Exception as e:
+            except (SEIError, httpx.HTTPError) as e:
                 msg = str(e)
                 # Enriquece o erro com as unidades onde o processo está aberto,
                 # para orientar o LLM a concluir o processo antes de sobrestar.
@@ -3011,7 +3011,7 @@ async def sei_assinar_bloco(
         if not cargo:
             try:
                 cargos = await client.listar_assinantes()
-            except Exception:
+            except (SEIError, httpx.HTTPError):
                 cargos = []
             return _json(
                 {
@@ -3057,7 +3057,7 @@ async def sei_assinar_documentos_bloco(
         if not cargo:
             try:
                 cargos = await client.listar_assinantes()
-            except Exception:
+            except (SEIError, httpx.HTTPError):
                 cargos = []
             return _json(
                 {
@@ -3721,7 +3721,7 @@ async def sei_consultar_documento_externo(
         client = _get_client(ctx)
         try:
             result = await client.consultar_documento_externo(id_documento)
-        except Exception as primeira:
+        except (SEIError, httpx.HTTPError) as primeira:
             msg = str(primeira)
             low = msg.lower()
             # Se não autorizado, pode ser id errado (passou número SEI). Tenta resolver.
@@ -3733,7 +3733,7 @@ async def sei_consultar_documento_externo(
                         result = await client.consultar_documento_externo(id_documento)
                     else:
                         raise primeira
-                except Exception:
+                except (SEIError, httpx.HTTPError):
                     return _json(
                         {
                             "error": msg,
@@ -4219,7 +4219,7 @@ async def sei_incluir_documento_externo(
                 return _error("nome_arquivo é obrigatório quando arquivo_base64 é usado.")
             try:
                 conteudo = base64.b64decode(arquivo_base64, validate=True)
-            except Exception:
+            except ValueError:
                 return _error("arquivo_base64 inválido (não é base64 válido).")
         elif arquivo_path:
             # Em modo remoto o caminho apontaria para o filesystem do SERVIDOR,

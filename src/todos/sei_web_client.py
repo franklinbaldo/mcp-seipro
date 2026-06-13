@@ -32,6 +32,7 @@ from bs4 import BeautifulSoup, Tag
 from todos.exceptions import (
     SEIAuthError,
     SEIConnectionError,
+    SEIError,
     SEINotFoundError,
     SEIParseError,
     SEIValidationError,
@@ -292,7 +293,7 @@ class SEIWebClient:
                 logger.warning(
                     "Timeout ao buscar senha do keyring (>5s); use SEI_SENHA como fallback"
                 )
-            except Exception as e:
+            except (ImportError, OSError, RuntimeError, ValueError, AttributeError) as e:
                 self._keyring_user = keyring_user  # restore: transient error, allow retry
                 logger.warning("Não foi possível obter a senha do keyring: %s", e)
 
@@ -930,7 +931,7 @@ class SEIWebClient:
                 if m:
                     total_itens = int(m.group(1))
                     break
-        except Exception:
+        except (ValueError, IndexError, AttributeError):
             logger.debug("Falha ao parsear total de itens da pesquisa", exc_info=True)
 
         return {"processos": results, "total_itens": total_itens}
@@ -1664,7 +1665,7 @@ class SEIWebClient:
             return []
         try:
             raw = r.json()
-        except Exception:
+        except ValueError:
             return []
         results = []
         for item in raw if isinstance(raw, list) else []:
@@ -2163,7 +2164,7 @@ class SEIWebClient:
             return []
         try:
             raw = r.json()
-        except Exception:
+        except ValueError:
             return []
         return raw if isinstance(raw, list) else []
 
@@ -3067,7 +3068,7 @@ class SEIWebClient:
         """Verifica se o usuário tem acesso a um processo via scraper web."""
         try:
             await self._garantir_link_trabalhar(protocolo)
-        except Exception:
+        except (SEIError, httpx.HTTPError):
             return {"temAcesso": False, "protocolo": protocolo}
         return {"temAcesso": True, "protocolo": protocolo}
 

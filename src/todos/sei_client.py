@@ -194,7 +194,7 @@ class SEIClient:
                 logger.warning(
                     "Timeout ao buscar senha do keyring (>5s); use SEI_SENHA como fallback"
                 )
-            except Exception as e:
+            except (ImportError, OSError, RuntimeError, ValueError, AttributeError) as e:
                 self._keyring_user = keyring_user  # restore: transient error, allow retry
                 logger.warning("Não foi possível obter a senha do keyring: %s", e)
 
