@@ -1910,6 +1910,161 @@ class SEIWebClient:
             "tem_proxima": len(blocos) >= limit,
         }
 
+    async def pesquisar_hipoteses_legais_web(self, filtro: str = "") -> dict:
+        """Extrai hipóteses legais do select selHipoteseLegal em procedimento_cadastrar."""
+        await self.ensure_authenticated()
+        cadastrar_url = await self._obter_link_toolbar("procedimento_cadastrar")
+        r = await self._http.get(cadastrar_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"procedimento_cadastrar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body, "html.parser")
+        sel = soup.find("select", {"name": re.compile(r"selHipoteseLegal", re.IGNORECASE)})
+        if sel is None:
+            sel = soup.find("select", id=re.compile(r"selHipoteseLegal", re.IGNORECASE))
+        hipoteses: list[dict[str, str]] = []
+        if isinstance(sel, Tag):
+            for opt in sel.find_all("option"):
+                if not isinstance(opt, Tag):
+                    continue
+                v = _tag_str(opt, "value")
+                t = opt.get_text(strip=True)
+                if not v:
+                    continue
+                if filtro and filtro.lower() not in t.lower():
+                    continue
+                hipoteses.append({"id": v, "nome": t})
+        return {"hipoteses": hipoteses, "total_itens": len(hipoteses)}
+
+    async def pesquisar_marcadores_web(self, filtro: str = "") -> dict:
+        """Extrai marcadores disponíveis via select selMarcador do form marcacao_salvar."""
+        await self.ensure_authenticated()
+        if not self._trabalhar_links:
+            await self.fetch_inbox(detalhada=False)
+        if not self._trabalhar_links:
+            return {"marcadores": [], "total_itens": 0}
+        protocolo = next(iter(self._trabalhar_links))
+        form_info = await self.obter_form_acao(protocolo, "marcacao_salvar")
+        opcoes = form_info.get("selects", {}).get("selMarcador", [])
+        marcadores: list[dict[str, str]] = []
+        for opt in opcoes:
+            v = opt.get("value", "")
+            t = opt.get("texto", "")
+            if not v:
+                continue
+            if filtro and filtro.lower() not in t.lower():
+                continue
+            marcadores.append({"id": v, "nome": t})
+        return {"marcadores": marcadores, "total_itens": len(marcadores)}
+
+    async def _obter_soup_documento_receber(self, protocolo: str) -> BeautifulSoup:  # noqa: C901
+        """Navega até o form documento_receber para um processo.
+
+        Fluxo: arvore_montar → documento_escolher_tipo GET → POST hdnIdSerie=-1.
+        Compartilhado entre pesquisar_tipos_documento_web e pesquisar_tipos_conferencia_web.
+        """
+        html_arvore, url_arvore = await self._arvore_do_processo(protocolo)
+        sei_base = f"{self.sei_root}/sei/"
+
+        acoes_html = ""
+        for pat in (
+            r"Nos\[0\]\.acoes\s*=\s*'((?:[^'\\]|\\.)*)'",
+            r'Nos\[0\]\.acoes\s*=\s*"((?:[^"\\]|\\.)*)"',
+        ):
+            m = re.search(pat, html_arvore, re.S)  # noqa: FURB167
+            if m:
+                acoes_html = (
+                    m.group(1).replace("\\'", "'").replace('\\"', '"').replace("\\\\", "\\")
+                )
+                break
+        if not acoes_html:
+            raise RuntimeError("Nos[0].acoes não encontrado na arvore")  # noqa: EM101, TRY003
+
+        soup_acoes = BeautifulSoup(acoes_html, "html.parser")
+        incluir_href: str | None = None
+        for a in soup_acoes.find_all("a", href=re.compile(r"documento_escolher_tipo")):
+            if not isinstance(a, Tag):
+                continue
+            incluir_href = _tag_str(a, "href").replace("&amp;", "&")
+            break
+        if not incluir_href:
+            raise RuntimeError(  # noqa: TRY003
+                "Link documento_escolher_tipo não encontrado nas ações do processo."  # noqa: EM101
+            )
+
+        escolher_url = urljoin(sei_base, incluir_href)
+        r3 = await self._http.get(escolher_url, headers={"Referer": url_arvore})
+        if r3.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"documento_escolher_tipo status={r3.status_code}")  # noqa: EM102, TRY003
+        body3 = r3.content.decode("iso-8859-1", "replace")
+        soup3 = BeautifulSoup(body3, "html.parser")
+        form3 = soup3.find("form", id="frmDocumentoEscolherTipo")
+        if not isinstance(form3, Tag):
+            raise RuntimeError("frmDocumentoEscolherTipo não encontrado")  # noqa: EM101, TRY003, TRY004
+        form3_action = _tag_str(form3, "action").replace("&amp;", "&")
+        post3_url = urljoin(str(r3.url), form3_action)
+        post3_data: dict[str, str] = {}
+        for inp in form3.find_all("input", type="hidden"):
+            if not isinstance(inp, Tag):
+                continue
+            n = _tag_str(inp, "name")
+            if n:
+                post3_data[n] = _tag_str(inp, "value")
+        post3_data["hdnIdSerie"] = "-1"
+
+        r4 = await self._http.post(post3_url, data=post3_data, headers={"Referer": str(r3.url)})
+        if r4.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"POST documento_escolher_tipo status={r4.status_code}")  # noqa: EM102, TRY003
+        return BeautifulSoup(r4.content.decode("iso-8859-1", "replace"), "html.parser")
+
+    async def pesquisar_tipos_documento_web(self, filtro: str = "") -> dict:
+        """Extrai tipos de documento (séries) via select selSerie em documento_receber."""
+        await self.ensure_authenticated()
+        if not self._trabalhar_links:
+            await self.fetch_inbox(detalhada=False)
+        if not self._trabalhar_links:
+            return {"tipos": [], "total_itens": 0}
+        protocolo = next(iter(self._trabalhar_links))
+        soup = await self._obter_soup_documento_receber(protocolo)
+        sel = soup.find("select", {"name": "selSerie"})
+        tipos: list[dict[str, str]] = []
+        if isinstance(sel, Tag):
+            for opt in sel.find_all("option"):
+                if not isinstance(opt, Tag):
+                    continue
+                v = _tag_str(opt, "value")
+                t = opt.get_text(strip=True)
+                if not v or v == "-1":
+                    continue
+                if filtro and filtro.lower() not in t.lower():
+                    continue
+                tipos.append({"id": v, "nome": t})
+        return {"tipos": tipos, "total_itens": len(tipos)}
+
+    async def pesquisar_tipos_conferencia_web(self, filtro: str = "") -> dict:
+        """Extrai tipos de conferência via select selTipoConferencia em documento_receber."""
+        await self.ensure_authenticated()
+        if not self._trabalhar_links:
+            await self.fetch_inbox(detalhada=False)
+        if not self._trabalhar_links:
+            return {"tipos": [], "total_itens": 0}
+        protocolo = next(iter(self._trabalhar_links))
+        soup = await self._obter_soup_documento_receber(protocolo)
+        sel = soup.find("select", {"name": re.compile(r"selTipoConferencia", re.IGNORECASE)})
+        tipos: list[dict[str, str]] = []
+        if isinstance(sel, Tag):
+            for opt in sel.find_all("option"):
+                if not isinstance(opt, Tag):
+                    continue
+                v = _tag_str(opt, "value")
+                t = opt.get_text(strip=True)
+                if not v:
+                    continue
+                if filtro and filtro.lower() not in t.lower():
+                    continue
+                tipos.append({"id": v, "nome": t})
+        return {"tipos": tipos, "total_itens": len(tipos)}
+
     async def criar_processo_web(  # noqa: C901, PLR0912, PLR0913, PLR0915
         self,
         tipo_processo: str,

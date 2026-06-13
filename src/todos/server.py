@@ -1798,14 +1798,20 @@ async def sei_pesquisar_hipoteses_legais(
     hipotese_legal de sei_criar_processo.
 
     Exemplos: "pessoal", "controle interno", "sigilo fiscal"
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    No modo web, limit e pagina são ignorados.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_hipoteses_legais(
-            filtro=filtro,
-            limit=limit,
-            start=pagina,
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_hipoteses_legais(
+                filtro=filtro,
+                limit=limit,
+                start=pagina,
+            )
+        else:
+            result = await backend.web.pesquisar_hipoteses_legais_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -2369,22 +2375,29 @@ async def sei_pesquisar_tipos_documento(  # noqa: PLR0913
 
     Parâmetros:
     - filtro: texto para filtrar por nome do tipo
-    - favoritos: "S" para apenas favoritos
-    - aplicabilidade: "I" para internos, "F" para externos, ou "I,F" para ambos
-    - limit: quantidade por página
-    - pagina: número da página (0=primeira)
+    - favoritos: "S" para apenas favoritos (REST apenas)
+    - aplicabilidade: "I" para internos, "F" para externos (REST apenas)
+    - limit: quantidade por página (REST apenas)
+    - pagina: número da página (REST apenas)
 
     Use o 'id' retornado como id_serie em sei_criar_documento.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    No modo web, favoritos, aplicabilidade e pagina são ignorados; retorna todos
+    os tipos visíveis no form de inclusão de documento do processo mais recente da inbox.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_tipos_documento(
-            filtro=filtro,
-            favoritos=favoritos,
-            aplicabilidade=aplicabilidade,
-            limit=limit,
-            start=pagina,
-        )
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_tipos_documento(
+                filtro=filtro,
+                favoritos=favoritos,
+                aplicabilidade=aplicabilidade,
+                limit=limit,
+                start=pagina,
+            )
+        else:
+            result = await backend.web.pesquisar_tipos_documento_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3016,10 +3029,16 @@ async def sei_pesquisar_marcadores(
     """Lista marcadores disponíveis na unidade atual.
 
     Use o 'id' retornado em sei_marcar_processo.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    No modo web, limit é ignorado; requer ao menos um processo na inbox.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_marcadores(filtro=filtro, limit=limit)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_marcadores(filtro=filtro, limit=limit)
+        else:
+            result = await backend.web.pesquisar_marcadores_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3666,10 +3685,18 @@ async def sei_pesquisar_tipos_conferencia(
     cópia simples, original, etc.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    No modo web, limit e pagina são ignorados; requer processo na inbox.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_tipos_conferencia(filtro=filtro, limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_tipos_conferencia(
+                filtro=filtro, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.pesquisar_tipos_conferencia_web(filtro=filtro)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
