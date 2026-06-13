@@ -3252,10 +3252,17 @@ async def sei_criar_bloco_assinatura(
     - descricao: descrição do bloco
     - unidades: sigla(s) ou ID(s) das unidades para disponibilizar
       (separados por vírgula). Se informar sigla, resolve automaticamente.
+      Ignorado em modo web (bloco criado sem unidades pré-configuradas).
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
+        backend = _get_backend(ctx)
+        if not backend.has_rest:
+            result = await backend.web.criar_bloco_assinatura_web(descricao=descricao)
+            return _json(result)
 
+        client = backend.rest
         # Resolver siglas de unidades para IDs
         if unidades:
             destinos = [u.strip() for u in unidades.split(",")]
@@ -3264,15 +3271,15 @@ async def sei_criar_bloco_assinatura(
                 if d.isdigit():
                     ids.append(d)
                 else:
-                    result = await client.pesquisar_unidades(filtro=d, limit=5)
+                    res_u = await client.pesquisar_unidades(filtro=d, limit=5)
                     found = False
-                    for u in result.get("unidades", []):
+                    for u in res_u.get("unidades", []):
                         if u.get("sigla", "").upper() == d.upper():
                             ids.append(str(u.get("id", "")))
                             found = True
                             break
-                    if not found and result.get("unidades"):
-                        ids.append(str(result["unidades"][0].get("id", "")))
+                    if not found and res_u.get("unidades"):
+                        ids.append(str(res_u["unidades"][0].get("id", "")))
             unidades = ",".join(ids)
 
         result = await client.criar_bloco_assinatura(descricao, unidades)
@@ -3308,10 +3315,15 @@ async def sei_disponibilizar_bloco_assinatura(
     """Disponibiliza um bloco de assinatura para as unidades configuradas.
 
     Após disponibilizar, os usuários das unidades podem assinar os documentos.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.disponibilizar_bloco_assinatura(id_bloco)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.disponibilizar_bloco_assinatura(id_bloco)
+        else:
+            result = await backend.web.disponibilizar_bloco_assinatura_web(id_bloco)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3325,10 +3337,15 @@ async def sei_cancelar_disponibilizacao_bloco(
     """Cancela a disponibilização de um bloco de assinatura.
 
     O bloco volta ao estado aberto e pode ser editado novamente.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.cancelar_disponibilizacao_bloco_assinatura(id_bloco)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.cancelar_disponibilizacao_bloco_assinatura(id_bloco)
+        else:
+            result = await backend.web.cancelar_disponibilizacao_bloco_assinatura_web(id_bloco)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -3490,10 +3507,18 @@ async def sei_pesquisar_outras_unidades(
     Útil para tramitação — já filtra a unidade do usuário.
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (AJAX autocomplete).
+    No modo web, filtro é obrigatório (mínimo 1 caractere) e pagina é ignorado.
     """
     try:
-        client = _get_client(ctx)
-        result = await client.pesquisar_outras_unidades(filtro=filtro, limit=limit, start=pagina)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_outras_unidades(
+                filtro=filtro, limit=limit, start=pagina
+            )
+        else:
+            result = await backend.web.pesquisar_outras_unidades_web(filtro=filtro, limit=limit)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))

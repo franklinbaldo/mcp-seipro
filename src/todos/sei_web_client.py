@@ -1910,6 +1910,131 @@ class SEIWebClient:
             "tem_proxima": len(blocos) >= limit,
         }
 
+    async def pesquisar_outras_unidades_web(self, filtro: str = "", limit: int = 50) -> dict:
+        """Pesquisa unidades via AJAX autocomplete (unidade_auto_completar).
+
+        Requer filtro não-vazio — o endpoint AJAX não retorna resultados sem termo.
+        """
+        if not filtro:
+            return {
+                "unidades": [],
+                "total_itens": 0,
+                "_aviso": "Em modo web, filtro é obrigatório (mínimo 1 caractere).",
+            }
+        resultados = await self.autocomplete_unidades(filtro)
+        resultados = resultados[:limit]
+        return {"unidades": resultados, "total_itens": len(resultados)}
+
+    async def _obter_acao_bloco_url(self, id_bloco: str, nome_acao: str) -> str:
+        """Busca URL assinada de uma ação em um bloco específico via bloco_assinatura_listar."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        lista_url = await self._obter_link_toolbar("bloco_assinatura_listar")
+        r = await self._http.get(lista_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_listar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        pat = re.compile(
+            rf"(controlador\.php\?[^\"'\s]*acao={re.escape(nome_acao)}[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*infra_hash=[a-fA-F0-9]+|"
+            rf"controlador\.php\?[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*acao={re.escape(nome_acao)}[^\"'\s]*infra_hash=[a-fA-F0-9]+)"
+        )
+        m = pat.search(body)
+        if not m:
+            raise RuntimeError(  # noqa: TRY003
+                f"Ação '{nome_acao}' não encontrada para bloco {id_bloco}. "  # noqa: EM102
+                "Verifique se o bloco existe e está no estado correto."
+            )
+        return urljoin(sei_base, m.group(1).replace("&amp;", "&"))
+
+    async def criar_bloco_assinatura_web(self, descricao: str) -> dict:  # noqa: C901, PLR0912
+        """Cria um bloco de assinatura via scraper web."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        try:
+            incluir_url = await self._obter_link_toolbar("bloco_assinatura_incluir")
+        except RuntimeError:
+            incluir_url = await self._obter_link_toolbar("bloco_assinatura_cadastrar")
+        r = await self._http.get(incluir_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_incluir status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body)
+        if erro:
+            raise RuntimeError(erro)
+        soup = BeautifulSoup(body, "html.parser")
+        form = soup.find("form")
+        if not isinstance(form, Tag):
+            raise RuntimeError("Form de criação de bloco não encontrado.")  # noqa: EM101, TRY003, TRY004
+        action = _tag_str(form, "action").replace("&amp;", "&")
+        post_url = urljoin(sei_base, action) if action else incluir_url
+        post_data: list[tuple[str, str]] = []
+        for inp in form.find_all("input", type="hidden"):
+            if not isinstance(inp, Tag):
+                continue
+            n = _tag_str(inp, "name")
+            if n:
+                post_data.append((n, _tag_str(inp, "value")))
+        sbm = _extrair_submit_btn(form)
+        if sbm:
+            post_data.append(sbm)
+        post_data.append(("txtDescricao", descricao))
+        r2 = await self._http.post(
+            post_url,
+            content=urlencode(post_data).encode("iso-8859-1"),
+            headers={
+                "Referer": incluir_url,
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+        if r2.status_code not in (200, 302):
+            raise RuntimeError(f"POST bloco_assinatura_incluir status={r2.status_code}")  # noqa: EM102, TRY003
+        body2 = r2.content.decode("iso-8859-1", "replace")
+        erro2 = _extrair_erro_sei(body2)
+        if erro2:
+            raise RuntimeError(erro2)
+        id_bloco = ""
+        mb = re.search(r"id_bloco=(\d+)", str(r2.url))
+        if mb:
+            id_bloco = mb.group(1)
+        if not id_bloco:
+            mb = re.search(r"id_bloco[\"']?\s*[:=]\s*[\"']?(\d+)", body2)
+            if mb:
+                id_bloco = mb.group(1)
+        return {"ok": True, "idBloco": id_bloco, "descricao": descricao}
+
+    async def disponibilizar_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Disponibiliza um bloco de assinatura via scraper web."""
+        acao_url = await self._obter_acao_bloco_url(id_bloco, "bloco_assinatura_disponibilizar")
+        r = await self._http.get(acao_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code not in (200, 302):
+            raise RuntimeError(f"bloco_assinatura_disponibilizar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body)
+        if erro:
+            raise RuntimeError(erro)
+        return {"ok": True, "idBloco": id_bloco, "mensagem": "Bloco disponibilizado com sucesso."}
+
+    async def cancelar_disponibilizacao_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Cancela a disponibilização de um bloco de assinatura via scraper web."""
+        try:
+            acao_url = await self._obter_acao_bloco_url(
+                id_bloco, "bloco_assinatura_cancelar_disponibilizacao"
+            )
+        except RuntimeError:
+            acao_url = await self._obter_acao_bloco_url(id_bloco, "bloco_assinatura_cancelar")
+        r = await self._http.get(acao_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code not in (200, 302):
+            raise RuntimeError(f"bloco_assinatura_cancelar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body)
+        if erro:
+            raise RuntimeError(erro)
+        return {
+            "ok": True,
+            "idBloco": id_bloco,
+            "mensagem": "Disponibilização cancelada com sucesso.",
+        }
+
     async def pesquisar_hipoteses_legais_web(self, filtro: str = "") -> dict:
         """Extrai hipóteses legais do select selHipoteseLegal em procedimento_cadastrar."""
         await self.ensure_authenticated()
