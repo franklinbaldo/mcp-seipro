@@ -111,38 +111,45 @@ Parâmetros bool devem ser keyword-only (adicionar `*` antes deles).
 
 ## 2. Proposta
 
-### 2.1 Helper `_raise_unless_ok` em vez de constante (Phase A)
+### 2.1 `r.raise_for_status()` + mapeamento de exceções (Phase A)
 
-Em vez de só nomear o literal `200`, centralizar toda a verificação em um helper
-que lança `SEIConnectionError` diretamente. O literal desaparece do código:
+`httpx.Response.raise_for_status()` já existe e faz exatamente isso: lança
+`httpx.HTTPStatusError` para qualquer resposta não-2xx. Não precisamos de helper
+customizado — só precisamos que `sei_web_client.py` converta a exceção do httpx
+para o tipo `SEIError` adequado, da mesma forma que `sei_client._request()` já faz.
+
+Adicionar `_raise_for_sei_status()` como wrapper mínimo:
 
 ```python
-def _raise_unless_ok(r: httpx.Response, context: str = "") -> None:
-    """Lança SEIConnectionError se a resposta não for HTTP 200.
-
-    Elimina o padrão repetido 'if r.status_code != 200: raise ...' em todos os
-    métodos do web client e garante mensagens de erro consistentes.
-    """
-    if r.status_code != httpx.codes.OK:  # usa a constante do próprio httpx
-        prefix = f"{context}: " if context else ""
-        raise SEIConnectionError(
-            f"{prefix}SEI retornou HTTP {r.status_code} (esperado 200)"
-        )
+def _raise_for_sei_status(r: httpx.Response) -> None:
+    """Converte HTTPStatusError em SEIError tipado."""
+    try:
+        r.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (401, 403):
+            raise SEIAuthError(str(exc)) from exc
+        if exc.response.status_code == 404:
+            raise SEINotFoundError(str(exc)) from exc
+        raise SEIConnectionError(str(exc)) from exc
 ```
 
-Uso nos métodos:
+Uso nos métodos (45 substituições em `sei_web_client.py`):
 
 ```python
-# Antes (45× em sei_web_client.py)
+# Antes
 if r.status_code != 200:   # noqa: PLR2004
-    raise SEIConnectionError(f"Falha ao listar processos: {r.status_code}")
+    raise SEIConnectionError(f"Falha: {r.status_code}")
 
-# Depois — zero literais, zero noqa, mensagem contextual uniforme
-_raise_unless_ok(r, "listar processos")
+# Depois
+_raise_for_sei_status(r)
 ```
 
-Para comparações de comprimento de lista (`len(tds) >= 4`, `len(rows) < 2`, etc.)
-onde o significado é invariante de layout HTML documentável, definir constantes:
+O literal `200` desaparece inteiramente — `raise_for_status()` usa a constante
+interna do httpx. O wrapper tem uma única responsabilidade (mapeamento de tipo)
+e é testável isoladamente.
+
+Para comparações de comprimento (`len(tds) >= 4`, etc.) onde o valor representa
+um invariante de layout HTML documentável, definir constantes nomeadas:
 
 ```python
 _COLS_PROCESSO_INBOX   = 2   # protocolo + especificação
@@ -151,9 +158,9 @@ _COLS_ATIVIDADE_MIN    = 4   # data + ação + unidade + usuário
 _COLS_MARCADOR_MIN     = 2   # nome + cor
 ```
 
-Onde a comparação é demasiado local para nomear com sentido, adicionar
-`PLR2004` ao `per-file-ignores` de `sei_web_client.py` (com comentário
-justificando) em vez de espalhá-lo linha a linha.
+Onde a comparação é local demais para nomear com sentido, adicionar `PLR2004`
+ao `per-file-ignores` de `sei_web_client.py` (uma linha, justificada) em vez de
+espalhá-lo linha a linha.
 
 ### 2.2 Acessadores públicos em `SEIWebClient` (Phase B)
 
@@ -290,7 +297,7 @@ Verificar e atualizar call sites para passar como keyword args.
 
 | Fase | Alvo | Noqa removidos | Esforço |
 |---|---|---|---|
-| **A** | `_raise_unless_ok()` + constantes de layout em `sei_web_client.py` | ~80 PLR2004 | 45 min |
+| **A** | `_raise_for_sei_status()` (wrapper de `raise_for_status()`) + constantes de layout | ~80 PLR2004 | 45 min |
 | **B** | Acessadores públicos em `SEIWebClient` | 7 SLF001 | 30 min |
 | **C** | Decomposição de `sei_ler_documento` | PLR0911/PLR0913/PLR0915 + 2 FBT | 90 min |
 | **D** | G004 + S110/S112 + ERA001 + FBT em métodos públicos do web client | ~20 | 45 min |
