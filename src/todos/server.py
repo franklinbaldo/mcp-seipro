@@ -298,9 +298,9 @@ async def sei_status_resource(ctx: Context) -> str:
         sigla = unidade.get("sigla", "?")
         nome = unidade.get("nome", "?")
         web_url = os.environ.get("SEI_WEB_URL") or os.environ.get("SEI_URL", "?")
-        nome_usuario = web._nome_usuario  # noqa: SLF001
-        id_usuario = web._id_usuario or web._usuario  # noqa: SLF001
-        orgao_usuario = web._orgao_usuario  # noqa: SLF001
+        nome_usuario = web.nome_usuario
+        id_usuario = web.id_usuario
+        orgao_usuario = web.orgao_usuario
         if nome_usuario:
             usuario_str = f"{nome_usuario} (id: {id_usuario}" + (
                 f", órgão: {orgao_usuario})" if orgao_usuario else ")"
@@ -309,7 +309,7 @@ async def sei_status_resource(ctx: Context) -> str:
             usuario_str = id_usuario
         # hdnDetalhadoNroItens reflete o cap da página (500), não o total global.
         # Se retornou 500, há múltiplas páginas — exibir como "500+".
-        total = int(web._form_hidden.get("hdnDetalhadoNroItens", "0") or "0")  # noqa: SLF001
+        total = web.itens_painel
         if total == 0:
             total_str = "não disponível"
         elif total >= 500:  # noqa: PLR2004
@@ -444,12 +444,12 @@ async def _solicitar_consentimento_via_elicit(
         )
     except TimeoutError:
         logger.warning(
-            f"elicit timeout após {_ELICIT_TIMEOUT_S}s — cliente não respondeu, "  # noqa: G004
-            "caindo no fallback JSON"
+            "elicit timeout após %ss — cliente não respondeu, caindo no fallback JSON",
+            _ELICIT_TIMEOUT_S,
         )
         return "nao_suportado"
     except Exception as e:
-        logger.debug(f"elicit falhou ({type(e).__name__}: {e}) — fallback JSON")  # noqa: G004
+        logger.debug("elicit falhou (%s: %s) — fallback JSON", type(e).__name__, e)
         return "nao_suportado"
 
     if result.action == "accept" and result.data and result.data.autorizo_acesso:
@@ -657,8 +657,6 @@ async def sei_unidade_atual(ctx: Context) -> str:
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -674,8 +672,6 @@ async def sei_listar_unidades(ctx: Context) -> str:
         return _json({"data": units, "total": len(units)})
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -700,8 +696,6 @@ async def sei_trocar_unidade(id_unidade: str, ctx: Context) -> str:
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -722,8 +716,6 @@ async def sei_pesquisar_unidades(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -754,8 +746,6 @@ async def sei_listar_usuarios(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -793,11 +783,11 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
     try:
         client = _get_client(ctx)
         web = _get_web_client(ctx)
-        if web._inbox_url is None:  # noqa: SLF001
+        if not web.is_authenticated:
             try:
                 await web.login()
             except Exception as e:
-                logger.warning(f"web login falhou, seguindo só com REST: {e}")  # noqa: G004
+                logger.warning("web login falhou, seguindo só com REST: %s", e)
 
         # roda REST completo e web em paralelo; suporta falha individual
         rest_task = asyncio.create_task(client.consultar_processo_completo(protocolo_formatado))
@@ -839,8 +829,6 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
         return _json(merged)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -868,8 +856,6 @@ async def sei_arvore_processo(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -891,8 +877,6 @@ async def sei_listar_documentos(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -964,7 +948,7 @@ async def sei_buscar_documento(
                                 "documento": d,
                             }
                         )
-            except Exception:  # noqa: S112
+            except (SEIError, httpx.HTTPError):
                 continue
 
         return _json(
@@ -979,8 +963,6 @@ async def sei_buscar_documento(
         )
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, str]:
@@ -1015,9 +997,9 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
                         doc_id = str(d["id"])
                         tipo = d.get("atributos", {}).get("tipoDocumento", "I")
                         return doc_id, tipo
-            except Exception:  # noqa: S112
+            except (SEIError, httpx.HTTPError):
                 continue
-    except Exception:  # noqa: S110
+    except (SEIError, httpx.HTTPError):
         pass
 
     # Estratégia 2: Tentar como id direto (para quando o usuário informa o id interno)
@@ -1292,8 +1274,6 @@ async def sei_baixar_anexo(  # noqa: PLR0911
         return _json(resposta)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -1353,8 +1333,6 @@ async def sei_criar_documento(  # noqa: PLR0913
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -1371,8 +1349,6 @@ async def sei_listar_secoes(id_documento: str, ctx: Context | None = None) -> st
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -1404,8 +1380,6 @@ async def sei_gerar_referencia(
         )
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -1467,8 +1441,6 @@ async def sei_estilos(categoria: str = "", ctx: Context | None = None) -> str:  
         return _json(resultado)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -1545,8 +1517,6 @@ async def sei_editar_secao(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -1605,8 +1575,6 @@ async def sei_listar_processos(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 _CAMPOS_AGRUPAMENTO = {
@@ -1814,8 +1782,6 @@ async def sei_resumo_processos(
         )
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -1883,8 +1849,6 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
             return _error(str(exc))
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
     # Fallback via web scraper (instâncias sem mod-wssei)
     q_web = " ".join(filter(None, [palavras_chave, busca_rapida]))
@@ -1972,8 +1936,6 @@ async def sei_pesquisar_hipoteses_legais(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2008,8 +1970,6 @@ async def sei_pesquisar_tipos_processo(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2046,8 +2006,6 @@ async def sei_alterar_processo(  # noqa: PLR0913
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -2101,8 +2059,6 @@ async def sei_criar_processo(  # noqa: PLR0913
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -2200,8 +2156,6 @@ async def sei_enviar_processo(  # noqa: PLR0913
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2236,8 +2190,6 @@ async def sei_marcar_nao_lido(
         )
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2256,8 +2208,6 @@ async def sei_concluir_processo(numero_processo: str, ctx: Context | None = None
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2278,8 +2228,6 @@ async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2368,8 +2316,6 @@ async def sei_atribuir_processo(  # noqa: PLR0911
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -2514,7 +2460,7 @@ async def sei_assinar_documento(
                     if u.get("sigla", "").lower() == login.lower():
                         id_usuario = str(u.get("id_usuario") or "")
                         break
-            except Exception:  # noqa: S110
+            except (SEIError, httpx.HTTPError):
                 pass
 
         result = await client.assinar_documento(
@@ -2528,8 +2474,6 @@ async def sei_assinar_documento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2568,8 +2512,6 @@ async def sei_pesquisar_tipos_documento(  # noqa: PLR0913
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -2628,7 +2570,7 @@ async def sei_sobrestar_processo(
                                 "dica": "Conclua o processo nessas unidades antes de sobrestar.",
                             }
                         )
-                    except Exception:  # noqa: S110
+                    except (SEIError, httpx.HTTPError):
                         pass
                 return _error(msg)
         campos: dict[str, str] = {"txaMotivoSobrestamento": motivo}
@@ -2640,8 +2582,6 @@ async def sei_sobrestar_processo(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2666,8 +2606,6 @@ async def sei_remover_sobrestamento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2709,8 +2647,6 @@ async def sei_dar_ciencia(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2752,8 +2688,6 @@ async def sei_listar_ciencias(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -2780,8 +2714,6 @@ async def sei_remover_atribuicao(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2803,8 +2735,6 @@ async def sei_receber_processo(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -2848,8 +2778,6 @@ async def sei_executar_acao(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2868,8 +2796,6 @@ async def sei_listar_unidades_processo(
         return _json(detalhe.get("unidades_abertas", []))
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2888,8 +2814,6 @@ async def sei_listar_interessados(
         return _json(detalhe.get("interessados", []))
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2908,8 +2832,6 @@ async def sei_listar_sobrestamentos(
         return _json(detalhe.get("sobrestamentos", []))
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2938,8 +2860,6 @@ async def sei_listar_assinaturas(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -2966,8 +2886,6 @@ async def sei_registrar_andamento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2983,8 +2901,6 @@ async def sei_pesquisar_contatos(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -3017,8 +2933,6 @@ async def sei_criar_documento_externo(  # noqa: PLR0913
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -3067,8 +2981,6 @@ async def sei_assinar_bloco(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -3117,8 +3029,6 @@ async def sei_assinar_documentos_bloco(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -3152,8 +3062,6 @@ async def sei_criar_marcador(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_DEST)
@@ -3168,8 +3076,6 @@ async def sei_excluir_marcador(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -3205,8 +3111,6 @@ async def sei_marcar_processo(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -3229,8 +3133,6 @@ async def sei_pesquisar_marcadores(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -3246,8 +3148,6 @@ async def sei_consultar_marcador_processo(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -3292,8 +3192,6 @@ async def sei_acompanhar_processo(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -3320,8 +3218,6 @@ async def sei_remover_acompanhamento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -3336,8 +3232,6 @@ async def sei_criar_grupo_acompanhamento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_DEST)
@@ -3352,8 +3246,6 @@ async def sei_excluir_grupo_acompanhamento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -3368,8 +3260,6 @@ async def sei_listar_grupos_acompanhamento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -3392,8 +3282,6 @@ async def sei_criar_bloco_interno(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -3413,8 +3301,6 @@ async def sei_incluir_processo_bloco_interno(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_DEST)
@@ -3434,8 +3320,6 @@ async def sei_retirar_processo_bloco_interno(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -3488,8 +3372,6 @@ async def sei_criar_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -3509,8 +3391,6 @@ async def sei_incluir_documento_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -3532,8 +3412,6 @@ async def sei_disponibilizar_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -3555,8 +3433,6 @@ async def sei_cancelar_disponibilizacao_bloco(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -3575,8 +3451,6 @@ async def sei_pesquisar_blocos_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -3610,8 +3484,6 @@ async def sei_criar_anotacao(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -3639,8 +3511,6 @@ async def sei_versao(ctx: Context) -> str:
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -3656,8 +3526,6 @@ async def sei_listar_orgaos(ctx: Context) -> str:
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -3673,8 +3541,6 @@ async def sei_listar_contextos(id_orgao: str, ctx: Context) -> str:
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # -- Usuários --
@@ -3707,8 +3573,6 @@ async def sei_pesquisar_usuarios(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # -- Unidades --
@@ -3739,8 +3603,6 @@ async def sei_pesquisar_outras_unidades(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -3769,8 +3631,6 @@ async def sei_pesquisar_textos_padrao(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # -- Documentos --
@@ -3855,8 +3715,6 @@ async def sei_consultar_documento_externo(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -3889,8 +3747,6 @@ async def sei_alterar_documento_interno(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -3925,8 +3781,6 @@ async def sei_alterar_documento_externo(  # noqa: PLR0913
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -3955,8 +3809,6 @@ async def sei_pesquisar_tipos_conferencia(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -3976,8 +3828,6 @@ async def sei_sugestao_assuntos_documento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -3996,8 +3846,6 @@ async def sei_listar_blocos_documento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4026,8 +3874,6 @@ async def sei_pesquisar_tipos_documento_externo(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4044,8 +3890,6 @@ async def sei_parametros_upload(ctx: Context) -> str:
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # -- Processos: assuntos, atribuição, acesso, relacionamentos --
@@ -4074,8 +3918,6 @@ async def sei_pesquisar_assuntos(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4095,8 +3937,6 @@ async def sei_sugestao_assuntos_processo(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4120,8 +3960,6 @@ async def sei_consultar_atribuicao(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4146,8 +3984,6 @@ async def sei_verificar_acesso(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4167,8 +4003,6 @@ async def sei_listar_relacionamentos(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4190,8 +4024,6 @@ async def sei_listar_atividades(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4244,8 +4076,6 @@ async def sei_gerar_pdf_processo(
         )
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4295,8 +4125,6 @@ async def sei_gerar_zip_processo(
         )
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -4371,8 +4199,6 @@ async def sei_incluir_documento_externo(  # noqa: PLR0913
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # -- Acompanhamento: meus, da unidade, alterar --
@@ -4399,8 +4225,6 @@ async def sei_listar_meus_acompanhamentos(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4424,8 +4248,6 @@ async def sei_listar_acompanhamentos_unidade(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -4455,8 +4277,6 @@ async def sei_alterar_acompanhamento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # -- Credenciamento (processos sigilosos) --
@@ -4479,8 +4299,6 @@ async def sei_listar_credenciamentos(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -4501,8 +4319,6 @@ async def sei_conceder_credenciamento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_DEST)
@@ -4523,8 +4339,6 @@ async def sei_renunciar_credenciamento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_DEST)
@@ -4545,8 +4359,6 @@ async def sei_cassar_credenciamento(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # -- Assinantes e Observação --
@@ -4566,8 +4378,6 @@ async def sei_listar_assinantes(ctx: Context) -> str:
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4583,8 +4393,6 @@ async def sei_listar_orgaos_assinante(ctx: Context) -> str:
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -4607,8 +4415,6 @@ async def sei_criar_observacao(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -4630,8 +4436,6 @@ async def sei_criar_contato(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # -- Modelos de documento --
@@ -4658,8 +4462,6 @@ async def sei_listar_grupos_modelos(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4690,8 +4492,6 @@ async def sei_listar_modelos(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # -- Marcador: desativar, reativar, histórico --
@@ -4713,8 +4513,6 @@ async def sei_desativar_marcador(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -4729,8 +4527,6 @@ async def sei_reativar_marcador(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -4751,8 +4547,6 @@ async def sei_historico_marcador_processo(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # -- Bloco Interno: operações adicionais --
@@ -4774,8 +4568,6 @@ async def sei_listar_processos_bloco_interno(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -4795,8 +4587,6 @@ async def sei_alterar_bloco_interno(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_DEST)
@@ -4815,8 +4605,6 @@ async def sei_excluir_bloco_interno(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -4835,8 +4623,6 @@ async def sei_concluir_bloco_interno(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -4855,8 +4641,6 @@ async def sei_reabrir_bloco_interno(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -4878,8 +4662,6 @@ async def sei_anotar_processo_bloco_interno(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -4901,8 +4683,6 @@ async def sei_alterar_anotacao_bloco_interno(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 # -- Bloco de Assinatura: operações adicionais --
@@ -4923,8 +4703,6 @@ async def sei_listar_documentos_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_DEST)
@@ -4956,8 +4734,6 @@ async def sei_retirar_documentos_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -4981,8 +4757,6 @@ async def sei_alterar_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_DEST)
@@ -5012,8 +4786,6 @@ async def sei_excluir_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -5043,8 +4815,6 @@ async def sei_concluir_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -5067,8 +4837,6 @@ async def sei_reabrir_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -5091,8 +4859,6 @@ async def sei_retornar_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -5121,8 +4887,6 @@ async def sei_anotar_documento_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -5151,8 +4915,6 @@ async def sei_alterar_anotacao_bloco_assinatura(
         return _json(result)
     except SEIError as e:
         raise _to_tool_error(e) from e
-    except Exception as e:
-        raise ToolError(str(e)) from e
 
 
 def main():  # noqa: ANN201, D103
