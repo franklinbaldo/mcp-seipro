@@ -12,7 +12,7 @@ COPY pyproject.toml README.md icon.png ./
 COPY src ./src
 RUN pip install --no-cache-dir .
 
-# Railway injeta PORT como env var
+# PORT triggers HTTP mode (Railway, Fly.io, etc.)
 ENV PORT=8000
 EXPOSE 8000
 
