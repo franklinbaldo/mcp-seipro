@@ -25,7 +25,12 @@ from todos.sei_web_client import SEIWebClient
 _MAX_ACRONYM_LEN: int = 6
 _MAX_ANCESTOR_SEARCH: int = 5
 _MIN_HOSTNAME_PARTS: int = 2
-_WSSEI_API_PATH: str = "/sei/modulos/wssei/controlador_ws.php/api/v2"
+# mod-wssei can be installed as "wssei/" or "mod-wssei/" depending on how the admin
+# extracted the release archive (see github.com/pengovbr/mod-wssei/issues/46).
+_WSSEI_API_PATHS: tuple[str, ...] = (
+    "/sei/modulos/wssei/controlador_ws.php/api/v2",
+    "/sei/modulos/mod-wssei/controlador_ws.php/api/v2",
+)
 _WSSEI_PROBE_TIMEOUT: float = 8.0
 
 
@@ -568,23 +573,28 @@ def _infer_sigla_orgao_sistema(hostname: str) -> str:
 
 
 def _detect_modsei_url(sei_root: str, *, verify_ssl: bool) -> str:
-    """Probe the canonical mod-wssei path and return the base URL if the module is found.
+    """Probe both known mod-wssei paths and return the first that responds.
 
     Returns the REST base URL on success, or "" if not found.
+    Tries "wssei/" first (most common), then "mod-wssei/" (alternative install name).
     A 401/403 response still confirms the module is installed — it just needs credentials.
-    404/501 means the path doesn't exist (module not installed).
+    404/501 means the path doesn't exist; network errors are treated as not-found.
     """
-    candidate = f"{sei_root}{_WSSEI_API_PATH}"
     try:
         with httpx.Client(
             verify=verify_ssl, follow_redirects=False, timeout=_WSSEI_PROBE_TIMEOUT
         ) as client:
-            resp = client.get(f"{candidate}/versao")
+            for api_path in _WSSEI_API_PATHS:
+                candidate = f"{sei_root}{api_path}"
+                try:
+                    resp = client.get(f"{candidate}/versao")
+                except httpx.RequestError:
+                    continue
+                if resp.status_code not in (404, 501):
+                    return candidate
     except httpx.RequestError:
-        return ""
-    if resp.status_code in (404, 501):
-        return ""
-    return candidate
+        pass
+    return ""
 
 
 def _setup_sei_instance() -> _SEIInstanceConfig:
