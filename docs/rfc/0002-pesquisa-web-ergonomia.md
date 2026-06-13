@@ -1,7 +1,7 @@
 # RFC 0002 — Ergonomia da pesquisa web: parsing correto e contrato de tool
 
-**Status**: Proposta
-**Data**: 2026-06-11
+**Status**: Concluído
+**Data**: 2026-06-11 · **Atualizado**: 2026-06-13
 **Autores**: Franklin Baldo (com Claude Code)
 
 ## 1. Problema
