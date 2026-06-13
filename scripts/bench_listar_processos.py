@@ -601,10 +601,14 @@ async def _run_warm_runs(
         # detecta sessão expirada
         if 'name="txtUsuario"' in html or 'id="txtUsuario"' in html:
             result.notes.append(f"warm {i}: sessão expirou, re-logando")
-            await scraper.login()
-            scraper.form_action = None  # invalida cache do form
-            t0 = time.perf_counter()
-            _, html = await scraper.fetch_inbox(detalhada=detalhada)
+            try:
+                await scraper.login()
+                scraper.form_action = None  # invalida cache do form
+                t0 = time.perf_counter()
+                _, html = await scraper.fetch_inbox(detalhada=detalhada)
+            except (RuntimeError, httpx.HTTPError) as e:
+                result.notes.append(f"warm {i}: re-login falhou: {e}")
+                continue
         result.warm_ms.append((time.perf_counter() - t0) * 1000)
 
 
@@ -618,7 +622,8 @@ async def _run_pagination(
     """Fetch multiple inbox pages sequentially and record a combined timing phase."""
     pag_ms_list: list[float] = []
     pag_rows_total = 0
-    for p in range(paginas):
+    # Start at p=1: page 0 was already fetched as the cold B3 measurement.
+    for p in range(1, paginas):
         await asyncio.sleep(0.3)
         t0 = time.perf_counter()
         _, html_p = await scraper.fetch_inbox(detalhada=detalhada, pagina=p)

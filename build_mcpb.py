@@ -83,6 +83,7 @@ def build() -> None:
         return
     manifest = json.loads(manifest_path.read_text())
     sys.stdout.write(f"  [*] {manifest['display_name']} v{manifest['version']}\n")
+    sys.stdout.flush()
 
     # Garantir icone
     icon = ensure_icon()
@@ -123,6 +124,7 @@ def build() -> None:
     sys.stdout.write("  Para instalar no Claude Desktop:\n")
     sys.stdout.write(f"    Abra {output} com duplo-clique\n")
     sys.stdout.write("\n")
+    sys.stdout.flush()
 
 
 if __name__ == "__main__":
