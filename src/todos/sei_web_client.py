@@ -2035,6 +2035,139 @@ class SEIWebClient:
             "mensagem": "Disponibilização cancelada com sucesso.",
         }
 
+    async def _executar_acao_bloco(self, id_bloco: str, nome_acao: str, mensagem: str) -> dict:
+        """Executa ação simples em bloco via URL assinada (GET sem form)."""
+        acao_url = await self._obter_acao_bloco_url(id_bloco, nome_acao)
+        r = await self._http.get(acao_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code not in (200, 302):
+            raise RuntimeError(f"{nome_acao} status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body)
+        if erro:
+            raise RuntimeError(erro)
+        return {"ok": True, "idBloco": id_bloco, "mensagem": mensagem}
+
+    async def concluir_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Conclui bloco de assinatura via scraper web."""
+        return await self._executar_acao_bloco(
+            id_bloco, "bloco_assinatura_concluir", "Bloco concluído com sucesso."
+        )
+
+    async def reabrir_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Reabre bloco de assinatura concluído via scraper web."""
+        return await self._executar_acao_bloco(
+            id_bloco, "bloco_assinatura_reabrir", "Bloco reaberto com sucesso."
+        )
+
+    async def retornar_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Retorna bloco de assinatura para a unidade de origem via scraper web."""
+        return await self._executar_acao_bloco(
+            id_bloco, "bloco_assinatura_retornar", "Bloco retornado para a unidade de origem."
+        )
+
+    async def excluir_bloco_assinatura_web(self, id_bloco: str) -> dict:
+        """Exclui bloco de assinatura via scraper web."""
+        return await self._executar_acao_bloco(
+            id_bloco, "bloco_assinatura_excluir", "Bloco excluído com sucesso."
+        )
+
+    async def listar_documentos_bloco_assinatura_web(self, id_bloco: str) -> list[dict]:  # noqa: C901
+        """Lista documentos de um bloco de assinatura via scraper web."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        lista_url = await self._obter_link_toolbar("bloco_assinatura_listar")
+        r = await self._http.get(lista_url, headers={"Referer": str(self._inbox_url)})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_listar status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        pat = re.compile(
+            rf"controlador\.php\?[^\"'\s]*(?:acao=bloco_assinatura_alterar|bloco_assinatura_alterar)[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+            rf"|controlador\.php\?[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*acao=bloco_assinatura_alterar[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+        )
+        m = pat.search(body)
+        if not m:
+            return []
+        detail_url = urljoin(sei_base, m.group().replace("&amp;", "&"))
+        r2 = await self._http.get(detail_url, headers={"Referer": lista_url})
+        if r2.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_alterar status={r2.status_code}")  # noqa: EM102, TRY003
+        body2 = r2.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body2, "html.parser")
+        tbl = soup.find("table", id=re.compile(r"tblDocumentos?", re.IGNORECASE))
+        if tbl is None:
+            tbl = soup.find("table", class_=re.compile(r"infraTable", re.IGNORECASE))
+        docs: list[dict] = []
+        if isinstance(tbl, Tag):
+            for tr in tbl.find_all("tr")[1:]:
+                if not isinstance(tr, Tag):
+                    continue
+                tds = tr.find_all("td")
+                if len(tds) < 2:  # noqa: PLR2004
+                    continue
+                tipo = tds[0].get_text(" ", strip=True)
+                num = tds[1].get_text(" ", strip=True)
+                id_doc = ""
+                for a in tr.find_all("a", href=re.compile(r"id_documento=\d+")):
+                    if not isinstance(a, Tag):
+                        continue
+                    md = re.search(r"id_documento=(\d+)", _tag_str(a, "href"))
+                    if md:
+                        id_doc = md.group(1)
+                        break
+                docs.append({"idDocumento": id_doc, "tipo": tipo, "numero": num})
+        return docs
+
+    async def alterar_bloco_assinatura_web(self, id_bloco: str, descricao: str) -> dict:  # noqa: C901
+        """Altera descrição de um bloco de assinatura via scraper web."""
+        await self.ensure_authenticated()
+        sei_base = f"{self.sei_root}/sei/"
+        lista_url = await self._obter_link_toolbar("bloco_assinatura_listar")
+        r_list = await self._http.get(lista_url, headers={"Referer": str(self._inbox_url)})
+        if r_list.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_listar status={r_list.status_code}")  # noqa: EM102, TRY003
+        body_list = r_list.content.decode("iso-8859-1", "replace")
+        pat = re.compile(
+            rf"controlador\.php\?[^\"'\s]*acao=bloco_assinatura_alterar[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+            rf"|controlador\.php\?[^\"'\s]*id_bloco={re.escape(id_bloco)}[^\"'\s]*acao=bloco_assinatura_alterar[^\"'\s]*infra_hash=[a-fA-F0-9]+"
+        )
+        m = pat.search(body_list)
+        if not m:
+            raise RuntimeError(f"Link de edição não encontrado para bloco {id_bloco}.")  # noqa: EM102, TRY003
+        edit_url = urljoin(sei_base, m.group().replace("&amp;", "&"))
+        r = await self._http.get(edit_url, headers={"Referer": lista_url})
+        if r.status_code != 200:  # noqa: PLR2004
+            raise RuntimeError(f"bloco_assinatura_alterar GET status={r.status_code}")  # noqa: EM102, TRY003
+        body = r.content.decode("iso-8859-1", "replace")
+        soup = BeautifulSoup(body, "html.parser")
+        form = soup.find("form")
+        if not isinstance(form, Tag):
+            raise RuntimeError("Form de edição de bloco não encontrado.")  # noqa: EM101, TRY003, TRY004
+        action = _tag_str(form, "action").replace("&amp;", "&")
+        post_url = urljoin(sei_base, action) if action else edit_url
+        post_data: list[tuple[str, str]] = []
+        for inp in form.find_all("input", type="hidden"):
+            if not isinstance(inp, Tag):
+                continue
+            n = _tag_str(inp, "name")
+            if n:
+                post_data.append((n, _tag_str(inp, "value")))
+        sbm = _extrair_submit_btn(form)
+        if sbm:
+            post_data.append(sbm)
+        post_data.append(("txtDescricao", descricao))
+        r2 = await self._http.post(
+            post_url,
+            content=urlencode(post_data).encode("iso-8859-1"),
+            headers={"Referer": edit_url, "Content-Type": "application/x-www-form-urlencoded"},
+        )
+        if r2.status_code not in (200, 302):
+            raise RuntimeError(f"POST bloco_assinatura_alterar status={r2.status_code}")  # noqa: EM102, TRY003
+        body2 = r2.content.decode("iso-8859-1", "replace")
+        erro = _extrair_erro_sei(body2)
+        if erro:
+            raise RuntimeError(erro)
+        return {"ok": True, "idBloco": id_bloco, "descricao": descricao}
+
     async def _autocomplete_ajax(
         self, acao_ajax: str, termo: str, campo: str = "termo"
     ) -> list[dict]:

@@ -4585,10 +4585,16 @@ async def sei_listar_documentos_bloco_assinatura(
     id_bloco: str,
     ctx: Context | None = None,
 ) -> str:
-    """Lista documentos de um bloco de assinatura."""
+    """Lista documentos de um bloco de assinatura.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
+    """
     try:
-        client = _get_client(ctx)
-        result = await client.listar_documentos_bloco_assinatura(id_bloco)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.listar_documentos_bloco_assinatura(id_bloco)
+        else:
+            result = await backend.web.listar_documentos_bloco_assinatura_web(id_bloco)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4622,10 +4628,15 @@ async def sei_alterar_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.alterar_bloco_assinatura(id_bloco, descricao)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.alterar_bloco_assinatura(id_bloco, descricao)
+        else:
+            result = await backend.web.alterar_bloco_assinatura_web(id_bloco, descricao)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4640,10 +4651,22 @@ async def sei_excluir_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (um bloco por vez em modo web).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.excluir_blocos_assinatura(ids_blocos)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.excluir_blocos_assinatura(ids_blocos)
+        else:
+            resultados = []
+            for id_bloco in ids_blocos.split(","):
+                id_bloco = id_bloco.strip()  # noqa: PLW2901
+                if id_bloco:
+                    resultados.append(await backend.web.excluir_bloco_assinatura_web(id_bloco))
+            result = (
+                resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4658,10 +4681,22 @@ async def sei_concluir_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (um bloco por vez em modo web).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.concluir_blocos_assinatura(ids_blocos)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.concluir_blocos_assinatura(ids_blocos)
+        else:
+            resultados = []
+            for id_bloco in ids_blocos.split(","):
+                id_bloco = id_bloco.strip()  # noqa: PLW2901
+                if id_bloco:
+                    resultados.append(await backend.web.concluir_bloco_assinatura_web(id_bloco))
+            result = (
+                resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
+            )
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4676,10 +4711,15 @@ async def sei_reabrir_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.reabrir_bloco_assinatura(id_bloco)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.reabrir_bloco_assinatura(id_bloco)
+        else:
+            result = await backend.web.reabrir_bloco_assinatura_web(id_bloco)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
@@ -4694,10 +4734,15 @@ async def sei_retornar_bloco_assinatura(
 
     Disponível desde mod-wssei 2.0.0 (SEI 4.0.x).
     Se falhar com erro inesperado, use sei_versao para verificar a versão instalada.
+
+    Funciona via REST (mod-wssei) ou via scraper web (instâncias sem mod-wssei).
     """
     try:
-        client = _get_client(ctx)
-        result = await client.retornar_bloco_assinatura(id_bloco)
+        backend = _get_backend(ctx)
+        if backend.has_rest:
+            result = await backend.rest.retornar_bloco_assinatura(id_bloco)
+        else:
+            result = await backend.web.retornar_bloco_assinatura_web(id_bloco)
         return _json(result)
     except Exception as e:  # noqa: BLE001
         return _error(str(e))
