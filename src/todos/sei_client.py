@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from todos.catalog_cache import get_catalog_cache
+from todos.exceptions import SEIAuthError, SEIConnectionError, SEIError, SEINotFoundError
 
 logger = logging.getLogger(__name__)
 
@@ -84,13 +85,24 @@ class SEIClient:
         """Faz request com re-autenticação automática em caso de 401/403."""
         headers = await self._get_headers()
         kwargs.setdefault("headers", {}).update(headers)
-        resp = await self._client.request(method, f"{self.base_url}{path}", **kwargs)
-        if resp.status_code in (401, 403):
-            logger.info("Token expirado, re-autenticando...")
-            await self.autenticar()
-            kwargs["headers"].update({"token": self._token})
+        try:
             resp = await self._client.request(method, f"{self.base_url}{path}", **kwargs)
-        resp.raise_for_status()
+            if resp.status_code in (401, 403):
+                logger.info("Token expirado, re-autenticando...")
+                await self.autenticar()
+                kwargs["headers"].update({"token": self._token})
+                resp = await self._client.request(method, f"{self.base_url}{path}", **kwargs)
+            if resp.status_code in (401, 403):
+                raise SEIAuthError("Sessão SEI expirada ou inválida após re-autenticação.")
+            if resp.status_code == 404:  # noqa: PLR2004
+                raise SEINotFoundError(f"Recurso não encontrado: {method} {path}")
+            resp.raise_for_status()
+        except (httpx.TimeoutException, httpx.ConnectError) as e:
+            raise SEIConnectionError(f"SEI inacessível: {e}") from e
+        except SEIError:
+            raise
+        except httpx.HTTPStatusError as e:
+            raise SEIError(str(e)) from e
         return resp
 
     async def autenticar(self) -> str:
@@ -129,7 +141,7 @@ class SEIClient:
         resp.raise_for_status()
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Falha na autenticação SEI: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIAuthError(f"Falha na autenticação SEI: {data.get('mensagem')}")
         payload = data["data"]
         self._token = payload["token"]
         login_data = payload.get("loginData") or {}
@@ -153,7 +165,7 @@ class SEIClient:
         resp = await self._request("GET", "/versao")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao obter versão: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao obter versão: {data.get('mensagem')}")
         return data.get("data", {})
 
     async def listar_orgaos(self) -> list[dict]:
@@ -161,7 +173,7 @@ class SEIClient:
         resp = await self._request("GET", "/orgao/listar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar órgãos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar órgãos: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def listar_contextos(self, id_orgao: str) -> list[dict]:
@@ -169,7 +181,7 @@ class SEIClient:
         resp = await self._request("GET", f"/contexto/listar/{id_orgao}")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar contextos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar contextos: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def consultar_processo(self, protocolo_formatado: str) -> dict:
@@ -189,7 +201,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao consultar processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao consultar processo: {data.get('mensagem')}")
         return data["data"]
 
     async def consultar_processo_completo(self, protocolo_formatado: str) -> dict:
@@ -215,7 +227,7 @@ class SEIClient:
         )
         j1 = resp1.json()
         if not j1.get("sucesso"):
-            raise Exception(f"Erro ao consultar processo: {j1.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao consultar processo: {j1.get('mensagem')}")
         d1 = j1["data"]
 
         id_proc = d1.get("IdProcedimento")
@@ -247,7 +259,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar documentos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar documentos: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def consultar_documento_interno(self, id_documento: str) -> dict:
@@ -257,7 +269,7 @@ class SEIClient:
         resp = await self._request("GET", f"/documento/interno/consultar/{id_documento}")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao consultar documento {id_documento}: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao consultar documento {id_documento}: {data.get('mensagem')}")
         return data["data"]
 
     async def consultar_documento_externo(self, id_documento: str) -> dict:
@@ -267,8 +279,8 @@ class SEIClient:
         resp = await self._request("GET", f"/documento/externo/consultar/{id_documento}")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(  # noqa: TRY002, TRY003
-                f"Erro ao consultar documento externo {id_documento}: {data.get('mensagem')}"  # noqa: EM102
+            raise SEIError(
+                f"Erro ao consultar documento externo {id_documento}: {data.get('mensagem')}"
             )
         return data["data"]
 
@@ -294,7 +306,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar documento interno: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao alterar documento interno: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def alterar_documento_externo(
@@ -333,7 +345,7 @@ class SEIClient:
             )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar documento externo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao alterar documento externo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def pesquisar_tipos_conferencia(
@@ -348,7 +360,7 @@ class SEIClient:
         resp = await self._request("GET", "/documento/tipoconferencia/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar tipos de conferência: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar tipos de conferência: {data.get('mensagem')}")
         return self._paginated(data, "tipos", data.get("data", []), start, limit)
 
     async def sugestao_assuntos_documento(self, id_serie: str) -> list[dict]:
@@ -358,7 +370,7 @@ class SEIClient:
         resp = await self._request("GET", f"/documento/assunto/sugestao/{id_serie}/listar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar sugestões de assunto: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar sugestões de assunto: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def listar_blocos_documento(self, id_documento: str) -> list[dict]:
@@ -368,7 +380,7 @@ class SEIClient:
         resp = await self._request("GET", f"/documento/{id_documento}/bloco/assinatura/listar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar blocos do documento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar blocos do documento: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def pesquisar_tipos_documento_externo(
@@ -383,7 +395,7 @@ class SEIClient:
         resp = await self._request("GET", "/serie/externo/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar tipos de doc externo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar tipos de doc externo: {data.get('mensagem')}")
         return self._paginated(data, "tipos", data.get("data", []), start, limit)
 
     async def parametros_upload(self) -> dict:
@@ -393,7 +405,7 @@ class SEIClient:
         resp = await self._request("GET", "/upload/parametros")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao obter parâmetros de upload: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao obter parâmetros de upload: {data.get('mensagem')}")
         return data.get("data", {})
 
     async def listar_assinaturas(self, id_documento: str) -> list[dict]:
@@ -401,7 +413,7 @@ class SEIClient:
         resp = await self._request("GET", f"/documento/listar/assinaturas/{id_documento}")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar assinaturas: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar assinaturas: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def visualizar_documento_interno(self, id_documento: str) -> str:
@@ -409,7 +421,7 @@ class SEIClient:
         resp = await self._request("GET", f"/documento/{id_documento}/interno/visualizar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao visualizar documento {id_documento}: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao visualizar documento {id_documento}: {data.get('mensagem')}")
         return data["data"]
 
     async def baixar_anexo(self, id_documento: str) -> bytes:
@@ -419,7 +431,7 @@ class SEIClient:
         if "json" in content_type:
             data = resp.json()
             if not data.get("sucesso"):
-                raise Exception(f"Erro ao baixar anexo {id_documento}: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+                raise SEIError(f"Erro ao baixar anexo {id_documento}: {data.get('mensagem')}")
             return base64.b64decode(data["data"])
         return resp.content
 
@@ -459,7 +471,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao criar documento interno: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao criar documento interno: {data.get('mensagem')}")
         return data["data"]
 
     async def listar_secao_documento(self, id_documento: str) -> dict:
@@ -473,8 +485,8 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(  # noqa: TRY002, TRY003
-                f"Erro ao listar seções do documento {id_documento}: {data.get('mensagem')}"  # noqa: EM102
+            raise SEIError(
+                f"Erro ao listar seções do documento {id_documento}: {data.get('mensagem')}"
             )
         return data.get("data", {})
 
@@ -499,8 +511,8 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(  # noqa: TRY002, TRY003
-                f"Erro ao alterar seção do documento {id_documento}: {data.get('mensagem')}"  # noqa: EM102
+            raise SEIError(
+                f"Erro ao alterar seção do documento {id_documento}: {data.get('mensagem')}"
             )
         return data.get("data", {})
 
@@ -517,7 +529,7 @@ class SEIClient:
         resp = await self._request("GET", "/usuario/unidades")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar unidades: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar unidades: {data.get('mensagem')}")
         result = data.get("data", [])
         await self._cache_set("unidades_usuario", result)
         return result
@@ -538,7 +550,7 @@ class SEIClient:
         resp = await self._request("GET", "/usuario/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar usuários: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar usuários: {data.get('mensagem')}")
         return self._paginated(data, "usuarios", data.get("data", []), start, limit)
 
     async def trocar_unidade(self, id_unidade: str) -> dict:
@@ -546,7 +558,7 @@ class SEIClient:
         resp = await self._request("POST", "/usuario/alterar/unidade", data={"unidade": id_unidade})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao trocar unidade: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao trocar unidade: {data.get('mensagem')}")
         self._unidade_ativa = id_unidade
         return {"mensagem": data.get("mensagem")}
 
@@ -558,7 +570,7 @@ class SEIClient:
         resp = await self._request("GET", "/unidade/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar unidades: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar unidades: {data.get('mensagem')}")
         return self._paginated(data, "unidades", data.get("data", []), start, limit)
 
     async def pesquisar_outras_unidades(
@@ -573,7 +585,7 @@ class SEIClient:
         resp = await self._request("GET", "/unidade/outras/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar outras unidades: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar outras unidades: {data.get('mensagem')}")
         return self._paginated(data, "unidades", data.get("data", []), start, limit)
 
     async def pesquisar_textos_padrao(
@@ -589,7 +601,7 @@ class SEIClient:
         resp = await self._request("GET", "/unidade/textopadrao/interno/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar textos padrão: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar textos padrão: {data.get('mensagem')}")
         return self._paginated(data, "textos", data.get("data", []), start, limit)
 
     async def listar_usuarios(
@@ -614,7 +626,7 @@ class SEIClient:
         resp = await self._request("GET", "/usuario/listar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar usuários: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar usuários: {data.get('mensagem')}")
 
         usuarios = data.get("data", [])
 
@@ -660,7 +672,7 @@ class SEIClient:
         resp = await self._request("GET", "/processo/listar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar processos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar processos: {data.get('mensagem')}")
         return self._paginated(data, "processos", data.get("data", []), start, limit)
 
     async def pesquisar_processos(  # noqa: C901, PLR0913
@@ -702,7 +714,7 @@ class SEIClient:
         resp = await self._request("GET", "/processo/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar processos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar processos: {data.get('mensagem')}")
         return self._paginated(data, "processos", data.get("data", []), start, limit)
 
     async def alterar_processo(
@@ -747,7 +759,7 @@ class SEIClient:
         resp = await self._request("POST", f"/processo/{id_procedimento}/alterar", data=payload)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao alterar processo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def consultar_processo_por_id(self, id_procedimento: str) -> dict:
@@ -755,7 +767,7 @@ class SEIClient:
         resp = await self._request("GET", f"/processo/consultar/{id_procedimento}")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao consultar processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao consultar processo: {data.get('mensagem')}")
         return data["data"]
 
     async def pesquisar_hipoteses_legais(
@@ -768,7 +780,7 @@ class SEIClient:
         resp = await self._request("GET", "/hipoteseLegal/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar hipóteses legais: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar hipóteses legais: {data.get('mensagem')}")
         return self._paginated(data, "hipoteses", data.get("data", []), start, limit)
 
     async def pesquisar_tipos_processo(
@@ -789,7 +801,7 @@ class SEIClient:
         resp = await self._request("GET", "/processo/tipo/listar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar tipos de processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar tipos de processo: {data.get('mensagem')}")
         result = self._paginated(data, "tipos", data.get("data", []), start, limit)
         if not filtro and not favoritos:
             await self._cache_set(cache_key, result)
@@ -834,7 +846,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao criar processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao criar processo: {data.get('mensagem')}")
         return data["data"]
 
     async def enviar_processo(  # noqa: PLR0913
@@ -866,7 +878,7 @@ class SEIClient:
         resp = await self._request("POST", "/processo/enviar", data=payload)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao enviar processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao enviar processo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def concluir_processo(self, numero_processo: str) -> dict:
@@ -876,7 +888,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao concluir processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao concluir processo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def reabrir_processo(self, id_procedimento: str) -> dict:
@@ -884,7 +896,7 @@ class SEIClient:
         resp = await self._request("POST", f"/processo/reabrir/{id_procedimento}")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao reabrir processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao reabrir processo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def atribuir_processo(self, numero_processo: str, id_usuario: str) -> dict:
@@ -896,7 +908,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao atribuir processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao atribuir processo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -929,7 +941,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao assinar documento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao assinar documento: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def pesquisar_tipos_documento(
@@ -958,7 +970,7 @@ class SEIClient:
         resp = await self._request("GET", "/documento/tipo/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar tipos de documento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar tipos de documento: {data.get('mensagem')}")
         result = self._paginated(data, "tipos", data.get("data", []), start, limit)
         if not filtro and not favoritos:
             await self._cache_set(cache_key, result)
@@ -984,7 +996,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao sobrestar processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao sobrestar processo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def remover_sobrestamento(self, id_procedimento: str) -> dict:
@@ -992,7 +1004,7 @@ class SEIClient:
         resp = await self._request("POST", f"/processo/{id_procedimento}/cancelar/sobrestamento")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao remover sobrestamento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao remover sobrestamento: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -1004,7 +1016,7 @@ class SEIClient:
         resp = await self._request("POST", "/documento/ciencia", data={"documento": id_documento})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao dar ciência no documento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao dar ciência no documento: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def dar_ciencia_processo(self, id_procedimento: str) -> dict:
@@ -1012,7 +1024,7 @@ class SEIClient:
         resp = await self._request("POST", f"/processo/{id_procedimento}/ciencia")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao dar ciência no processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao dar ciência no processo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def listar_ciencias_documento(self, id_documento: str) -> list[dict]:
@@ -1020,7 +1032,7 @@ class SEIClient:
         resp = await self._request("GET", f"/documento/listar/ciencia/{id_documento}")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar ciências do documento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar ciências do documento: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def listar_ciencias_processo(self, id_procedimento: str) -> list[dict]:
@@ -1028,7 +1040,7 @@ class SEIClient:
         resp = await self._request("GET", f"/processo/{id_procedimento}/ciencia/listar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar ciências do processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar ciências do processo: {data.get('mensagem')}")
         return data.get("data", [])
 
     # ------------------------------------------------------------------
@@ -1053,7 +1065,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao criar anotação: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao criar anotação: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     @staticmethod
@@ -1083,7 +1095,7 @@ class SEIClient:
         resp = await self._request("GET", "/marcador/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar marcadores: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar marcadores: {data.get('mensagem')}")
         return self._paginated(data, "marcadores", data.get("data", []), start, limit)
 
     async def listar_cores_marcador(self) -> list[dict]:
@@ -1091,7 +1103,7 @@ class SEIClient:
         resp = await self._request("GET", "/marcador/cores/listar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar cores: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar cores: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def criar_marcador(self, nome: str, id_cor: str) -> dict:
@@ -1099,7 +1111,7 @@ class SEIClient:
         resp = await self._request("POST", "/marcador/criar", data={"nome": nome, "idCor": id_cor})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao criar marcador: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao criar marcador: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def alterar_marcador(self, id_marcador: str, nome: str, id_cor: str) -> dict:
@@ -1111,7 +1123,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar marcador: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao alterar marcador: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def excluir_marcadores(self, ids: str) -> dict:
@@ -1119,7 +1131,7 @@ class SEIClient:
         resp = await self._request("POST", "/marcador/excluir", data={"marcadores": ids})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao excluir marcadores: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao excluir marcadores: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def desativar_marcadores(self, ids: str) -> dict:
@@ -1127,7 +1139,7 @@ class SEIClient:
         resp = await self._request("POST", "/marcador/desativar", data={"marcadores": ids})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao desativar marcadores: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao desativar marcadores: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def reativar_marcadores(self, ids: str) -> dict:
@@ -1135,7 +1147,7 @@ class SEIClient:
         resp = await self._request("POST", "/marcador/reativar", data={"marcadores": ids})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao reativar marcadores: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao reativar marcadores: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def marcar_processo(
@@ -1149,7 +1161,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao marcar processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao marcar processo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def consultar_marcador_processo(self, id_procedimento: str) -> list[dict]:
@@ -1157,7 +1169,7 @@ class SEIClient:
         resp = await self._request("GET", f"/marcador/processo/{id_procedimento}/consultar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao consultar marcador: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao consultar marcador: {data.get('mensagem')}")
         return data.get("data", [])
 
     # ------------------------------------------------------------------
@@ -1176,7 +1188,7 @@ class SEIClient:
         resp = await self._request("POST", "/processo/acompanhar", data=payload)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao acompanhar processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao acompanhar processo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def consultar_acompanhamento(self, id_procedimento: str) -> dict:
@@ -1188,7 +1200,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao consultar acompanhamento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao consultar acompanhamento: {data.get('mensagem')}")
         return data.get("data", {})
 
     async def excluir_acompanhamento(self, id_acompanhamento: str) -> dict:
@@ -1196,7 +1208,7 @@ class SEIClient:
         resp = await self._request("POST", f"/processo/acompanhamento/{id_acompanhamento}/excluir")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao excluir acompanhamento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao excluir acompanhamento: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def criar_grupo_acompanhamento(self, nome: str) -> dict:
@@ -1204,7 +1216,7 @@ class SEIClient:
         resp = await self._request("POST", "/grupoacompanhamento/cadastrar", data={"nome": nome})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao criar grupo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao criar grupo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def alterar_grupo_acompanhamento(self, id_grupo: str, nome: str) -> dict:
@@ -1214,7 +1226,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar grupo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao alterar grupo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def excluir_grupo_acompanhamento(self, ids_grupos: str) -> dict:
@@ -1224,7 +1236,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao excluir grupo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao excluir grupo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def listar_grupos_acompanhamento(self, filtro: str = "", limit: int = 50) -> dict:
@@ -1235,7 +1247,7 @@ class SEIClient:
         resp = await self._request("GET", "/grupoacompanhamento/listar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar grupos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar grupos: {data.get('mensagem')}")
         return {"grupos": data.get("data", []), "total": data.get("total")}
 
     # ------------------------------------------------------------------
@@ -1247,7 +1259,7 @@ class SEIClient:
         resp = await self._request("POST", "/bloco/interno/criar", data={"descricao": descricao})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao criar bloco interno: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao criar bloco interno: {data.get('mensagem')}")
         return data.get("data", {})
 
     async def incluir_processo_bloco_interno(self, id_bloco: str, protocolos: str) -> dict:
@@ -1259,7 +1271,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao incluir no bloco: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao incluir no bloco: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def retirar_processo_bloco_interno(self, id_bloco: str, protocolos: str) -> dict:
@@ -1271,7 +1283,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao retirar do bloco: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao retirar do bloco: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def listar_processos_bloco_interno(self, id_bloco: str, limit: int = 200) -> list[dict]:
@@ -1285,7 +1297,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar processos do bloco: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar processos do bloco: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def alterar_bloco_interno(self, id_bloco: str, descricao: str) -> dict:
@@ -1299,7 +1311,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar bloco interno: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao alterar bloco interno: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def excluir_blocos_internos(self, ids: str) -> dict:
@@ -1309,7 +1321,7 @@ class SEIClient:
         resp = await self._request("POST", "/bloco/interno/excluir", data={"blocos": ids})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao excluir blocos internos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao excluir blocos internos: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def concluir_blocos_internos(self, ids: str) -> dict:
@@ -1319,7 +1331,7 @@ class SEIClient:
         resp = await self._request("POST", "/bloco/interno/concluir", data={"blocos": ids})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao concluir blocos internos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao concluir blocos internos: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def reabrir_bloco_interno(self, id_bloco: str) -> dict:
@@ -1329,7 +1341,7 @@ class SEIClient:
         resp = await self._request("POST", f"/bloco/interno/{id_bloco}/reabrir")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao reabrir bloco interno: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao reabrir bloco interno: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def anotar_processo_bloco_interno(
@@ -1345,7 +1357,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao anotar no bloco interno: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao anotar no bloco interno: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def alterar_anotacao_bloco_interno(
@@ -1361,7 +1373,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar anotação do bloco interno: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao alterar anotação do bloco interno: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def pesquisar_blocos_internos(
@@ -1374,7 +1386,7 @@ class SEIClient:
         resp = await self._request("GET", "/bloco/interno/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar blocos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar blocos: {data.get('mensagem')}")
         return self._paginated(data, "blocos", data.get("data", []), start, limit)
 
     # ------------------------------------------------------------------
@@ -1389,7 +1401,7 @@ class SEIClient:
         resp = await self._request("POST", "/bloco/assinatura/criar", data=payload)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao criar bloco de assinatura: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao criar bloco de assinatura: {data.get('mensagem')}")
         return data.get("data", {})
 
     async def incluir_documento_bloco_assinatura(self, id_bloco: str, documentos: str) -> dict:
@@ -1401,7 +1413,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao incluir no bloco: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao incluir no bloco: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def disponibilizar_bloco_assinatura(self, id_bloco: str) -> dict:
@@ -1409,7 +1421,7 @@ class SEIClient:
         resp = await self._request("POST", f"/bloco/assinatura/{id_bloco}/disponibilizar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao disponibilizar bloco: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao disponibilizar bloco: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def cancelar_disponibilizacao_bloco_assinatura(self, id_bloco: str) -> dict:
@@ -1419,7 +1431,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao cancelar disponibilização: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao cancelar disponibilização: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def pesquisar_blocos_assinatura(
@@ -1432,7 +1444,7 @@ class SEIClient:
         resp = await self._request("GET", "/bloco/assinatura/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar blocos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar blocos: {data.get('mensagem')}")
         return self._paginated(data, "blocos", data.get("data", []), start, limit)
 
     async def listar_documentos_bloco_assinatura(
@@ -1446,7 +1458,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar documentos do bloco: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar documentos do bloco: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def retirar_documento_bloco_assinatura(self, id_bloco: str, documentos: str) -> dict:
@@ -1458,7 +1470,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao retirar do bloco: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao retirar do bloco: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def alterar_bloco_assinatura(self, id_bloco: str, descricao: str) -> dict:
@@ -1472,7 +1484,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar bloco de assinatura: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao alterar bloco de assinatura: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def excluir_blocos_assinatura(self, ids: str) -> dict:
@@ -1482,7 +1494,7 @@ class SEIClient:
         resp = await self._request("POST", "/bloco/assinatura/excluir", data={"blocos": ids})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao excluir blocos de assinatura: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao excluir blocos de assinatura: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def concluir_blocos_assinatura(self, ids: str) -> dict:
@@ -1492,7 +1504,7 @@ class SEIClient:
         resp = await self._request("POST", "/bloco/assinatura/concluir", data={"blocos": ids})
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao concluir blocos de assinatura: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao concluir blocos de assinatura: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def reabrir_bloco_assinatura(self, id_bloco: str) -> dict:
@@ -1502,7 +1514,7 @@ class SEIClient:
         resp = await self._request("POST", f"/bloco/assinatura/{id_bloco}/reabrir")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao reabrir bloco de assinatura: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao reabrir bloco de assinatura: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def retornar_bloco_assinatura(self, id_bloco: str) -> dict:
@@ -1512,7 +1524,7 @@ class SEIClient:
         resp = await self._request("POST", f"/bloco/assinatura/{id_bloco}/retornar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao retornar bloco de assinatura: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao retornar bloco de assinatura: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def anotar_documento_bloco_assinatura(
@@ -1528,7 +1540,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao anotar no bloco de assinatura: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao anotar no bloco de assinatura: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def alterar_anotacao_bloco_assinatura(
@@ -1544,7 +1556,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar anotação do bloco: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao alterar anotação do bloco: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -1556,7 +1568,7 @@ class SEIClient:
         resp = await self._request("POST", f"/processo/{id_procedimento}/remover/atribuicao")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao remover atribuição: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao remover atribuição: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -1570,7 +1582,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao receber processo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao receber processo: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -1594,7 +1606,7 @@ class SEIClient:
         from datetime import datetime  # noqa: PLC0415
 
         if not os.path.exists(arquivo_path):  # noqa: ASYNC240, PTH110
-            raise Exception(f"Arquivo não encontrado: {arquivo_path}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Arquivo não encontrado: {arquivo_path}")
 
         nome_arquivo = os.path.basename(arquivo_path)  # noqa: PTH119
         data_hoje = datetime.now().strftime("%d/%m/%Y")  # noqa: DTZ005
@@ -1656,7 +1668,7 @@ class SEIClient:
         resp.raise_for_status()
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao criar documento externo: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao criar documento externo: {data.get('mensagem')}")
         return data["data"]
 
     # ------------------------------------------------------------------
@@ -1680,7 +1692,7 @@ class SEIClient:
         resp = await self._request("POST", "/processo/agendar/retorno/programado", data=payload)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao agendar retorno: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao agendar retorno: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -1692,7 +1704,7 @@ class SEIClient:
         resp = await self._request("GET", f"/processo/listar/sobrestamento/{id_procedimento}")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar sobrestamentos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar sobrestamentos: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def listar_unidades_processo(self, id_procedimento: str) -> list[dict]:
@@ -1700,7 +1712,7 @@ class SEIClient:
         resp = await self._request("GET", f"/processo/listar/unidades/{id_procedimento}")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar unidades: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar unidades: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def listar_interessados(self, id_procedimento: str) -> list[dict]:
@@ -1708,7 +1720,7 @@ class SEIClient:
         resp = await self._request("GET", f"/processo/{id_procedimento}/interessados/listar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar interessados: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar interessados: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def pesquisar_assuntos(self, filtro: str = "", limit: int = 50, start: int = 0) -> dict:
@@ -1721,7 +1733,7 @@ class SEIClient:
         resp = await self._request("GET", "/processo/assunto/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar assuntos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar assuntos: {data.get('mensagem')}")
         return self._paginated(data, "assuntos", data.get("data", []), start, limit)
 
     async def sugestao_assuntos_processo(self, id_tipo_processo: str) -> list[dict]:
@@ -1731,7 +1743,7 @@ class SEIClient:
         resp = await self._request("GET", f"/processo/assunto/sugestao/{id_tipo_processo}/listar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar sugestões de assunto: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar sugestões de assunto: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def consultar_atribuicao(self, id_procedimento: str) -> dict:
@@ -1741,7 +1753,7 @@ class SEIClient:
         resp = await self._request("GET", f"/processo/{id_procedimento}/consultar/atribuicao")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao consultar atribuição: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao consultar atribuição: {data.get('mensagem')}")
         return data.get("data", {})
 
     async def verificar_acesso(self, id_procedimento: str) -> dict:
@@ -1751,7 +1763,7 @@ class SEIClient:
         resp = await self._request("GET", f"/processo/verifica/acesso/{id_procedimento}")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao verificar acesso: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao verificar acesso: {data.get('mensagem')}")
         return data.get("data", {})
 
     async def listar_relacionamentos(self, id_procedimento: str) -> list[dict]:
@@ -1761,7 +1773,7 @@ class SEIClient:
         resp = await self._request("GET", f"/processo/{id_procedimento}/relacionamentos")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar relacionamentos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar relacionamentos: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def listar_meus_acompanhamentos(self, limit: int = 50, start: int = 0) -> dict:
@@ -1772,7 +1784,7 @@ class SEIClient:
         resp = await self._request("GET", "/processo/listar/meus/acompanhamentos", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar acompanhamentos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar acompanhamentos: {data.get('mensagem')}")
         return self._paginated(data, "acompanhamentos", data.get("data", []), start, limit)
 
     async def listar_acompanhamentos_unidade(self, limit: int = 50, start: int = 0) -> dict:
@@ -1783,7 +1795,7 @@ class SEIClient:
         resp = await self._request("GET", "/processo/listar/acompanhamentos", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar acompanhamentos da unidade: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar acompanhamentos da unidade: {data.get('mensagem')}")
         return self._paginated(data, "acompanhamentos", data.get("data", []), start, limit)
 
     async def alterar_acompanhamento(
@@ -1800,7 +1812,7 @@ class SEIClient:
         resp = await self._request("POST", "/processo/acompanhamento/alterar", data=payload)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao alterar acompanhamento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao alterar acompanhamento: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -1813,7 +1825,7 @@ class SEIClient:
         resp = await self._request("GET", f"/processo/{id_procedimento}/credenciamento/listar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar credenciamentos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar credenciamentos: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def conceder_credenciamento(self, id_procedimento: str, id_usuario: str) -> dict:
@@ -1825,7 +1837,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao conceder credenciamento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao conceder credenciamento: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def renunciar_credenciamento(self, id_procedimento: str) -> dict:
@@ -1833,7 +1845,7 @@ class SEIClient:
         resp = await self._request("POST", f"/processo/{id_procedimento}/credenciamento/renunciar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao renunciar credenciamento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao renunciar credenciamento: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def cassar_credenciamento(self, id_procedimento: str, id_usuario: str) -> dict:
@@ -1845,7 +1857,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao cassar credenciamento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao cassar credenciamento: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -1862,7 +1874,7 @@ class SEIClient:
         resp = await self._request("GET", "/atividade/listar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar atividades: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar atividades: {data.get('mensagem')}")
         return self._paginated(data, "atividades", data.get("data", []), start, limit)
 
     async def registrar_andamento(self, id_procedimento: str, descricao: str) -> dict:
@@ -1874,7 +1886,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao registrar andamento: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao registrar andamento: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -1889,7 +1901,7 @@ class SEIClient:
         resp = await self._request("GET", "/contato/pesquisar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao pesquisar contatos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao pesquisar contatos: {data.get('mensagem')}")
         return {"contatos": data.get("data", []), "total": data.get("total")}
 
     async def criar_contato(
@@ -1908,7 +1920,7 @@ class SEIClient:
         resp = await self._request("POST", "/contato/criar", data=payload)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao criar contato: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao criar contato: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -1921,7 +1933,7 @@ class SEIClient:
         resp = await self._request("GET", "/assinante/listar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar assinantes: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar assinantes: {data.get('mensagem')}")
         return data.get("data", [])
 
     async def listar_orgaos_assinante(self) -> list[dict]:
@@ -1929,7 +1941,7 @@ class SEIClient:
         resp = await self._request("GET", "/assinante/orgao")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar órgãos para assinatura: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar órgãos para assinatura: {data.get('mensagem')}")
         return data.get("data", [])
 
     # ------------------------------------------------------------------
@@ -1948,7 +1960,7 @@ class SEIClient:
         )
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao criar observação: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao criar observação: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     # ------------------------------------------------------------------
@@ -1962,7 +1974,7 @@ class SEIClient:
         resp = await self._request("GET", "/protocolomodelo/grupo/listar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar grupos de modelos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar grupos de modelos: {data.get('mensagem')}")
         return self._paginated(data, "grupos", data.get("data", []), start, limit)
 
     async def listar_modelos(
@@ -1977,7 +1989,7 @@ class SEIClient:
         resp = await self._request("GET", "/protocolomodelo/listar", params=params)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar modelos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar modelos: {data.get('mensagem')}")
         return self._paginated(data, "modelos", data.get("data", []), start, limit)
 
     # ------------------------------------------------------------------
@@ -1990,7 +2002,7 @@ class SEIClient:
         resp = await self._request("GET", f"/marcador/processo/{id_procedimento}/historico/listar")
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao listar histórico de marcadores: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao listar histórico de marcadores: {data.get('mensagem')}")
         return data.get("data", [])
 
     # ------------------------------------------------------------------
@@ -2018,7 +2030,7 @@ class SEIClient:
         resp = await self._request("POST", f"/bloco/assinatura/{id_bloco}/assinar", data=payload)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao assinar bloco: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao assinar bloco: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def assinar_documentos_bloco(  # noqa: PLR0913
@@ -2043,7 +2055,7 @@ class SEIClient:
         resp = await self._request("POST", "/bloco/assinatura/assinar/documentos", data=payload)
         data = resp.json()
         if not data.get("sucesso"):
-            raise Exception(f"Erro ao assinar documentos: {data.get('mensagem')}")  # noqa: EM102, TRY002, TRY003
+            raise SEIError(f"Erro ao assinar documentos: {data.get('mensagem')}")
         return data.get("data", {"mensagem": data.get("mensagem")})
 
     async def close(self):  # noqa: ANN201, D102

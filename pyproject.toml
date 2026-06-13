@@ -66,6 +66,9 @@ ignore = [
     "FIX001", "FIX002", "FIX003", "FIX004",  # FIXME/HACK markers ok
     "TD001", "TD002", "TD003", "TD004", "TD005", "TD006", "TD007",  # TODO tracking
     "S104",   # 0.0.0.0 intentional — Railway/container deploy (same as bandit skip)
+    # ── Exception message style — custom hierarchy carries the message ─────
+    "EM101", "EM102",  # exception message literal/f-string — messages live in raise sites
+    "TRY002", "TRY003",  # raise Exception / long messages outside class — deliberate
 ]
 
 [tool.ruff.lint.per-file-ignores]
