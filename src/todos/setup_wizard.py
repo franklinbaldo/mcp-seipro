@@ -572,15 +572,30 @@ def _infer_sigla_orgao_sistema(hostname: str) -> str:
     return "SEI"
 
 
-def _detect_modsei_url(sei_root: str, *, verify_ssl: bool) -> str:
+@dataclass
+class _ModseiDetection:
+    """Result of probing for mod-wssei."""
+
+    url: str
+    confirmed: bool  # False when Cloudflare blocked the probe; url is a best-guess
+
+
+def _is_cloudflare_response(resp: httpx.Response) -> bool:
+    """Return True if the response came from Cloudflare's edge, not from the PHP app."""
+    return "cf-ray" in resp.headers or resp.headers.get("server", "").lower() == "cloudflare"
+
+
+def _detect_modsei_url(sei_root: str, *, verify_ssl: bool) -> _ModseiDetection:
     """Probe both known mod-wssei paths and return the first that responds.
 
     Uses POST /autenticar with empty credentials as the probe: the module
     returns 400/422 (invalid credentials) when present, while Apache returns
     a plain 404 when the module is not installed at all.
     Tries "wssei/" first (most common), then "mod-wssei/" (alternative install name).
-    Network errors and 404/501 are treated as not-found.
+    When Cloudflare blocks the probe, returns the candidate URL as unconfirmed
+    (confirmed=False) rather than a false negative or false positive.
     """
+    first_cloudflare: str = ""
     try:
         with httpx.Client(
             verify=verify_ssl, follow_redirects=False, timeout=_WSSEI_PROBE_TIMEOUT
@@ -594,11 +609,18 @@ def _detect_modsei_url(sei_root: str, *, verify_ssl: bool) -> str:
                     )
                 except httpx.RequestError:
                     continue
-                if resp.status_code not in (404, 501):
-                    return candidate
+                if resp.status_code in (404, 501):
+                    continue
+                if _is_cloudflare_response(resp):
+                    if not first_cloudflare:
+                        first_cloudflare = candidate
+                    continue
+                return _ModseiDetection(url=candidate, confirmed=True)
     except httpx.RequestError:
         pass
-    return ""
+    if first_cloudflare:
+        return _ModseiDetection(url=first_cloudflare, confirmed=False)
+    return _ModseiDetection(url="", confirmed=False)
 
 
 def _setup_sei_instance() -> _SEIInstanceConfig:
@@ -649,14 +671,30 @@ def _setup_sei_instance() -> _SEIInstanceConfig:
 
     sys.stdout.write("\n")
     print_yellow("[*] Detectando mod-wssei...")
-    rest_url = _detect_modsei_url(sei_root, verify_ssl=not verify_ssl_disabled)
-    if rest_url:
-        print_green(f"[+] mod-wssei detectado em: {rest_url}")
+    detection = _detect_modsei_url(sei_root, verify_ssl=not verify_ssl_disabled)
+    if detection.url and detection.confirmed:
+        print_green(f"[+] mod-wssei detectado em: {detection.url}")
         confirm = input("Usar esta URL REST? (s/n, padrão: s): ").strip().lower() or "s"
-        if confirm != "s":
-            rest_url = input(
+        rest_url = (
+            detection.url
+            if confirm == "s"
+            else input(
                 "Digite a URL REST do mod-wssei (ou deixe em branco para desativar): "
             ).strip()
+        )
+    elif detection.url:
+        print_yellow(f"[!] Possível mod-wssei em: {detection.url}")
+        print_yellow(
+            "    (Cloudflare bloqueou a verificação automática — confirme se mod-wssei está instalado.)"
+        )
+        confirm = input("Usar esta URL REST? (s/n, padrão: s): ").strip().lower() or "s"
+        rest_url = (
+            detection.url
+            if confirm == "s"
+            else input(
+                "Digite a URL REST do mod-wssei (ou deixe em branco para desativar): "
+            ).strip()
+        )
     else:
         print_yellow("[!] mod-wssei não detectado automaticamente nesta instância.")
         rest_url = input(
