@@ -12,6 +12,7 @@ from typing import Literal, cast
 
 import httpx
 from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ToolError
 from pydantic import BaseModel, Field
 
 from todos import access_control
@@ -587,8 +588,8 @@ async def sei_unidade_atual(ctx: Context) -> str:
         client = _get_web_client(ctx)
         result = await client.unidade_atual()
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -602,8 +603,8 @@ async def sei_listar_unidades(ctx: Context) -> str:
         client = _get_web_client(ctx)
         units = await client.listar_unidades()
         return _json({"data": units, "total": len(units)})
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -626,8 +627,8 @@ async def sei_trocar_unidade(id_unidade: str, ctx: Context) -> str:
         except Exception as rest_err:  # noqa: BLE001
             logger.debug("REST unit sync failed (best-effort): %s", rest_err)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -646,8 +647,8 @@ async def sei_pesquisar_unidades(
         client = _get_client(ctx)
         result = await client.pesquisar_unidades(filtro=filtro, limit=limit, start=pagina)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -676,8 +677,8 @@ async def sei_listar_usuarios(
                 filtro=filtro, apenas_unidade=apenas_unidade
             )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -759,8 +760,8 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
             )
 
         return _json(merged)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -780,10 +781,14 @@ async def sei_arvore_processo(
     """
     try:
         web = _get_web_client(ctx)
+        if ctx:
+            await ctx.report_progress(0, 100, "Buscando árvore do processo…")
         result = await web.listar_documentos(protocolo_formatado)
+        if ctx:
+            await ctx.report_progress(100, 100)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -803,8 +808,8 @@ async def sei_listar_documentos(
         web = _get_web_client(ctx)
         result = await web.listar_documentos(protocolo_formatado)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -889,8 +894,8 @@ async def sei_buscar_documento(  # noqa: C901
                 "ou use sei_arvore_processo com o protocolo do processo.",
             }
         )
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, str]:
@@ -1200,8 +1205,8 @@ async def sei_baixar_anexo(  # noqa: C901, PLR0911
         if disclaimer:
             resposta["aviso_acesso"] = disclaimer
         return _json(resposta)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -1259,8 +1264,8 @@ async def sei_criar_documento(  # noqa: PLR0913
             hipotese_legal=hipotese_legal,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -1275,8 +1280,8 @@ async def sei_listar_secoes(id_documento: str, ctx: Context | None = None) -> st
         client = _get_client(ctx)
         result = await client.listar_secao_documento(id_documento)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -1306,8 +1311,8 @@ async def sei_gerar_referencia(
                 "uso": f"...SEI n&ordm; {snippet}...",
             }
         )
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -1367,8 +1372,8 @@ async def sei_estilos(categoria: str = "", ctx: Context | None = None) -> str:  
                 resultado[nome] = info  # noqa: PERF403
 
         return _json(resultado)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -1443,8 +1448,8 @@ async def sei_editar_secao(
             versao=versao,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -1501,8 +1506,8 @@ async def sei_listar_processos(
             filtro=filtro,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 _CAMPOS_AGRUPAMENTO = {
@@ -1655,6 +1660,8 @@ async def sei_resumo_processos(  # noqa: C901, PLR0912
         todos = []
         pg = 0
         while True:
+            if ctx:
+                await ctx.report_progress(len(todos), None, f"Buscando página {pg + 1}…")
             result = await client.listar_processos(
                 limit=200,
                 start=pg,
@@ -1706,8 +1713,8 @@ async def sei_resumo_processos(  # noqa: C901, PLR0912
                 "grupos": resumo,
             }
         )
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -1773,8 +1780,8 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
             _rest_unavailable = True  # mod-wssei ausente ou endpoint não encontrado
         else:
             return _error(str(exc))
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
     # Fallback via web scraper (instâncias sem mod-wssei)
     q_web = " ".join(filter(None, [palavras_chave, busca_rapida]))
@@ -1860,8 +1867,8 @@ async def sei_pesquisar_hipoteses_legais(
         else:
             result = await backend.web.pesquisar_hipoteses_legais_web(filtro=filtro)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -1894,8 +1901,8 @@ async def sei_pesquisar_tipos_processo(
         else:
             result = await backend.web.pesquisar_tipos_processo_web(filtro=filtro)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -1930,8 +1937,8 @@ async def sei_alterar_processo(  # noqa: PLR0913
             observacao=observacao,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -1983,8 +1990,8 @@ async def sei_criar_processo(  # noqa: PLR0913
             hipotese_legal=hipotese_legal,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -2080,8 +2087,8 @@ async def sei_enviar_processo(  # noqa: C901, PLR0913
             dias_retorno=dias_retorno,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -2114,8 +2121,8 @@ async def sei_marcar_nao_lido(
                 "detalhe": result.get("mensagem", ""),
             }
         )
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -2132,8 +2139,8 @@ async def sei_concluir_processo(numero_processo: str, ctx: Context | None = None
             return _json(result)
         result = await backend.web.executar_acao_processo(numero_processo, "procedimento_concluir")
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -2152,8 +2159,8 @@ async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str
             return _json(result)
         result = await backend.web.executar_acao_processo(processo, "procedimento_reabrir")
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -2240,8 +2247,8 @@ async def sei_atribuir_processo(  # noqa: C901, PLR0911
             numero_processo, "atribuicao_salvar", {"selAtribuicao": id_usuario}
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -2398,8 +2405,8 @@ async def sei_assinar_documento(
             id_usuario=id_usuario,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2436,8 +2443,8 @@ async def sei_pesquisar_tipos_documento(  # noqa: PLR0913
         else:
             result = await backend.web.pesquisar_tipos_documento_web(filtro=filtro)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -2506,8 +2513,8 @@ async def sei_sobrestar_processo(
             processo, "procedimento_sobrestar", campos
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2530,8 +2537,8 @@ async def sei_remover_sobrestamento(
             processo, "procedimento_remover_sobrestamento"
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2571,8 +2578,8 @@ async def sei_dar_ciencia(
             return _json(result)
         result = await backend.web.executar_acao_processo(referencia, "processo_dar_ciencia")
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2612,8 +2619,8 @@ async def sei_listar_ciencias(
             )
         result = await backend.web.listar_ciencias_web(processo, referencia)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -2638,8 +2645,8 @@ async def sei_remover_atribuicao(
             return _json(result)
         result = await backend.web.executar_acao_processo(processo, "atribuicao_cancelar")
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2659,8 +2666,8 @@ async def sei_receber_processo(
             return _json(result)
         result = await backend.web.executar_acao_processo(processo, "procedimento_receber")
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -2702,8 +2709,8 @@ async def sei_executar_acao(
         web = _get_web_client(ctx)
         result = await web.executar_acao_processo(processo, acao)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2720,8 +2727,8 @@ async def sei_listar_unidades_processo(
             return _json(result)
         detalhe = await backend.web.consultar_processo_detalhe(processo)
         return _json(detalhe.get("unidades_abertas", []))
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2738,8 +2745,8 @@ async def sei_listar_interessados(
             return _json(result)
         detalhe = await backend.web.consultar_processo_detalhe(processo)
         return _json(detalhe.get("interessados", []))
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2756,8 +2763,8 @@ async def sei_listar_sobrestamentos(
             return _json(result)
         detalhe = await backend.web.consultar_processo_detalhe(processo)
         return _json(detalhe.get("sobrestamentos", []))
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2784,8 +2791,8 @@ async def sei_listar_assinaturas(
             )
         result = await backend.web.listar_assinaturas_web(processo, id_documento)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -2810,8 +2817,8 @@ async def sei_registrar_andamento(
             processo, "procedimento_andamento_registrar", {"txaDescricao": descricao}
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_READ)
@@ -2825,8 +2832,8 @@ async def sei_pesquisar_contatos(
         client = _get_client(ctx)
         result = await client.pesquisar_contatos(filtro=filtro, limit=limit)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_WRITE)
@@ -2857,8 +2864,8 @@ async def sei_criar_documento_externo(  # noqa: PLR0913
             nivel_acesso=nivel_acesso,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2905,8 +2912,8 @@ async def sei_assinar_bloco(
             cargo=cargo,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool(annotations=_IDEM)
@@ -2953,8 +2960,8 @@ async def sei_assinar_documentos_bloco(
             documentos=documentos,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -2986,8 +2993,8 @@ async def sei_criar_marcador(
             )
         result = await client.criar_marcador(nome, id_cor)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3000,8 +3007,8 @@ async def sei_excluir_marcador(
         client = _get_client(ctx)
         result = await client.excluir_marcadores(ids_marcadores)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3035,8 +3042,8 @@ async def sei_marcar_processo(
             campos["txtTexto"] = texto
         result = await backend.web.executar_acao_processo(processo, "marcador_alterar", campos)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3057,8 +3064,8 @@ async def sei_pesquisar_marcadores(
         else:
             result = await backend.web.pesquisar_marcadores_web(filtro=filtro)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3072,8 +3079,8 @@ async def sei_consultar_marcador_processo(
         id_proc = await _resolver_processo(client, processo)
         result = await client.consultar_marcador_processo(id_proc)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -3116,8 +3123,8 @@ async def sei_acompanhar_processo(
             processo, "acompanhamento_especial_incluir", campos
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3142,8 +3149,8 @@ async def sei_remover_acompanhamento(
             processo, "acompanhamento_especial_excluir"
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3156,8 +3163,8 @@ async def sei_criar_grupo_acompanhamento(
         client = _get_client(ctx)
         result = await client.criar_grupo_acompanhamento(nome)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3170,8 +3177,8 @@ async def sei_excluir_grupo_acompanhamento(
         client = _get_client(ctx)
         result = await client.excluir_grupo_acompanhamento(ids_grupos)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3184,8 +3191,8 @@ async def sei_listar_grupos_acompanhamento(
         client = _get_client(ctx)
         result = await client.listar_grupos_acompanhamento(filtro=filtro)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -3206,8 +3213,8 @@ async def sei_criar_bloco_interno(
         client = _get_client(ctx)
         result = await client.criar_bloco_interno(descricao)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3225,8 +3232,8 @@ async def sei_incluir_processo_bloco_interno(
         client = _get_client(ctx)
         result = await client.incluir_processo_bloco_interno(id_bloco, processos)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3244,8 +3251,8 @@ async def sei_retirar_processo_bloco_interno(
         client = _get_client(ctx)
         result = await client.retirar_processo_bloco_interno(id_bloco, processos)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -3296,8 +3303,8 @@ async def sei_criar_bloco_assinatura(
 
         result = await client.criar_bloco_assinatura(descricao, unidades)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3315,8 +3322,8 @@ async def sei_incluir_documento_bloco_assinatura(
         client = _get_client(ctx)
         result = await client.incluir_documento_bloco_assinatura(id_bloco, documentos)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3336,8 +3343,8 @@ async def sei_disponibilizar_bloco_assinatura(
         else:
             result = await backend.web.disponibilizar_bloco_assinatura_web(id_bloco)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3357,8 +3364,8 @@ async def sei_cancelar_disponibilizacao_bloco(
         else:
             result = await backend.web.cancelar_disponibilizacao_bloco_assinatura_web(id_bloco)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3375,8 +3382,8 @@ async def sei_pesquisar_blocos_assinatura(
         else:
             result = await backend.web.pesquisar_blocos_assinatura_web(filtro=filtro, limit=limit)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3408,8 +3415,8 @@ async def sei_criar_anotacao(
             {"txaDescricao": descricao, "selPrioridade": prioridade},
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # ---------------------------------------------------------------------------
@@ -3435,8 +3442,8 @@ async def sei_versao(ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.versao()
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3450,8 +3457,8 @@ async def sei_listar_orgaos(ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.listar_orgaos()
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3465,8 +3472,8 @@ async def sei_listar_contextos(id_orgao: str, ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.listar_contextos(id_orgao)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # -- Usuários --
@@ -3497,8 +3504,8 @@ async def sei_pesquisar_usuarios(
         else:
             result = await backend.web.pesquisar_usuarios_web(filtro=filtro, limit=limit)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # -- Unidades --
@@ -3527,8 +3534,8 @@ async def sei_pesquisar_outras_unidades(
         else:
             result = await backend.web.pesquisar_outras_unidades_web(filtro=filtro, limit=limit)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3555,8 +3562,8 @@ async def sei_pesquisar_textos_padrao(
         else:
             result = await backend.web.pesquisar_textos_padrao_web(filtro=filtro, limit=limit)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # -- Documentos --
@@ -3639,8 +3646,8 @@ async def sei_consultar_documento_externo(
                 },
             )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3671,8 +3678,8 @@ async def sei_alterar_documento_interno(
             id_hipotese_legal=hipotese_legal,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3705,8 +3712,8 @@ async def sei_alterar_documento_externo(  # noqa: PLR0913
             arquivo_path=arquivo_path,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3733,8 +3740,8 @@ async def sei_pesquisar_tipos_conferencia(
         else:
             result = await backend.web.pesquisar_tipos_conferencia_web(filtro=filtro)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3752,8 +3759,8 @@ async def sei_sugestao_assuntos_documento(
         client = _get_client(ctx)
         result = await client.sugestao_assuntos_documento(id_serie)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3770,8 +3777,8 @@ async def sei_listar_blocos_documento(
         client = _get_client(ctx)
         result = await client.listar_blocos_documento(id_documento)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3798,8 +3805,8 @@ async def sei_pesquisar_tipos_documento_externo(
         else:
             result = await backend.web.pesquisar_tipos_documento_externo_web(filtro=filtro)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3814,8 +3821,8 @@ async def sei_parametros_upload(ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.parametros_upload()
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # -- Processos: assuntos, atribuição, acesso, relacionamentos --
@@ -3842,8 +3849,8 @@ async def sei_pesquisar_assuntos(
         else:
             result = await backend.web.pesquisar_assuntos_web(filtro=filtro, limit=limit)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3861,8 +3868,8 @@ async def sei_sugestao_assuntos_processo(
         client = _get_client(ctx)
         result = await client.sugestao_assuntos_processo(id_tipo_processo)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3884,8 +3891,8 @@ async def sei_consultar_atribuicao(
         else:
             result = await backend.web.consultar_atribuicao_web(processo)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3908,8 +3915,8 @@ async def sei_verificar_acesso(
         else:
             result = await backend.web.verificar_acesso_web(processo)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3927,8 +3934,8 @@ async def sei_listar_relacionamentos(
         id_proc = await _resolver_processo(client, processo)
         result = await client.listar_relacionamentos(id_proc)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3948,8 +3955,8 @@ async def sei_listar_atividades(
         web = _get_web_client(ctx)
         result = await web.listar_atividades(processo)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -3977,7 +3984,11 @@ async def sei_gerar_pdf_processo(
     try:
         web = _get_web_client(ctx)
 
+        if ctx:
+            await ctx.report_progress(0, 100, "Gerando PDF do processo…")
         pdf_bytes = await web.gerar_pdf_processo(processo)
+        if ctx:
+            await ctx.report_progress(100, 100)
 
         tamanho_mb = len(pdf_bytes) / 1024 / 1024
         if tamanho_mb > 50:  # noqa: PLR2004
@@ -3996,8 +4007,8 @@ async def sei_gerar_pdf_processo(
                 "base64": base64.b64encode(pdf_bytes).decode(),
             }
         )
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4022,7 +4033,11 @@ async def sei_gerar_zip_processo(
     try:
         web = _get_web_client(ctx)
 
+        if ctx:
+            await ctx.report_progress(0, 100, "Gerando ZIP do processo…")
         zip_bytes = await web.gerar_zip_processo(processo)
+        if ctx:
+            await ctx.report_progress(100, 100)
 
         tamanho_mb = len(zip_bytes) / 1024 / 1024
         if tamanho_mb > 200:  # noqa: PLR2004
@@ -4041,8 +4056,8 @@ async def sei_gerar_zip_processo(
                 "base64": base64.b64encode(zip_bytes).decode(),
             }
         )
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4115,8 +4130,8 @@ async def sei_incluir_documento_externo(  # noqa: PLR0913
             conteudo=conteudo,
         )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # -- Acompanhamento: meus, da unidade, alterar --
@@ -4141,8 +4156,8 @@ async def sei_listar_meus_acompanhamentos(
         else:
             result = await backend.web.listar_meus_acompanhamentos_web(limit=limit)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4164,8 +4179,8 @@ async def sei_listar_acompanhamentos_unidade(
         else:
             result = await backend.web.listar_acompanhamentos_unidade_web(limit=limit)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4193,8 +4208,8 @@ async def sei_alterar_acompanhamento(
         else:
             result = await backend.web.alterar_acompanhamento_web(processo, grupo, observacao)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # -- Credenciamento (processos sigilosos) --
@@ -4215,8 +4230,8 @@ async def sei_listar_credenciamentos(
         id_proc = await _resolver_processo(client, processo)
         result = await client.listar_credenciamentos(id_proc)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4235,8 +4250,8 @@ async def sei_conceder_credenciamento(
         id_proc = await _resolver_processo(client, processo)
         result = await client.conceder_credenciamento(id_proc, id_usuario)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4255,8 +4270,8 @@ async def sei_renunciar_credenciamento(
         id_proc = await _resolver_processo(client, processo)
         result = await client.renunciar_credenciamento(id_proc)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4275,8 +4290,8 @@ async def sei_cassar_credenciamento(
         id_proc = await _resolver_processo(client, processo)
         result = await client.cassar_credenciamento(id_proc, id_usuario)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # -- Assinantes e Observação --
@@ -4294,8 +4309,8 @@ async def sei_listar_assinantes(ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.listar_assinantes()
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4309,8 +4324,8 @@ async def sei_listar_orgaos_assinante(ctx: Context) -> str:
         client = _get_client(ctx)
         result = await client.listar_orgaos_assinante()
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4331,8 +4346,8 @@ async def sei_criar_observacao(
         id_proc = await _resolver_processo(client, processo)
         result = await client.criar_observacao(id_proc, descricao)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4352,8 +4367,8 @@ async def sei_criar_contato(
         client = _get_client(ctx)
         result = await client.criar_contato(nome=nome, tipo=tipo, email=email, telefone=telefone)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # -- Modelos de documento --
@@ -4378,8 +4393,8 @@ async def sei_listar_grupos_modelos(
         else:
             result = await backend.web.listar_grupos_modelos_web()
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4408,8 +4423,8 @@ async def sei_listar_modelos(
         else:
             result = await backend.web.listar_modelos_web(filtro=filtro, id_grupo=id_grupo)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # -- Marcador: desativar, reativar, histórico --
@@ -4429,8 +4444,8 @@ async def sei_desativar_marcador(
         client = _get_client(ctx)
         result = await client.desativar_marcadores(ids_marcadores)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4443,8 +4458,8 @@ async def sei_reativar_marcador(
         client = _get_client(ctx)
         result = await client.reativar_marcadores(ids_marcadores)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4463,8 +4478,8 @@ async def sei_historico_marcador_processo(
         id_proc = await _resolver_processo(client, processo)
         result = await client.historico_marcador_processo(id_proc)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # -- Bloco Interno: operações adicionais --
@@ -4484,8 +4499,8 @@ async def sei_listar_processos_bloco_interno(
         client = _get_client(ctx)
         result = await client.listar_processos_bloco_interno(id_bloco)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4503,8 +4518,8 @@ async def sei_alterar_bloco_interno(
         client = _get_client(ctx)
         result = await client.alterar_bloco_interno(id_bloco, descricao)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4521,8 +4536,8 @@ async def sei_excluir_bloco_interno(
         client = _get_client(ctx)
         result = await client.excluir_blocos_internos(ids_blocos)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4539,8 +4554,8 @@ async def sei_concluir_bloco_interno(
         client = _get_client(ctx)
         result = await client.concluir_blocos_internos(ids_blocos)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4557,8 +4572,8 @@ async def sei_reabrir_bloco_interno(
         client = _get_client(ctx)
         result = await client.reabrir_bloco_interno(id_bloco)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4578,8 +4593,8 @@ async def sei_anotar_processo_bloco_interno(
         id_proc = await _resolver_processo(client, processo)
         result = await client.anotar_processo_bloco_interno(id_bloco, id_proc, descricao)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4599,8 +4614,8 @@ async def sei_alterar_anotacao_bloco_interno(
         id_proc = await _resolver_processo(client, processo)
         result = await client.alterar_anotacao_bloco_interno(id_bloco, id_proc, descricao)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 # -- Bloco de Assinatura: operações adicionais --
@@ -4619,8 +4634,8 @@ async def sei_listar_documentos_bloco_assinatura(
         else:
             result = await backend.web.listar_documentos_bloco_assinatura_web(id_bloco)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4650,8 +4665,8 @@ async def sei_retirar_documentos_bloco_assinatura(
                 resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
             )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4673,8 +4688,8 @@ async def sei_alterar_bloco_assinatura(
         else:
             result = await backend.web.alterar_bloco_assinatura_web(id_bloco, descricao)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4702,8 +4717,8 @@ async def sei_excluir_bloco_assinatura(
                 resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
             )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4731,8 +4746,8 @@ async def sei_concluir_bloco_assinatura(
                 resultados[0] if len(resultados) == 1 else {"ok": True, "resultados": resultados}
             )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4753,8 +4768,8 @@ async def sei_reabrir_bloco_assinatura(
         else:
             result = await backend.web.reabrir_bloco_assinatura_web(id_bloco)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4775,8 +4790,8 @@ async def sei_retornar_bloco_assinatura(
         else:
             result = await backend.web.retornar_bloco_assinatura_web(id_bloco)
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4803,8 +4818,8 @@ async def sei_anotar_documento_bloco_assinatura(
                 id_bloco, documento, descricao
             )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 @mcp.tool()
@@ -4831,8 +4846,8 @@ async def sei_alterar_anotacao_bloco_assinatura(
                 id_bloco, documento, descricao
             )
         return _json(result)
-    except Exception as e:  # noqa: BLE001
-        return _error(str(e))
+    except Exception as e:
+        raise ToolError(str(e)) from e
 
 
 def main():  # noqa: ANN201, D103
