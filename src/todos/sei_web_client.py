@@ -125,25 +125,37 @@ class SEIWebClient:
     ~3 s mas listagens subsequentes custam ~600 ms cada.
     """
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(
+        self,
+        *,
+        sei_url: str = "",
+        sei_web_url: str = "",
+        sei_usuario: str = "",
+        sei_senha: str = "",
+        sei_orgao: str = "",
+        sei_sigla_orgao: str = "",
+        sei_sigla_sistema: str = "",
+        sei_sigla_orgao_sistema: str = "",
+        sei_verify_ssl: str | bool | None = None,
+    ) -> None:
         """Initialise from keyword args (sei_web_url, sei_usuario, sei_senha, …) or env vars."""
         # Reusa as mesmas env vars do SEIClient REST
-        sei_url = kwargs.get("sei_url", os.environ.get("SEI_URL", ""))
+        _sei_url = sei_url or os.environ.get("SEI_URL", "")
         # SEI_WEB_URL permite modo web-only (sem mod-wssei) apontando direto para
         # a raiz do SEI (ex: https://sei.orgao.gov.br). Tem precedência sobre SEI_URL.
-        sei_web_url = kwargs.get("sei_web_url", os.environ.get("SEI_WEB_URL", ""))
-        if sei_web_url:
-            self.sei_root = sei_web_url.rstrip("/")
-        elif "/sei/" in sei_url:
+        _sei_web_url = sei_web_url or os.environ.get("SEI_WEB_URL", "")
+        if _sei_web_url:
+            self.sei_root = _sei_web_url.rstrip("/")
+        elif "/sei/" in _sei_url:
             # Deriva raiz a partir da URL da REST
             # Ex: https://sei.antaq.gov.br/sei/modulos/wssei/... → https://sei.antaq.gov.br
-            self.sei_root = sei_url.split("/sei/", 1)[0]
+            self.sei_root = _sei_url.split("/sei/", 1)[0]
         else:
-            self.sei_root = sei_url.rstrip("/")
+            self.sei_root = _sei_url.rstrip("/")
 
-        self._usuario = str(kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", "")))
+        self._usuario = sei_usuario or os.environ.get("SEI_USUARIO", "")
 
-        self._senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
+        self._senha = sei_senha or os.environ.get("SEI_SENHA", "")
         # Pre-compute keyring key so login() can do the actual lookup in a thread
         self._keyring_user: str | None = None
         if not self._senha and self._usuario:
@@ -160,24 +172,26 @@ class SEIWebClient:
 
         # SEI_ORGAO no .env é o id da REST (geralmente "0"). O selOrgao do SIP
         # é descoberto dinamicamente do <select> na página de login.
-        self._sigla_orgao = kwargs.get(
-            "sei_sigla_orgao", os.environ.get("SEI_SIGLA_ORGAO", "ANTAQ")
-        )
-        self._sigla_sistema = kwargs.get(
-            "sei_sigla_sistema", os.environ.get("SEI_SIGLA_SISTEMA", "SEI")
-        )
+        self._sigla_orgao = sei_sigla_orgao or os.environ.get("SEI_SIGLA_ORGAO", "ANTAQ")
+        self._sigla_sistema = sei_sigla_sistema or os.environ.get("SEI_SIGLA_SISTEMA", "SEI")
         # SEI_SIGLA_ORGAO_SISTEMA: parâmetro da URL do SIP login (ex: "RO" para Rondônia).
         # Quando não definido, usa SEI_SIGLA_ORGAO (mantém compatibilidade p/ instâncias
         # onde sigla_orgao_sistema == sigla do órgão no selOrgao, ex: ANTAQ).
-        _sigla_orgao_sistema = kwargs.get(
-            "sei_sigla_orgao_sistema",
-            os.environ.get("SEI_SIGLA_ORGAO_SISTEMA", self._sigla_orgao),
+        _sigla_orgao_sistema = (
+            sei_sigla_orgao_sistema
+            or os.environ.get("SEI_SIGLA_ORGAO_SISTEMA", "")
+            or self._sigla_orgao
         )
 
-        verify_ssl = kwargs.get("sei_verify_ssl", os.environ.get("SEI_VERIFY_SSL", "true"))
-        if isinstance(verify_ssl, str):
-            verify_ssl = verify_ssl.lower() != "false"
-        if not verify_ssl:
+        _raw_verify: str | bool = (
+            sei_verify_ssl
+            if sei_verify_ssl is not None
+            else os.environ.get("SEI_VERIFY_SSL", "true")
+        )
+        _verify: bool = (
+            _raw_verify.lower() != "false" if isinstance(_raw_verify, str) else _raw_verify
+        )
+        if not _verify:
             warnings.filterwarnings("ignore", message="Unverified HTTPS request")
 
         self.login_url = (
@@ -186,7 +200,7 @@ class SEIWebClient:
         )
 
         self._http = httpx.AsyncClient(
-            verify=verify_ssl,
+            verify=_verify,
             follow_redirects=True,
             timeout=httpx.Timeout(60.0, connect=10.0, read=45.0),
             headers={
@@ -409,7 +423,7 @@ class SEIWebClient:
         # 1) option já selecionado
         for opt in sel.find_all("option"):
             if opt.get("selected") is not None and opt.get("value") and opt.get("value") != "null":
-                return opt["value"]
+                return str(opt["value"])
         # 2) option cujo texto contém a sigla do órgão (ex: ANTAQ)
         sigla_upper = self._sigla_orgao.upper()
         for opt in sel.find_all("option"):

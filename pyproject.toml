@@ -144,6 +144,8 @@ ignore = [
     "ASYNC230", "ASYNC240", "PTH113", "PTH119", "PTH123", "PTH202",
     # date.today() without tz — local date intentional for Brazilian government form fields
     "DTZ011",
+    # Web scraper response dicts contain heterogeneous API values; Any is the correct element type
+    "ANN401",
 ]
 "src/todos/server.py" = [
     "TRY002", "TRY003", "EM101", "EM102", "BLE001", "PLR0912", "C901",

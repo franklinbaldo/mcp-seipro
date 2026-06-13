@@ -18,21 +18,31 @@ logger = logging.getLogger(__name__)
 class SEIClient:
     """Cliente REST assíncrono para qualquer instância do SEI com mod-wssei v2."""
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(
+        self,
+        *,
+        sei_url: str = "",
+        sei_web_url: str = "",
+        sei_usuario: str = "",
+        sei_senha: str = "",
+        sei_orgao: str = "",
+        sei_contexto: str = "",
+        sei_verify_ssl: str | bool | None = None,
+    ) -> None:
         """Initialise from keyword args (sei_url, sei_usuario, sei_senha, …) or env vars."""
-        self.base_url = kwargs.get("sei_url", os.environ.get("SEI_URL", "")).rstrip("/")
-        self._usuario = kwargs.get("sei_usuario", os.environ.get("SEI_USUARIO", ""))
+        self.base_url = (sei_url or os.environ.get("SEI_URL", "")).rstrip("/")
+        self._usuario = sei_usuario or os.environ.get("SEI_USUARIO", "")
 
         # Resolve o sei_root de forma consistente com SEIWebClient para namespace do keyring
-        sei_web_url = kwargs.get("sei_web_url", os.environ.get("SEI_WEB_URL", ""))
-        if sei_web_url:
-            self.sei_root = sei_web_url.rstrip("/")
+        _sei_web_url = sei_web_url or os.environ.get("SEI_WEB_URL", "")
+        if _sei_web_url:
+            self.sei_root = _sei_web_url.rstrip("/")
         elif "/sei/" in self.base_url:
             self.sei_root = self.base_url.split("/sei/", 1)[0]
         else:
             self.sei_root = self.base_url.rstrip("/")
 
-        self._senha = kwargs.get("sei_senha", os.environ.get("SEI_SENHA", ""))
+        self._senha = sei_senha or os.environ.get("SEI_SENHA", "")
         # Pre-compute keyring key so autenticar() can do the actual lookup in a thread
         self._keyring_user: str | None = None
         if not self._senha and self._usuario:
@@ -47,8 +57,8 @@ class SEIClient:
                 f"{self._usuario}@{instance_url}" if instance_url else self._usuario
             )
 
-        self._orgao = kwargs.get("sei_orgao", os.environ.get("SEI_ORGAO", "0"))
-        self._contexto = kwargs.get("sei_contexto", os.environ.get("SEI_CONTEXTO", ""))
+        self._orgao = sei_orgao or os.environ.get("SEI_ORGAO", "0")
+        self._contexto = sei_contexto or os.environ.get("SEI_CONTEXTO", "")
         self._token: str | None = None
         self._unidade_ativa: str | None = None
         self._id_usuario: str | None = None
@@ -61,12 +71,17 @@ class SEIClient:
             "contexto": self._contexto,
         }
 
-        verify_ssl = kwargs.get("sei_verify_ssl", os.environ.get("SEI_VERIFY_SSL", "true"))
-        if isinstance(verify_ssl, str):
-            verify_ssl = verify_ssl.lower() != "false"
+        _raw_verify: str | bool = (
+            sei_verify_ssl
+            if sei_verify_ssl is not None
+            else os.environ.get("SEI_VERIFY_SSL", "true")
+        )
+        _verify: bool = (
+            _raw_verify.lower() != "false" if isinstance(_raw_verify, str) else _raw_verify
+        )
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(120.0, connect=10.0, read=90.0),
-            verify=verify_ssl,
+            verify=_verify,
         )
 
     @property
@@ -112,22 +127,40 @@ class SEIClient:
         """Persista um catálogo retornado com sucesso pelo SEI."""
         await self._catalog_cache.set(self._cache_namespace, key, val)
 
-    async def _get_headers(self) -> dict:
+    async def _get_headers(self) -> dict[str, str]:
         if not self._token:
             await self.autenticar()
-        return {"token": self._token}
+        return {"token": self._token or ""}
 
-    async def _request(self, method: str, path: str, **kwargs: object) -> httpx.Response:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: dict[str, str | int] | None = None,
+        data: dict[str, str] | None = None,
+    ) -> httpx.Response:
         """Faz request com re-autenticação automática em caso de 401/403."""
         headers = await self._get_headers()
-        kwargs.setdefault("headers", {}).update(headers)
         try:
-            resp = await self._client.request(method, f"{self.base_url}{path}", **kwargs)
+            resp = await self._client.request(
+                method,
+                f"{self.base_url}{path}",
+                params=params,
+                data=data,
+                headers=headers,
+            )
             if resp.status_code in (401, 403):
                 logger.info("Token expirado, re-autenticando...")
                 await self.autenticar()
-                kwargs["headers"].update({"token": self._token})
-                resp = await self._client.request(method, f"{self.base_url}{path}", **kwargs)
+                headers = await self._get_headers()
+                resp = await self._client.request(
+                    method,
+                    f"{self.base_url}{path}",
+                    params=params,
+                    data=data,
+                    headers=headers,
+                )
             if resp.status_code in (401, 403):
                 raise SEIAuthError("Sessão SEI expirada ou inválida após re-autenticação.")
             if resp.status_code == httpx.codes.NOT_FOUND:
