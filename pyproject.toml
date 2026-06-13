@@ -26,6 +26,16 @@ dependencies = [
 [project.scripts]
 todos = "todos.server:main"
 
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.9",
+    "ty>=0.0.1a14",
+    "vulture>=2.14",
+    "bandit>=1.8",
+    "pip-audit>=2.8",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/todos"]
 

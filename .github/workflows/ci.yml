@@ -13,8 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv run --with ruff ruff check src/
-      - run: uv run --with ruff ruff format --check src/
+      - run: uv run --group dev ruff check src/
+      - run: uv run --group dev ruff format --check src/
 
   types:
     name: Types (ty)
@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv run --with ty ty check src/
+      - run: uv run --group dev ty check src/
 
   dead:
     name: Dead code (vulture)
@@ -30,7 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv run --with vulture vulture src/ --min-confidence 80
+      - run: uv run --group dev vulture src/ --min-confidence 80
 
   sec:
     name: Security (bandit)
@@ -38,7 +38,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv run --with bandit bandit -r src/ -ll --skip B101,B104 -x src/todos/sei_styles.py
+      - run: uv run --group dev bandit -r src/ -ll --skip B101,B104 -x src/todos/sei_styles.py
 
   test:
     name: Tests (pytest)
@@ -46,7 +46,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv run --with pytest pytest tests/ -v
+      - run: uv run --group dev pytest tests/ -v
 
   audit:
     name: Dependency audit (pip-audit)
@@ -54,4 +54,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
-      - run: uv run --with pip-audit pip-audit --ignore-vuln CVE-2025-69872
+      - run: uv run --group dev pip-audit --ignore-vuln CVE-2025-69872
