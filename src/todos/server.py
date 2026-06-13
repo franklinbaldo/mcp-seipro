@@ -564,12 +564,19 @@ def _error(msg: str) -> str:
     return json.dumps({"error": msg}, ensure_ascii=False)
 
 
+# Tool annotation profiles
+_READ = {"readOnlyHint": True, "idempotentHint": True}
+_IDEM = {"readOnlyHint": False, "idempotentHint": True}
+_WRITE = {"readOnlyHint": False, "idempotentHint": False}
+_DEST = {"readOnlyHint": False, "destructiveHint": True}
+
+
 # ---------------------------------------------------------------------------
 # Tools de unidade e usuário
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_unidade_atual(ctx: Context) -> str:
     """Retorna a unidade/setor ativo na sessao atual do SEI.
 
@@ -584,7 +591,7 @@ async def sei_unidade_atual(ctx: Context) -> str:
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_unidades(ctx: Context) -> str:
     """Lista as unidades às quais o usuário autenticado tem acesso no SEI.
 
@@ -599,7 +606,7 @@ async def sei_listar_unidades(ctx: Context) -> str:
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_trocar_unidade(id_unidade: str, ctx: Context) -> str:
     """Troca a unidade ativa do usuário no SEI.
 
@@ -623,7 +630,7 @@ async def sei_trocar_unidade(id_unidade: str, ctx: Context) -> str:
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_unidades(
     filtro: str = "",
     limit: int = 50,
@@ -643,7 +650,7 @@ async def sei_pesquisar_unidades(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_usuarios(
     filtro: str = "",
     apenas_unidade: bool = True,  # noqa: FBT001, FBT002
@@ -678,7 +685,7 @@ async def sei_listar_usuarios(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:  # noqa: C901
     """Consulta um processo SEI pelo número de protocolo formatado.
 
@@ -756,7 +763,7 @@ async def sei_consultar_processo(protocolo_formatado: str, ctx: Context) -> str:
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_arvore_processo(
     protocolo_formatado: str,
     ctx: Context | None = None,
@@ -779,7 +786,7 @@ async def sei_arvore_processo(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_documentos(
     protocolo_formatado: str,
     ctx: Context | None = None,
@@ -800,7 +807,7 @@ async def sei_listar_documentos(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_buscar_documento(  # noqa: C901
     numero_sei: str,
     processo: str = "",
@@ -948,7 +955,7 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
     )
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_ler_documento(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915
     id_documento: str,
     tipo_documento: Literal["auto", "I", "X"] = "auto",
@@ -1105,7 +1112,7 @@ async def sei_ler_documento(  # noqa: C901, PLR0911, PLR0912, PLR0913, PLR0915
         return _error(msg)
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_baixar_anexo(  # noqa: C901, PLR0911
     id_documento: str,
     confirmar_acesso_restrito: bool = False,  # noqa: FBT001, FBT002
@@ -1202,7 +1209,7 @@ async def sei_baixar_anexo(  # noqa: C901, PLR0911
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_criar_documento(  # noqa: PLR0913
     processo: str,
     id_serie: str = "",
@@ -1256,7 +1263,7 @@ async def sei_criar_documento(  # noqa: PLR0913
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_secoes(id_documento: str, ctx: Context | None = None) -> str:
     """Lista as seções editáveis de um documento interno SEI.
 
@@ -1272,7 +1279,7 @@ async def sei_listar_secoes(id_documento: str, ctx: Context | None = None) -> st
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_gerar_referencia(
     numero_sei: str,
     ctx: Context | None = None,
@@ -1303,7 +1310,7 @@ async def sei_gerar_referencia(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_estilos(categoria: str = "", ctx: Context | None = None) -> str:  # noqa: ARG001
     """Lista os estilos CSS disponíveis para formatação de documentos no SEI.
 
@@ -1364,7 +1371,7 @@ async def sei_estilos(categoria: str = "", ctx: Context | None = None) -> str:  
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_editar_secao(
     id_documento: str,
     secoes: list[dict],
@@ -1445,7 +1452,7 @@ async def sei_editar_secao(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_processos(
     pagina: int = 0,
     apenas_meus: str = "",
@@ -1593,7 +1600,7 @@ _CAMPOS_AGRUPAMENTO = {
 }
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_resumo_processos(  # noqa: C901, PLR0912
     agrupar_por: str = "tipo",
     agrupar_por_2: str = "",
@@ -1703,7 +1710,7 @@ async def sei_resumo_processos(  # noqa: C901, PLR0912
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_processos(  # noqa: PLR0913
     palavras_chave: str = "",
     descricao: str = "",
@@ -1826,7 +1833,7 @@ async def sei_pesquisar_processos(  # noqa: PLR0913
         return _error(f"Web: {e2}")
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_hipoteses_legais(
     filtro: str = "",
     limit: int = 50,
@@ -2395,7 +2402,7 @@ async def sei_assinar_documento(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_tipos_documento(  # noqa: PLR0913
     filtro: str = "",
     favoritos: str = "",
@@ -2438,7 +2445,7 @@ async def sei_pesquisar_tipos_documento(  # noqa: PLR0913
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_sobrestar_processo(
     processo: str,
     motivo: str,
@@ -2503,7 +2510,7 @@ async def sei_sobrestar_processo(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_remover_sobrestamento(
     processo: str,
     ctx: Context | None = None,
@@ -2527,7 +2534,7 @@ async def sei_remover_sobrestamento(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_dar_ciencia(
     referencia: str,
     tipo: Literal["documento", "processo"] = "documento",
@@ -2568,7 +2575,7 @@ async def sei_dar_ciencia(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_ciencias(
     referencia: str,
     tipo: Literal["documento", "processo"] = "documento",
@@ -2614,7 +2621,7 @@ async def sei_listar_ciencias(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_remover_atribuicao(
     processo: str,
     ctx: Context | None = None,
@@ -2635,7 +2642,7 @@ async def sei_remover_atribuicao(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_receber_processo(
     processo: str,
     ctx: Context | None = None,
@@ -2656,7 +2663,7 @@ async def sei_receber_processo(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_executar_acao(
     processo: str,
     acao: str,
@@ -2699,7 +2706,7 @@ async def sei_executar_acao(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_unidades_processo(
     processo: str,
     ctx: Context | None = None,
@@ -2717,7 +2724,7 @@ async def sei_listar_unidades_processo(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_interessados(
     processo: str,
     ctx: Context | None = None,
@@ -2735,7 +2742,7 @@ async def sei_listar_interessados(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_sobrestamentos(
     processo: str,
     ctx: Context | None = None,
@@ -2753,7 +2760,7 @@ async def sei_listar_sobrestamentos(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_listar_assinaturas(
     id_documento: str,
     processo: str | None = None,
@@ -2781,7 +2788,7 @@ async def sei_listar_assinaturas(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_registrar_andamento(
     processo: str,
     descricao: str,
@@ -2807,7 +2814,7 @@ async def sei_registrar_andamento(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_READ)
 async def sei_pesquisar_contatos(
     filtro: str = "",
     limit: int = 50,
@@ -2822,7 +2829,7 @@ async def sei_pesquisar_contatos(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_criar_documento_externo(  # noqa: PLR0913
     processo: str,
     id_serie: str,
@@ -2854,7 +2861,7 @@ async def sei_criar_documento_externo(  # noqa: PLR0913
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_assinar_bloco(
     id_bloco: str,
     cargo: str = "",
@@ -2902,7 +2909,7 @@ async def sei_assinar_bloco(
         return _error(str(e))
 
 
-@mcp.tool()
+@mcp.tool(annotations=_IDEM)
 async def sei_assinar_documentos_bloco(
     documentos: str,
     cargo: str = "",
@@ -2955,7 +2962,7 @@ async def sei_assinar_documentos_bloco(
 # ---------------------------------------------------------------------------
 
 
-@mcp.tool()
+@mcp.tool(annotations=_WRITE)
 async def sei_criar_marcador(
     nome: str,
     id_cor: str = "",
