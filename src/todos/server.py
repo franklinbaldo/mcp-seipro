@@ -324,6 +324,45 @@ async def sei_status_resource(ctx: Context) -> str:
         return f"Status: erro ao obter sessão — {exc}"
 
 
+@mcp.resource("sei://estilos-css")
+async def sei_estilos_resource() -> str:
+    """Todos os 39 estilos CSS do SEI com descrição e exemplos HTML.
+
+    Use para escolher a classe correta ao criar ou editar seções de documentos.
+    Evita uma chamada de tool para sei_estilos.
+    """
+    data = {
+        "estilos": SEI_STYLES,
+        "atalhos": STYLE_SHORTCUTS,
+        "dica": (
+            "Paragrafo_Numerado_Nivel1 para corpo de Despachos (autonumera 1. 2. 3.). "
+            "Item_Nivel1/2/3/4 para títulos de Notas Técnicas. "
+            "Item_Alinea_Letra para alíneas — NUNCA escreva a) b) no texto. "
+            "Item_Inciso_Romano para incisos — NUNCA escreva I - II - no texto."
+        ),
+    }
+    return json.dumps(data, ensure_ascii=False, indent=2)
+
+
+@mcp.resource("sei://hipoteses-legais")
+async def sei_hipoteses_resource(ctx: Context) -> str:
+    """Lista todas as hipóteses legais do SEI para restrição de acesso.
+
+    Hipóteses com sufixo (S) = sigiloso (nível 2); sem sufixo = restrito (nível 1).
+    OBRIGATÓRIA ao criar ou alterar processo com nível de acesso 1 ou 2.
+    Evita uma chamada de tool para sei_pesquisar_hipoteses_legais.
+    """
+    backend = _get_backend(ctx)
+    try:
+        if backend.has_rest:
+            result = await backend.rest.pesquisar_hipoteses_legais()
+        else:
+            result = await backend.web.pesquisar_hipoteses_legais_web()
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as exc:  # noqa: BLE001
+        return json.dumps({"error": str(exc)}, ensure_ascii=False)
+
+
 class _ConsentimentoRestrito(BaseModel):
     """Schema de elicitInput para consentimento de acesso a documento restrito."""
 
