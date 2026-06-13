@@ -8,7 +8,7 @@ import os
 import sys
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
-from typing import Literal, cast
+from typing import Literal, TypeAlias, cast
 
 import httpx
 from fastmcp import Context, FastMCP
@@ -45,14 +45,15 @@ from todos.sei_web_client import SEI_WEB_PAGE_SIZE, SEIWebClient
 logger = logging.getLogger(__name__)
 
 MAX_BINARY_SIZE = 10 * 1024 * 1024  # 10 MB
+_MIN_DOC_CONTENT_LENGTH = 10  # minimum bytes for a non-empty internal document
 
 # Detecta modo HTTP (Railway injeta PORT)
 _http_mode = bool(os.environ.get("PORT"))
-_http_port = int(os.environ.get("PORT", 8000))  # noqa: PLW1508
+_http_port = int(os.environ.get("PORT", "8000"))
 
 
 @asynccontextmanager
-async def lifespan(_server: FastMCP):  # noqa: ANN201, D103
+async def lifespan(_server: FastMCP):
     try:
         if _http_mode:
             clients: dict[str, SEIClient] = {}
@@ -312,7 +313,7 @@ async def sei_status_resource(ctx: Context) -> str:
         total = web.itens_painel
         if total == 0:
             total_str = "não disponível"
-        elif total >= 500:  # noqa: PLR2004
+        elif total >= SEI_WEB_PAGE_SIZE:
             total_str = "500+ (múltiplas páginas — use sei_listar_processos para listar)"
         else:
             total_str = str(total)
@@ -404,7 +405,6 @@ def _cliente_suporta_elicit(ctx: Context | None) -> bool:
 
 async def _solicitar_consentimento_via_elicit(
     ctx: Context | None,
-    nivel: str | None,  # noqa: ARG001
     rotulo: str,
     hipotese: str | None,
     alvo: dict,
@@ -476,7 +476,8 @@ async def _aplicar_gate_documento_web(
     processo: str,
     id_documento: str,
     tipo_documento: str,
-    confirmou: bool,  # noqa: FBT001
+    *,
+    confirmou: bool,
 ) -> dict | None:
     """Gate de acesso restrito para os fallbacks web-only.
 
@@ -496,12 +497,13 @@ async def _aplicar_gate_documento_web(
     return _gate_bloqueio(nivel, "documento", id_documento, tipo_documento, processo)
 
 
-async def _aplicar_gate_documento(  # noqa: PLR0911
+async def _aplicar_gate_documento(
     ctx: Context | None,
     client: SEIClient,
     id_documento: str,
     tipo_documento: str,
-    confirmou: bool,  # noqa: FBT001
+    *,
+    confirmou: bool,
 ) -> tuple[str, dict | None, str]:
     """Resolve metadados e aplica o gate de acesso para um documento.
 
@@ -552,7 +554,7 @@ async def _aplicar_gate_documento(  # noqa: PLR0911
         )
 
     rotulo = access_control.ROTULOS.get(nivel, "Restrito")
-    consent = await _solicitar_consentimento_via_elicit(ctx, nivel, rotulo, hipotese, alvo)
+    consent = await _solicitar_consentimento_via_elicit(ctx, rotulo, hipotese, alvo)
 
     if consent == "aceitou":
         return (
@@ -723,8 +725,9 @@ async def sei_pesquisar_unidades(
 @mcp.tool(annotations=_READ)
 async def sei_listar_usuarios(
     filtro: str = "",
-    apenas_unidade: bool = True,  # noqa: FBT001, FBT002
     ctx: Context | None = None,
+    *,
+    apenas_unidade: bool = True,
 ) -> str:
     """Lista usuários no SEI, com filtro por nome ou sigla.
 
@@ -1012,7 +1015,7 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
     try:
         raw = await client.visualizar_documento_interno(referencia)
         # Validar que realmente retornou conteúdo (não erro mascarado)
-        if raw and len(raw) > 10:  # noqa: PLR2004
+        if raw and len(raw) > _MIN_DOC_CONTENT_LENGTH:
             return referencia, "I"
     except Exception as e:
         msg = str(e)
@@ -1031,14 +1034,141 @@ async def _resolver_documento(client: SEIClient, referencia: str) -> tuple[str, 
     )
 
 
+def _formatar_pdf(raw_bytes: bytes, formato: str) -> str:
+    """Convert PDF bytes to the requested format (markdown or texto)."""
+    if raw_bytes[:4] != b"%PDF":
+        return _error("Documento externo não é PDF. Use sei_baixar_anexo.")
+    if formato == "html":
+        return _error("formato='html' só é válido para documentos internos.")
+    if formato == "markdown":
+        return pdf_to_markdown(raw_bytes)
+    return pdf_to_text(raw_bytes)
+
+
+async def _ler_doc_web(
+    web: SEIWebClient,
+    processo: str,
+    id_documento: str,
+    tipo_documento: str,
+    formato: str,
+    *,
+    confirmou: bool,
+) -> str:
+    """Lê documento via scraper web (instâncias sem REST)."""
+    bloqueio = await _aplicar_gate_documento_web(
+        web, processo, id_documento, tipo_documento, confirmou=confirmou
+    )
+    if bloqueio is not None:
+        return _json(bloqueio)
+
+    if tipo_documento == "auto":
+        try:
+            raw = await web.visualizar_documento_interno_web(processo, id_documento)
+        except Exception:
+            raw_bytes = await web.baixar_documento_externo_web(processo, id_documento)
+            return _formatar_pdf(raw_bytes, formato)
+    elif tipo_documento == "X":
+        raw_bytes = await web.baixar_documento_externo_web(processo, id_documento)
+        return _formatar_pdf(raw_bytes, formato)
+    else:
+        raw = await web.visualizar_documento_interno_web(processo, id_documento)
+
+    if formato == "markdown":
+        return html_to_markdown(raw)
+    if formato == "texto":
+        return html_to_text(raw)
+    return raw
+
+
+def _formatar_doc_externo(content: bytes, formato: str, disclaimer: dict | None) -> str:
+    """Formata conteúdo de documento externo (PDF) com disclaimer opcional."""
+    if len(content) > MAX_BINARY_SIZE:
+        return _error(
+            f"Documento muito grande ({len(content)} bytes). "
+            "Use sei_baixar_anexo para obter o base64."
+        )
+    if content[:4] != b"%PDF":
+        return _error(
+            "Documento externo não é PDF. Use sei_baixar_anexo para obter o arquivo em base64."
+        )
+    if formato == "markdown":
+        resultado = pdf_to_markdown(content)
+        if disclaimer:
+            resultado = access_control.prefixar_markdown(disclaimer, resultado)
+        return resultado
+    resultado = pdf_to_text(content)
+    if disclaimer:
+        resultado = access_control.prefixar_texto(disclaimer, resultado)
+    return resultado
+
+
+def _formatar_doc_interno(raw: str, formato: str, disclaimer: dict | None) -> str:
+    """Formata conteúdo de documento interno (HTML) com disclaimer opcional."""
+    if formato == "markdown":
+        resultado = html_to_markdown(raw)
+        if disclaimer:
+            resultado = access_control.prefixar_markdown(disclaimer, resultado)
+        return resultado
+    if formato == "texto":
+        resultado = html_to_text(raw)
+        if disclaimer:
+            resultado = access_control.prefixar_texto(disclaimer, resultado)
+        return resultado
+    if disclaimer:
+        return access_control.envelopar_html(disclaimer, raw)
+    return raw
+
+
+async def _ler_doc_rest(
+    ctx: Context | None,
+    client: SEIClient,
+    id_documento: str,
+    tipo_documento: str,
+    formato: str,
+    *,
+    confirmou: bool,
+) -> str:
+    """Lê documento via REST (path principal quando mod-wssei disponível)."""
+    tipo_doc: str = tipo_documento
+    if tipo_documento == "auto":
+        try:
+            doc_id, detected_tipo = await _resolver_documento(client, id_documento)
+            id_documento = doc_id
+            tipo_doc = detected_tipo
+        except Exception as e:
+            return _json(
+                {
+                    "error": str(e),
+                    "dica": "Use sei_arvore_processo para ver os documentos do processo e seus IDs.",
+                }
+            )
+
+    acao, payload, erro = await _aplicar_gate_documento(
+        ctx, client, str(id_documento), tipo_doc, confirmou=confirmou
+    )
+    if acao == "erro":
+        return _error(erro)
+    if acao in ("bloquear", "recusou"):
+        return _json(payload)
+    disclaimer = payload
+
+    if tipo_doc == "X":
+        content = await client.baixar_anexo(id_documento)
+        return _formatar_doc_externo(content, formato, disclaimer)
+
+    raw = await client.visualizar_documento_interno(id_documento)
+    return _formatar_doc_interno(raw, formato, disclaimer)
+
+
 @mcp.tool(annotations=_READ)
-async def sei_ler_documento(  # noqa: PLR0911, PLR0913, PLR0915
+async def sei_ler_documento(
     id_documento: str,
     tipo_documento: Literal["auto", "I", "X"] = "auto",
     formato: Literal["markdown", "texto", "html"] = "markdown",
-    confirmar_acesso_restrito: bool = False,  # noqa: FBT001, FBT002
     processo: str | None = None,
     ctx: Context | None = None,
+    *,
+    confirmar_acesso_restrito: bool = False,
 ) -> str:
     """Lê o conteúdo de um documento do SEI e retorna texto legível.
 
@@ -1068,114 +1198,27 @@ async def sei_ler_documento(  # noqa: PLR0911, PLR0913, PLR0915
     try:
         backend = _get_backend(ctx)
         if not backend.has_rest:
-            # web-only fallback
             if processo is None:
                 return _error(
                     "Em instâncias sem mod-wssei, forneça o parâmetro 'processo' "
                     "(protocolo do processo, ex: '50300.018905/2018-67') para ler documentos."
                 )
-            web = backend.web
-
-            bloqueio = await _aplicar_gate_documento_web(
-                web, processo, id_documento, tipo_documento, confirmou=confirmar_acesso_restrito
+            return await _ler_doc_web(
+                backend.web,
+                processo,
+                id_documento,
+                tipo_documento,
+                formato,
+                confirmou=confirmar_acesso_restrito,
             )
-            if bloqueio is not None:
-                return _json(bloqueio)
-
-            def _pdf_resposta(raw_bytes: bytes) -> str:
-                if raw_bytes[:4] != b"%PDF":
-                    return _error("Documento externo não é PDF. Use sei_baixar_anexo.")
-                if formato == "markdown":
-                    return pdf_to_markdown(raw_bytes)
-                if formato == "html":
-                    return _error("formato='html' só é válido para documentos internos.")
-                return pdf_to_text(raw_bytes)
-
-            if tipo_documento == "auto":
-                # Tenta interno primeiro; se falhar, tenta externo
-                try:
-                    raw = await web.visualizar_documento_interno_web(processo, id_documento)
-                except Exception:
-                    raw_bytes = await web.baixar_documento_externo_web(processo, id_documento)
-                    return _pdf_resposta(raw_bytes)
-            elif tipo_documento == "X":
-                raw_bytes = await web.baixar_documento_externo_web(processo, id_documento)
-                return _pdf_resposta(raw_bytes)
-            else:
-                raw = await web.visualizar_documento_interno_web(processo, id_documento)
-            if formato == "markdown":
-                return html_to_markdown(raw)
-            if formato == "texto":
-                return html_to_text(raw)
-            return raw
-        client = _get_client(ctx)
-
-        # Resolver referência → id interno + tipo
-        tipo_doc: str = tipo_documento
-        if tipo_documento == "auto":
-            try:
-                doc_id, detected_tipo = await _resolver_documento(client, id_documento)
-                id_documento = doc_id
-                tipo_doc = detected_tipo
-            except Exception as e:
-                return _json(
-                    {
-                        "error": str(e),
-                        "dica": "Use sei_arvore_processo para ver os documentos "
-                        "do processo e seus IDs.",
-                    }
-                )
-
-        acao, payload, erro = await _aplicar_gate_documento(
+        return await _ler_doc_rest(
             ctx,
-            client,
-            str(id_documento),
-            tipo_doc,
+            _get_client(ctx),
+            id_documento,
+            tipo_documento,
+            formato,
             confirmou=confirmar_acesso_restrito,
         )
-        if acao == "erro":
-            return _error(erro)
-        if acao in ("bloquear", "recusou"):
-            return _json(payload)
-        disclaimer = payload  # liberar (None se público, dict se restrito autorizado)
-
-        if tipo_doc == "X":
-            content = await client.baixar_anexo(id_documento)
-            if len(content) > MAX_BINARY_SIZE:
-                return _error(
-                    f"Documento muito grande ({len(content)} bytes). "
-                    "Use sei_baixar_anexo para obter o base64."
-                )
-            if content[:4] != b"%PDF":
-                return _error(
-                    "Documento externo não é PDF. Use sei_baixar_anexo "
-                    "para obter o arquivo em base64."
-                )
-            if formato == "markdown":
-                resultado = pdf_to_markdown(content)
-                if disclaimer:
-                    resultado = access_control.prefixar_markdown(disclaimer, resultado)
-                return resultado
-            resultado = pdf_to_text(content)
-            if disclaimer:
-                resultado = access_control.prefixar_texto(disclaimer, resultado)
-            return resultado
-
-        # Documento interno (I)
-        raw = await client.visualizar_documento_interno(id_documento)
-        if formato == "markdown":
-            resultado = html_to_markdown(raw)
-            if disclaimer:
-                resultado = access_control.prefixar_markdown(disclaimer, resultado)
-            return resultado
-        if formato == "texto":
-            resultado = html_to_text(raw)
-            if disclaimer:
-                resultado = access_control.prefixar_texto(disclaimer, resultado)
-            return resultado
-        if disclaimer:
-            return access_control.envelopar_html(disclaimer, raw)
-        return raw  # noqa: TRY300
     except Exception as e:
         msg = str(e)
         if "não autorizado" in msg.lower() or "nao autorizado" in msg.lower():
@@ -1189,11 +1232,12 @@ async def sei_ler_documento(  # noqa: PLR0911, PLR0913, PLR0915
 
 
 @mcp.tool(annotations=_READ)
-async def sei_baixar_anexo(  # noqa: PLR0911
+async def sei_baixar_anexo(
     id_documento: str,
-    confirmar_acesso_restrito: bool = False,  # noqa: FBT001, FBT002
     processo: str | None = None,
     ctx: Context | None = None,
+    *,
+    confirmar_acesso_restrito: bool = False,
 ) -> str:
     """Baixa um documento externo (anexo) do SEI em base64.
 
@@ -1286,7 +1330,7 @@ async def sei_baixar_anexo(  # noqa: PLR0911
 
 
 @mcp.tool(annotations=_WRITE)
-async def sei_criar_documento(  # noqa: PLR0913
+async def sei_criar_documento(
     processo: str,
     id_serie: str = "",
     descricao: str = "",
@@ -1387,7 +1431,7 @@ async def sei_gerar_referencia(
 
 
 @mcp.tool(annotations=_READ)
-async def sei_estilos(categoria: str = "", ctx: Context | None = None) -> str:  # noqa: ARG001
+async def sei_estilos(categoria: str = "") -> str:
     """Lista os estilos CSS disponíveis para formatação de documentos no SEI.
 
     O SEI usa classes CSS padronizadas em todos os documentos governamentais.
@@ -1433,14 +1477,15 @@ async def sei_estilos(categoria: str = "", ctx: Context | None = None) -> str:  
             return _json(
                 {
                     "error": f"Categoria '{categoria}' não encontrada",
-                    "categorias": list(filtros.keys()) + ["todos", "atalhos"],  # noqa: RUF005
+                    "categorias": [*filtros.keys(), "todos", "atalhos"],
                 }
             )
 
-        resultado = {}
-        for nome, info in SEI_STYLES.items():
-            if any(nome.startswith(p) for p in prefixos):
-                resultado[nome] = info  # noqa: PERF403
+        resultado = {
+            nome: info
+            for nome, info in SEI_STYLES.items()
+            if any(nome.startswith(p) for p in prefixos)
+        }
 
         return _json(resultado)
     except (SEIError, httpx.RequestError) as e:
@@ -1581,46 +1626,51 @@ async def sei_listar_processos(
         raise _to_tool_error(e) from e
 
 
-_CAMPOS_AGRUPAMENTO = {
+# Extratores em _CAMPOS_AGRUPAMENTO: todos aceitam (atributos, status) mesmo que
+# cada implementação individual use apenas um dos argumentos — assinatura uniforme
+# permite iterar o dict sem tratamentos especiais.
+_Extrator: TypeAlias = Callable[[dict, dict], str]
+
+_CAMPOS_AGRUPAMENTO: dict[str, dict[str, str | _Extrator]] = {
     "tipo": {
         "desc": "Tipo processual",
-        "extract": lambda a, s: a.get("tipoProcesso", "Sem tipo"),  # noqa: ARG005
+        "extract": lambda a, s: a.get("tipoProcesso", "Sem tipo"),
     },
     "atribuido": {
         "desc": "Usuário atribuído",
-        "extract": lambda a, s: a.get("usuarioAtribuido") or "Sem atribuição",  # noqa: ARG005
+        "extract": lambda a, s: a.get("usuarioAtribuido") or "Sem atribuição",
     },
     "acesso": {
         "desc": "Nível de acesso",
-        "extract": lambda a, s: {"0": "Público", "1": "Restrito", "2": "Sigiloso"}.get(  # noqa: ARG005
+        "extract": lambda a, s: {"0": "Público", "1": "Restrito", "2": "Sigiloso"}.get(
             s.get("nivelAcessoGlobal", "0"), "Desconhecido"
         ),
     },
     "tramitacao": {
         "desc": "Em tramitação",
-        "extract": lambda a, s: (  # noqa: ARG005
+        "extract": lambda a, s: (
             "Em tramitação" if s.get("processoEmTramitacao") == "S" else "Fora de tramitação"
         ),
     },
     "sobrestado": {
         "desc": "Sobrestamento",
-        "extract": lambda a, s: "Sobrestado" if s.get("processoSobrestado") == "S" else "Ativo",  # noqa: ARG005
+        "extract": lambda a, s: "Sobrestado" if s.get("processoSobrestado") == "S" else "Ativo",
     },
     "bloqueado": {
         "desc": "Bloqueio",
-        "extract": lambda a, s: (  # noqa: ARG005
+        "extract": lambda a, s: (
             "Bloqueado" if s.get("processoBloqueado") == "S" else "Desbloqueado"
         ),
     },
     "novo": {
         "desc": "Documento novo",
-        "extract": lambda a, s: (  # noqa: ARG005
+        "extract": lambda a, s: (
             "Com documentos novos" if s.get("documentoNovo") == "S" else "Sem documentos novos"
         ),
     },
     "anotacao": {
         "desc": "Anotação",
-        "extract": lambda a, s: (  # noqa: ARG005
+        "extract": lambda a, s: (
             "Anotação prioritária"
             if s.get("anotacaoPrioridade") == "S"
             else "Com anotação"
@@ -1630,7 +1680,7 @@ _CAMPOS_AGRUPAMENTO = {
     },
     "retorno": {
         "desc": "Retorno programado",
-        "extract": lambda a, s: (  # noqa: ARG005
+        "extract": lambda a, s: (
             f"Atrasado ({s.get('retornoData', '')})"
             if s.get("retornoAtrasado") == "S"
             else f"Programado ({s.get('retornoData', '')})"
@@ -1640,38 +1690,38 @@ _CAMPOS_AGRUPAMENTO = {
     },
     "lido_usuario": {
         "desc": "Acessado pelo usuário",
-        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUsuario") == "S" else "Não lido",  # noqa: ARG005
+        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUsuario") == "S" else "Não lido",
     },
     "lido_unidade": {
         "desc": "Acessado pela unidade",
-        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUnidade") == "S" else "Não lido",  # noqa: ARG005
+        "extract": lambda a, s: "Lido" if s.get("processoAcessadoUnidade") == "S" else "Não lido",
     },
     "origem": {
         "desc": "Gerado/Recebido",
-        "extract": lambda a, s: (  # noqa: ARG005
+        "extract": lambda a, s: (
             "Gerado na unidade" if s.get("processoGeradoRecebido") == "G" else "Recebido"
         ),
     },
     "anexado": {
         "desc": "Anexado",
-        "extract": lambda a, s: "Anexado" if s.get("processoAnexado") == "S" else "Independente",  # noqa: ARG005
+        "extract": lambda a, s: "Anexado" if s.get("processoAnexado") == "S" else "Independente",
     },
     "unidades": {
         "desc": "Unidades de abertura",
-        "extract": lambda a, s: (  # noqa: ARG005
+        "extract": lambda a, s: (
             ", ".join(u.get("sigla", "") for u in a.get("dadosAbertura", {}).get("lista", []))
             or "N/A"
         ),
     },
     "marcador": {
         "desc": "Marcador",
-        "extract": lambda a, s: (  # noqa: ARG005
+        "extract": lambda a, s: (
             ", ".join(m.get("nome", "") for m in a.get("marcador", [])) or "Sem marcador"
         ),
     },
     "ciencia": {
         "desc": "Ciência",
-        "extract": lambda a, s: "Com ciência" if s.get("ciencia") == "S" else "Sem ciência",  # noqa: ARG005
+        "extract": lambda a, s: "Com ciência" if s.get("ciencia") == "S" else "Sem ciência",
     },
 }
 
@@ -1789,7 +1839,7 @@ async def sei_resumo_processos(
 
 
 @mcp.tool(annotations=_READ)
-async def sei_pesquisar_processos(  # noqa: PLR0913
+async def sei_pesquisar_processos(
     palavras_chave: str = "",
     descricao: str = "",
     busca_rapida: str = "",
@@ -1977,7 +2027,7 @@ async def sei_pesquisar_tipos_processo(
 
 
 @mcp.tool(annotations=_IDEM)
-async def sei_alterar_processo(  # noqa: PLR0913
+async def sei_alterar_processo(
     processo: str,
     especificacao: str = "",
     nivel_acesso: str = "",
@@ -2013,7 +2063,7 @@ async def sei_alterar_processo(  # noqa: PLR0913
 
 
 @mcp.tool(annotations=_WRITE)
-async def sei_criar_processo(  # noqa: PLR0913
+async def sei_criar_processo(
     tipo_processo: str,
     especificacao: str = "",
     assuntos: str = "",
@@ -2066,7 +2116,7 @@ async def sei_criar_processo(  # noqa: PLR0913
 
 
 @mcp.tool(annotations=_WRITE)
-async def sei_enviar_processo(  # noqa: PLR0913
+async def sei_enviar_processo(
     numero_processo: str,
     unidades_destino: str,
     manter_aberto: str = "N",
@@ -2177,11 +2227,11 @@ async def sei_marcar_nao_lido(
     """
     try:
         client = _get_client(ctx)
-        if not client._unidade_ativa:  # noqa: SLF001
+        if not client.unidade_ativa:
             return _error("Unidade ativa não definida. Use sei_trocar_unidade primeiro.")
         result = await client.enviar_processo(
             numero_processo=numero_processo,
-            unidades_destino=client._unidade_ativa,  # noqa: SLF001
+            unidades_destino=client.unidade_ativa,
             manter_aberto="S",
             remover_anotacao="N",
             enviar_email="N",
@@ -2235,7 +2285,7 @@ async def sei_reabrir_processo(processo: str, ctx: Context | None = None) -> str
 
 
 @mcp.tool(annotations=_IDEM)
-async def sei_atribuir_processo(  # noqa: PLR0911
+async def sei_atribuir_processo(
     numero_processo: str,
     usuario: str,
     ctx: Context | None = None,
@@ -2421,8 +2471,8 @@ async def sei_assinar_documento(
     """
     try:
         client = _get_client(ctx)
-        login = client._usuario  # noqa: SLF001
-        senha = client._senha  # noqa: SLF001
+        login = client.usuario
+        senha = client.senha
 
         # Resolver número SEI → id interno (sempre, pois ambos são numéricos
         # e indistinguíveis pelo formato; o resolver tenta Solr primeiro
@@ -2436,9 +2486,7 @@ async def sei_assinar_documento(
         # Se cargo não informado, listar opções e pedir ao usuário
         if not cargo:
             try:
-                resp = await client._request("GET", "/assinante/listar")  # noqa: SLF001
-                data = resp.json()
-                cargos = data.get("data", [])
+                cargos = await client.listar_assinantes()
             except Exception:
                 cargos = []
             return _json(
@@ -2453,8 +2501,7 @@ async def sei_assinar_documento(
             )
 
         # Garante que a autenticação rodou e captura IdUsuario da sessão
-        await client._get_headers()  # noqa: SLF001
-        id_usuario = client._id_usuario or ""  # noqa: SLF001
+        id_usuario = await client.garantir_autenticacao()
 
         # Fallback: procurar via /usuario/listar caso loginData não traga o id
         if not id_usuario:
@@ -2481,7 +2528,7 @@ async def sei_assinar_documento(
 
 
 @mcp.tool(annotations=_READ)
-async def sei_pesquisar_tipos_documento(  # noqa: PLR0913
+async def sei_pesquisar_tipos_documento(
     filtro: str = "",
     favoritos: str = "",
     aplicabilidade: str = "",
@@ -2558,10 +2605,7 @@ async def sei_sobrestar_processo(
                 # para orientar o LLM a concluir o processo antes de sobrestar.
                 if "aberto" in msg.lower() or "unidade" in msg.lower():
                     try:
-                        resp = await backend.rest._request(  # noqa: SLF001
-                            "GET", f"/processo/listar/unidades/{id_proc}"
-                        )
-                        raw = resp.get("data", []) if isinstance(resp, dict) else []
+                        raw = await backend.rest.listar_unidades_processo(id_proc)
                         nomes = [
                             u.get("nome", u.get("sigla", ""))
                             for u in (raw if isinstance(raw, list) else [])
@@ -2745,8 +2789,9 @@ async def sei_receber_processo(
 async def sei_executar_acao(
     processo: str,
     acao: str,
-    confirmar: bool = False,  # noqa: FBT001, FBT002
     ctx: Context | None = None,
+    *,
+    confirmar: bool = False,
 ) -> str:
     """Executa qualquer ação disponível no menu de um processo via scraper web.
 
@@ -2908,7 +2953,7 @@ async def sei_pesquisar_contatos(
 
 
 @mcp.tool(annotations=_WRITE)
-async def sei_criar_documento_externo(  # noqa: PLR0913
+async def sei_criar_documento_externo(
     processo: str,
     id_serie: str,
     arquivo_path: str,
@@ -2958,13 +3003,11 @@ async def sei_assinar_bloco(
     """
     try:
         client = _get_client(ctx)
-        login = client._usuario  # noqa: SLF001
-        senha = client._senha  # noqa: SLF001
+        login = client.usuario
+        senha = client.senha
         if not cargo:
             try:
-                resp = await client._request("GET", "/assinante/listar")  # noqa: SLF001
-                data = resp.json()
-                cargos = data.get("data", [])
+                cargos = await client.listar_assinantes()
             except Exception:
                 cargos = []
             return _json(
@@ -3006,13 +3049,11 @@ async def sei_assinar_documentos_bloco(
     """
     try:
         client = _get_client(ctx)
-        login = client._usuario  # noqa: SLF001
-        senha = client._senha  # noqa: SLF001
+        login = client.usuario
+        senha = client.senha
         if not cargo:
             try:
-                resp = await client._request("GET", "/assinante/listar")  # noqa: SLF001
-                data = resp.json()
-                cargos = data.get("data", [])
+                cargos = await client.listar_assinantes()
             except Exception:
                 cargos = []
             return _json(
@@ -3754,7 +3795,7 @@ async def sei_alterar_documento_interno(
 
 
 @mcp.tool(annotations=_IDEM)
-async def sei_alterar_documento_externo(  # noqa: PLR0913
+async def sei_alterar_documento_externo(
     id_documento: str,
     descricao: str = "",
     nivel_acesso: str = "",
@@ -4132,7 +4173,7 @@ async def sei_gerar_zip_processo(
 
 
 @mcp.tool(annotations=_WRITE)
-async def sei_incluir_documento_externo(  # noqa: PLR0913
+async def sei_incluir_documento_externo(
     processo: str,
     arquivo_path: str = "",
     arquivo_base64: str = "",
@@ -4921,7 +4962,7 @@ async def sei_alterar_anotacao_bloco_assinatura(
         raise _to_tool_error(e) from e
 
 
-def main():  # noqa: ANN201, D103
+def main():
     if len(sys.argv) > 1 and sys.argv[1] == "setup":
         if not sys.stdin.isatty():
             print("Erro: 'todos setup' requer um terminal interativo.", file=sys.stderr)  # noqa: T201

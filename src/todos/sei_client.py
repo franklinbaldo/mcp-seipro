@@ -78,6 +78,31 @@ class SEIClient:
         """Expose the current auth token for direct HTTP calls."""
         return self._token
 
+    @property
+    def usuario(self) -> str:
+        """Login do usuário configurado."""
+        return self._usuario
+
+    @property
+    def senha(self) -> str:
+        """Senha do usuário (necessária para assinar documentos)."""
+        return self._senha
+
+    @property
+    def unidade_ativa(self) -> str | None:
+        """Sigla da unidade atualmente ativa, preenchida após autenticar()."""
+        return self._unidade_ativa
+
+    @property
+    def id_usuario(self) -> str | None:
+        """ID interno do usuário no SEI, preenchido após autenticar()."""
+        return self._id_usuario
+
+    async def garantir_autenticacao(self) -> str:
+        """Garante que a autenticação rodou e retorna o id_usuario (pode ser vazio)."""
+        await self._get_headers()
+        return self._id_usuario or ""
+
     async def _cache_get(self, key: str) -> Any:  # noqa: ANN401
         """Retorna um catálogo persistido ou None."""
         return await self._catalog_cache.get(self._cache_namespace, key)
@@ -618,7 +643,8 @@ class SEIClient:
         self,
         filtro: str = "",
         id_unidade: str = "",
-        apenas_unidade: bool = True,  # noqa: FBT001, FBT002
+        *,
+        apenas_unidade: bool = True,
     ) -> dict:
         """Lista usuários.
 

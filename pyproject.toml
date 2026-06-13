@@ -77,8 +77,17 @@ ignore = [
 "scripts/bench_consultar_processo.py" = ["S603", "S606", "TRY002", "TRY003", "EM101", "EM102"]
 "scripts/bench_listar_processos.py" = ["S603", "S606", "E402", "TRY002", "TRY003", "EM101", "EM102"]
 "src/todos/sei_client.py" = ["TRY002", "TRY003", "EM101", "EM102"]
-"src/todos/sei_web_client.py" = ["TRY002", "TRY003", "EM101", "EM102"]
-"src/todos/server.py" = ["TRY002", "TRY003", "EM101", "EM102", "BLE001", "PLR0912", "C901"]  # boundary file: 121 tools, complexity is inherent; fallback except Exception intentional
+"src/todos/sei_web_client.py" = [
+    "TRY002", "TRY003", "EM101", "EM102",
+    "ARG002",  # listar_usuarios_web.apenas_unidade: interface parity with SEIClient; web form ignores it by design
+]
+"src/todos/server.py" = [
+    "TRY002", "TRY003", "EM101", "EM102", "BLE001", "PLR0912", "C901",
+    "PLR0911",  # multiple return paths in tools inherent to the dual web/REST dispatch model
+    "PLR0913",  # tools need ctx + ≥4 business params; grouping into dataclasses hides the MCP schema
+    "ANN201", "D103",  # lifespan() is a FastMCP protocol function; signature is framework-dictated
+    "ARG005",  # lambda extractors in _CAMPOS_AGRUPAMENTO share (a, s) interface; some only use one arg
+]  # boundary file: 121 tools, complexity is inherent
 "tests/**" = ["S101", "ANN", "D", "PLR2004", "SLF001"]  # assert/no-annot/no-docstring/magic-vals ok in tests
 
 [tool.pytest.ini_options]

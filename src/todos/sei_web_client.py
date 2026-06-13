@@ -625,9 +625,10 @@ class SEIWebClient:
 
     async def fetch_inbox(
         self,
-        detalhada: bool = True,  # noqa: FBT001, FBT002
         pagina: int = 0,
-        apenas_meus: bool = False,  # noqa: FBT001, FBT002
+        *,
+        detalhada: bool = True,
+        apenas_meus: bool = False,
     ) -> tuple[int, str]:
         """Busca o HTML da página de Controle de Processos.
 
@@ -1806,7 +1807,8 @@ class SEIWebClient:
     async def listar_usuarios_web(
         self,
         filtro: str = "",
-        apenas_unidade: bool = True,  # noqa: ARG002, FBT001, FBT002
+        *,
+        apenas_unidade: bool = True,
     ) -> dict:
         """Lista usuários da unidade via scrape do form atribuicao_salvar.
 
@@ -2946,11 +2948,12 @@ class SEIWebClient:
 
     async def listar_processos(
         self,
-        detalhada: bool = True,  # noqa: FBT001, FBT002
         pagina: int = 0,
-        apenas_meus: bool = False,  # noqa: FBT001, FBT002
         tipo: str = "",
         filtro: str = "",
+        *,
+        detalhada: bool = True,
+        apenas_meus: bool = False,
     ) -> dict:
         """Lista processos da caixa da unidade atual via web scraper.
 
