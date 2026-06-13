@@ -1206,9 +1206,7 @@ class SEIWebClient:
             html_arvore,
         )
         if not m:
-            raise RuntimeError(
-                f"Ação '{nome_acao}' não encontrada no menu do processo."
-            )
+            raise RuntimeError(f"Ação '{nome_acao}' não encontrada no menu do processo.")
 
         acao_url = urljoin(sei_base, m.group(1).replace("&amp;", "&"))
         r = await self._http.get(acao_url, headers={"Referer": url_arvore})
@@ -1375,9 +1373,7 @@ class SEIWebClient:
         if "text/html" in r.headers.get("content-type", "").lower():
             # Anexo não chega como text/html: é página de erro com status 200
             erro = _extrair_erro_sei(r.content.decode("iso-8859-1", "replace"))
-            raise RuntimeError(
-                f"documento_download_anexo: {erro or 'resposta HTML inesperada'}"
-            )
+            raise RuntimeError(f"documento_download_anexo: {erro or 'resposta HTML inesperada'}")
         return r.content
 
     async def consultar_processo_detalhe(self, protocolo: str) -> dict:
@@ -1771,9 +1767,7 @@ class SEIWebClient:
             html,
         )
         if not m:
-            raise RuntimeError(
-                f"Ação '{acao}' não encontrada no toolbar da inbox."
-            )
+            raise RuntimeError(f"Ação '{acao}' não encontrada no toolbar da inbox.")
         sei_base = f"{self.sei_root}/sei/"
         return urljoin(sei_base, m.group(1).replace("&amp;", "&"))
 
@@ -2330,9 +2324,7 @@ class SEIWebClient:
             incluir_href = _tag_str(a, "href").replace("&amp;", "&")
             break
         if not incluir_href:
-            raise RuntimeError(
-                "Link documento_escolher_tipo não encontrado nas ações do processo."
-            )
+            raise RuntimeError("Link documento_escolher_tipo não encontrado nas ações do processo.")
 
         escolher_url = urljoin(sei_base, incluir_href)
         r3 = await self._http.get(escolher_url, headers={"Referer": url_arvore})
@@ -2545,9 +2537,7 @@ class SEIWebClient:
                         break
 
         if not incluir_href:
-            raise RuntimeError(
-                "Link 'Incluir Documento' não encontrado nas ações do processo."
-            )
+            raise RuntimeError("Link 'Incluir Documento' não encontrado nas ações do processo.")
 
         escolher_url = urljoin(sei_base, incluir_href)
 
@@ -3299,9 +3289,7 @@ class SEIWebClient:
         retirar_url = urljoin(sei_base, m.group().replace("&amp;", "&"))
         r2 = await self._http.get(retirar_url, headers={"Referer": acao_url})
         if r2.status_code not in (200, 302):
-            raise RuntimeError(
-                f"bloco_assinatura_retirar_documento status={r2.status_code}"
-            )
+            raise RuntimeError(f"bloco_assinatura_retirar_documento status={r2.status_code}")
         body2 = r2.content.decode("iso-8859-1", "replace")
         erro = _extrair_erro_sei(body2)
         if erro:
@@ -3336,9 +3324,7 @@ class SEIWebClient:
         anotar_url = urljoin(sei_base, m.group().replace("&amp;", "&"))
         r2 = await self._http.get(anotar_url, headers={"Referer": acao_url})
         if r2.status_code != 200:  # noqa: PLR2004
-            raise RuntimeError(
-                f"GET bloco_assinatura_anotar_documento status={r2.status_code}"
-            )
+            raise RuntimeError(f"GET bloco_assinatura_anotar_documento status={r2.status_code}")
         body2 = r2.content.decode("iso-8859-1", "replace")
         soup = BeautifulSoup(body2, "html.parser")
         form = soup.find("form")

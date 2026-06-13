@@ -615,7 +615,9 @@ def _error(msg: str) -> str:
 def _to_tool_error(e: Exception) -> ToolError:
     match e:
         case SEIAuthError():
-            return ToolError(f"Sessão SEI expirada ou inválida: {e}. Use sei_status para reconectar.")
+            return ToolError(
+                f"Sessão SEI expirada ou inválida: {e}. Use sei_status para reconectar."
+            )
         case SEINotFoundError():
             return ToolError(f"Não encontrado no SEI: {e}")
         case SEIPermissionError():
